@@ -3,10 +3,9 @@ package root
 import (
 	"testing"
 
-	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 func TestNewOTelResourceUsesCurrentSchemaURL(t *testing.T) {
