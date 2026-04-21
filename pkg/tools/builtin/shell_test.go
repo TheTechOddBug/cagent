@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"runtime"
@@ -53,6 +54,105 @@ func TestShellTool_HandlerWithCwd(t *testing.T) {
 	// The output might contain extra newlines or other characters,
 	// so we just check if it contains the temp dir path
 	assert.Contains(t, result.Output, tmpDir)
+}
+
+func TestRunShellArgs_UnmarshalJSON_AcceptsCmdAndCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantCmd string
+		wantCwd string
+		wantTO  int
+	}{
+		{
+			name:    "canonical cmd",
+			input:   `{"cmd":"ls -la","cwd":"/tmp","timeout":10}`,
+			wantCmd: "ls -la",
+			wantCwd: "/tmp",
+			wantTO:  10,
+		},
+		{
+			name:    "alias command",
+			input:   `{"command":"ls -la","cwd":"/tmp","timeout":10}`,
+			wantCmd: "ls -la",
+			wantCwd: "/tmp",
+			wantTO:  10,
+		},
+		{
+			name:    "both present cmd wins",
+			input:   `{"cmd":"from-cmd","command":"from-command"}`,
+			wantCmd: "from-cmd",
+		},
+		{
+			name:    "blank cmd falls back to command alias",
+			input:   `{"cmd":"   ","command":"from-command"}`,
+			wantCmd: "from-command",
+		},
+		{
+			name:    "empty cmd falls back to command alias",
+			input:   `{"cmd":"","command":"from-command"}`,
+			wantCmd: "from-command",
+		},
+		{
+			name:    "empty object leaves cmd empty",
+			input:   `{}`,
+			wantCmd: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got RunShellArgs
+			require.NoError(t, json.Unmarshal([]byte(tt.input), &got))
+			assert.Equal(t, tt.wantCmd, got.Cmd)
+			assert.Equal(t, tt.wantCwd, got.Cwd)
+			assert.Equal(t, tt.wantTO, got.Timeout)
+		})
+	}
+}
+
+func TestRunShellBackgroundArgs_UnmarshalJSON_AcceptsCmdAndCommand(t *testing.T) {
+	t.Parallel()
+
+	var viaCmd RunShellBackgroundArgs
+	require.NoError(t, json.Unmarshal([]byte(`{"cmd":"sleep 1","cwd":"/tmp"}`), &viaCmd))
+	assert.Equal(t, "sleep 1", viaCmd.Cmd)
+	assert.Equal(t, "/tmp", viaCmd.Cwd)
+
+	var viaCommand RunShellBackgroundArgs
+	require.NoError(t, json.Unmarshal([]byte(`{"command":"sleep 1"}`), &viaCommand))
+	assert.Equal(t, "sleep 1", viaCommand.Cmd)
+
+	// A blank "cmd" must not shadow a valid "command" alias.
+	var blankCmd RunShellBackgroundArgs
+	require.NoError(t, json.Unmarshal([]byte(`{"cmd":"   ","command":"sleep 1"}`), &blankCmd))
+	assert.Equal(t, "sleep 1", blankCmd.Cmd)
+}
+
+// Exercises the end-to-end dispatch path: a tool-call whose raw arguments
+// use "command" instead of "cmd" must execute normally rather than return
+// the missing-parameter error.
+func TestShellTool_HandlerAcceptsCommandAlias(t *testing.T) {
+	tool := NewShellTool(nil, &config.RuntimeConfig{Config: config.Config{WorkingDir: t.TempDir()}})
+
+	var params RunShellArgs
+	require.NoError(t, json.Unmarshal([]byte(`{"command":"echo hello-from-alias"}`), &params))
+
+	result, err := tool.handler.RunShell(t.Context(), params)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "hello-from-alias")
+}
+
+func TestShellTool_HandlerMissingCmdReturnsActionableError(t *testing.T) {
+	tool := NewShellTool(nil, &config.RuntimeConfig{Config: config.Config{WorkingDir: t.TempDir()}})
+
+	result, err := tool.handler.RunShell(t.Context(), RunShellArgs{})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, `"cmd"`,
+		"error must name the expected parameter so the model can self-correct")
 }
 
 func TestShellTool_HandlerError(t *testing.T) {

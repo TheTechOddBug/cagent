@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -102,9 +103,62 @@ type RunShellArgs struct {
 	Timeout int    `json:"timeout,omitempty" jsonschema:"Command execution timeout in seconds (default: 30)"`
 }
 
+// UnmarshalJSON accepts both the canonical "cmd" key and the common alias
+// "command" for the shell command parameter.
+//
+// The advertised schema still declares "cmd" as the canonical name, but many
+// models (particularly ones biased by Anthropic's built-in bash tool and other
+// ecosystems that use "command") occasionally emit "command" instead. Accepting
+// both prevents a wasted turn on an empty-command error while keeping the
+// canonical contract unchanged. When "cmd" is present with a non-blank value
+// it wins; a blank (empty or whitespace-only) "cmd" falls back to "command"
+// so a valid alias is not silently shadowed.
+func (a *RunShellArgs) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Cmd     string `json:"cmd"`
+		Command string `json:"command"`
+		Cwd     string `json:"cwd"`
+		Timeout int    `json:"timeout"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a.Cmd = preferNonBlank(raw.Cmd, raw.Command)
+	a.Cwd = raw.Cwd
+	a.Timeout = raw.Timeout
+	return nil
+}
+
 type RunShellBackgroundArgs struct {
 	Cmd string `json:"cmd" jsonschema:"The shell command to execute in the background"`
 	Cwd string `json:"cwd,omitempty" jsonschema:"The working directory to execute the command in (default: \".\")"`
+}
+
+// UnmarshalJSON accepts both "cmd" (canonical) and "command" (common alias),
+// mirroring RunShellArgs.UnmarshalJSON. See its comment for rationale.
+func (a *RunShellBackgroundArgs) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Cmd     string `json:"cmd"`
+		Command string `json:"command"`
+		Cwd     string `json:"cwd"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a.Cmd = preferNonBlank(raw.Cmd, raw.Command)
+	a.Cwd = raw.Cwd
+	return nil
+}
+
+// preferNonBlank returns primary when it has a non-whitespace character;
+// otherwise it returns fallback. The chosen value is returned unmodified so
+// that whitespace inside a legitimate command (e.g. trailing newlines in a
+// heredoc) is preserved.
+func preferNonBlank(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return primary
+	}
+	return fallback
 }
 
 type ViewBackgroundJobArgs struct {
@@ -132,7 +186,7 @@ func statusToString(status int32) string {
 
 func (h *shellHandler) RunShell(ctx context.Context, params RunShellArgs) (*tools.ToolCallResult, error) {
 	if strings.TrimSpace(params.Cmd) == "" {
-		return tools.ResultError("Error: empty command"), nil
+		return tools.ResultError(`Error: missing or empty "cmd" parameter. Pass the shell command as {"cmd": "..."}.`), nil
 	}
 
 	timeout := h.timeout
@@ -214,6 +268,10 @@ func (h *shellHandler) runNativeCommand(timeoutCtx, ctx context.Context, command
 }
 
 func (h *shellHandler) RunShellBackground(_ context.Context, params RunShellBackgroundArgs) (*tools.ToolCallResult, error) {
+	if strings.TrimSpace(params.Cmd) == "" {
+		return tools.ResultError(`Error: missing or empty "cmd" parameter. Pass the shell command as {"cmd": "..."}.`), nil
+	}
+
 	counter := h.jobCounter.Add(1)
 	jobID := fmt.Sprintf("job_%d_%d", time.Now().Unix(), counter)
 
