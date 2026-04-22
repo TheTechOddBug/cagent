@@ -478,6 +478,22 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				slog.Debug("Conversation stopped", "agent", a.Name())
 				r.executeStopHooks(ctx, sess, a, res.Content, events)
 
+				// --- STEERING: end-of-iteration drain ---
+				// A Steer() call that lands in the narrow window between the
+				// mid-loop drain above and this stop-check would otherwise be
+				// stranded until the next RunStream invocation. Re-checking
+				// here closes that race: any message that enqueued successfully
+				// is guaranteed to be consumed within the current RunStream.
+				// The agent just finished a turn, so these messages get the
+				// same system-reminder envelope as mid-turn steers.
+				if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
+					for _, sm := range steered {
+						r.appendSteerAndEmit(sess, sm, true, events)
+					}
+					r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
+					continue
+				}
+
 				// --- FOLLOW-UP: end-of-turn injection ---
 				// Pop exactly one follow-up message. Unlike steered
 				// messages, follow-ups are plain user messages that start

@@ -2432,3 +2432,133 @@ func TestSteer_EmptySessionBootstrap(t *testing.T) {
 		"model must receive the bootstrap steer message as its first (and only) user turn; messages: %v",
 		firstCallMsgs)
 }
+
+// steerInjectProvider is a provider whose CreateChatCompletionStream calls a
+// hook just before returning the stream. The hook is used to inject a Steer
+// message synchronously while the stream response is being prepared — this
+// simulates the narrow end-of-iteration race where a Steer() call lands after
+// the mid-loop drain but before the res.Stopped break.
+type steerInjectProvider struct {
+	id      string
+	streams []*mockStream
+	callIdx int
+	onCall  func(callIdx int) // called with the current callIdx before returning
+	mu      sync.Mutex
+}
+
+func (p *steerInjectProvider) ID() string { return p.id }
+
+func (p *steerInjectProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
+	p.mu.Lock()
+	idx := p.callIdx
+	p.callIdx++
+	var s chat.MessageStream
+	if idx < len(p.streams) {
+		s = p.streams[idx]
+	} else {
+		s = newStreamBuilder().AddStopWithUsage(1, 1).Build()
+	}
+	p.mu.Unlock()
+
+	if p.onCall != nil {
+		p.onCall(idx)
+	}
+	return s, nil
+}
+
+func (p *steerInjectProvider) BaseConfig() base.Config { return base.Config{} }
+func (p *steerInjectProvider) MaxTokens() int          { return 0 }
+
+// TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream verifies that a
+// Steer() call arriving in the narrow window between the mid-loop drain and
+// the res.Stopped break is consumed within the same RunStream invocation
+// rather than being stranded until the next call.
+//
+// The test uses a provider hook to inject the steer message synchronously
+// on the first model call (simulating the racy Steer() arriving just before
+// the stop decision) and a second stream to prove the loop re-entered and
+// processed the steer message.
+func TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream(t *testing.T) {
+	t.Parallel()
+
+	// Turn 1: plain-text stop — the racy Steer is injected here.
+	turn1 := newStreamBuilder().
+		AddContent("Here is my response").
+		AddStopWithUsage(5, 3).
+		Build()
+	// Turn 2: the loop re-entered due to the injected steer; model acks it.
+	turn2 := newStreamBuilder().
+		AddContent("Got your steer, changing direction").
+		AddStopWithUsage(5, 3).
+		Build()
+
+	var rt *LocalRuntime // set after NewLocalRuntime
+
+	prov := &steerInjectProvider{
+		id:      "test/mock-model",
+		streams: []*mockStream{turn1, turn2},
+		onCall: func(callIdx int) {
+			// On the first call only: inject a steer while the stream is
+			// being set up — this lands after the mid-loop drain (which
+			// hasn't run yet for this turn) and before res.Stopped fires.
+			if callIdx == 0 {
+				_ = rt.Steer(QueuedMessage{Content: "end-of-iter steer"})
+			}
+		},
+	}
+
+	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+
+	var err error
+	rt, err = NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	sess := session.New(session.WithUserMessage("Do the task"))
+	sess.Title = "steer end-of-iter race test"
+
+	evCh := rt.RunStream(t.Context(), sess)
+	var events []Event
+	for ev := range evCh {
+		events = append(events, ev)
+	}
+
+	// The run must complete normally.
+	require.NotEmpty(t, events)
+	assert.IsType(t, &StreamStoppedEvent{}, events[len(events)-1],
+		"expected StreamStopped as the final event")
+
+	// The steer message must have been emitted as a UserMessageEvent
+	// within this RunStream (not deferred to a future one).
+	var steerEventFound bool
+	for _, ev := range events {
+		if ue, ok := ev.(*UserMessageEvent); ok && strings.Contains(ue.Message, "end-of-iter steer") {
+			steerEventFound = true
+			break
+		}
+	}
+	assert.True(t, steerEventFound,
+		"expected a UserMessageEvent for the end-of-iteration steer within the same RunStream")
+
+	// The provider must have been called twice: once for the original turn
+	// and once for the follow-on turn triggered by the steer injection.
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	assert.Equal(t, 2, prov.callIdx,
+		"expected exactly 2 model calls: original turn + steer follow-on turn")
+
+	// The stored session message for the steer must use the system-reminder
+	// envelope (mid-turn semantics: agent was finishing a turn).
+	var steerSessionMsg *session.Message
+	for _, item := range sess.Messages {
+		if item.IsMessage() &&
+			item.Message.Message.Role == chat.MessageRoleUser &&
+			strings.Contains(item.Message.Message.Content, "end-of-iter steer") {
+			steerSessionMsg = item.Message
+			break
+		}
+	}
+	require.NotNil(t, steerSessionMsg, "expected a session message for the end-of-iteration steer")
+	assert.Contains(t, steerSessionMsg.Message.Content, "<system-reminder>",
+		"end-of-iteration steer must use the system-reminder envelope (agent was mid-turn)")
+}
