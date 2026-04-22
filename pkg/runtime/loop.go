@@ -265,9 +265,12 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			// this turn. Without this drain, a Steer call made while no tool
 			// calls are running would be silently dropped when the model returns
 			// a plain-text response with no tool calls.
+			// At this point the agent is not working on anything, so steer
+			// messages are injected as plain user messages — no system-reminder
+			// envelope needed.
 			if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
 				for _, sm := range steered {
-					userMsg := session.UserMessage(wrapSteerMessage(sm.Content), sm.MultiContent...)
+					userMsg := session.UserMessage(sm.Content, sm.MultiContent...)
 					sess.AddMessage(userMsg)
 					events <- UserMessage(sm.Content, sess.ID, sm.MultiContent, len(sess.Messages)-1)
 				}
