@@ -485,6 +485,8 @@ func TestExternalDepthContext(t *testing.T) {
 }
 
 func TestLoadWithConfig_CachePathTraversal(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "dummy")
+
 	tmpDir := t.TempDir()
 
 	// Create a config file with a path traversal attempt
