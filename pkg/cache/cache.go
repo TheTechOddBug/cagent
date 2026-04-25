@@ -10,7 +10,11 @@
 //   - an in-memory map (the default), which keeps entries for the lifetime of
 //     the process;
 //   - a JSON-file backed store, which persists entries to disk so they
-//     survive restarts.
+//     survive restarts. Writes to the JSON file are atomic: the file is
+//     written to a sibling temp file, fsync'd, and renamed over the
+//     destination, so a concurrent reader (or a process that crashes
+//     mid-write) will always see either the previous content or the new
+//     content in full — never a partially written file.
 //
 // Two normalization options are exposed:
 //
@@ -180,8 +184,18 @@ func (c *fileCache) Store(question, response string) {
 }
 
 // writeJSON atomically writes the given map to path as pretty-printed JSON.
+//
+// Atomicity is achieved by writing to a temporary file in the same
+// directory and then renaming it over the destination: POSIX guarantees
+// concurrent readers see either the old file or the new file in full,
+// never a partially written one.
+//
+// Durability across an OS crash or power loss is achieved by fsync'ing
+// the temp file before the rename and fsync'ing the parent directory
+// after, so the rename itself is persisted.
 func writeJSON(path string, entries map[string]string) error {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("creating cache directory %q: %w", dir, err)
 		}
@@ -192,16 +206,26 @@ func writeJSON(path string, entries map[string]string) error {
 		return fmt.Errorf("marshaling cache: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".cache-*.json")
+	tmp, err := os.CreateTemp(dir, ".cache-*.json")
 	if err != nil {
 		return fmt.Errorf("creating temp cache file: %w", err)
 	}
 	tmpName := tmp.Name()
+	// If anything below fails, make sure the temp file is cleaned up.
+	// On the success path the rename moves it away and Remove becomes a
+	// harmless no-op.
 	defer os.Remove(tmpName)
 
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return fmt.Errorf("writing temp cache file: %w", err)
+	}
+	// fsync the file contents to disk before the rename so a crash
+	// between rename and flush cannot leave the destination pointing at
+	// a zero-length file.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("syncing temp cache file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp cache file: %w", err)
@@ -209,6 +233,17 @@ func writeJSON(path string, entries map[string]string) error {
 
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("renaming cache file: %w", err)
+	}
+
+	// fsync the parent directory so the rename itself is durable.
+	// Best-effort: directory fsync is not supported on every platform
+	// (e.g. Windows), and a failure here does not invalidate the data
+	// already written to disk.
+	if dirName := dir; dirName != "" {
+		if d, err := os.Open(dirName); err == nil {
+			_ = d.Sync()
+			_ = d.Close()
+		}
 	}
 	return nil
 }

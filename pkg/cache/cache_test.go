@@ -2,6 +2,8 @@ package cache
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,4 +132,65 @@ func TestFileCache_corruptFile(t *testing.T) {
 
 	_, err := New(Config{Enabled: true, Path: path})
 	assert.Error(t, err)
+}
+
+// TestFileCache_atomicWriteLeavesNoTempFiles verifies that the rename-based
+// atomic write does not leak temporary files on the happy path.
+func TestFileCache_atomicWriteLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	for i := range 5 {
+		c.Store(fmt.Sprintf("q%d", i), fmt.Sprintf("a%d", i))
+	}
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	for _, e := range entries {
+		assert.Equal(t, "cache.json", e.Name(),
+			"unexpected leftover in cache directory: %q", e.Name())
+	}
+}
+
+// TestFileCache_concurrentStoreNeverYieldsTornFile verifies that concurrent
+// Store calls always leave a fully valid JSON file behind — i.e. a parallel
+// reader will never observe a half-written cache thanks to the
+// rename-over-temp atomicity.
+func TestFileCache_concurrentStoreNeverYieldsTornFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 50 {
+			c.Store(fmt.Sprintf("q%d", i), fmt.Sprintf("a%d", i))
+		}
+	}()
+
+	// While writes are happening, repeatedly read and parse the file.
+	// Without atomic rename, this would intermittently see truncated /
+	// half-written content and json.Unmarshal would error.
+	for range 100 {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err)
+		if len(data) == 0 {
+			continue
+		}
+		var m map[string]string
+		require.NoError(t, json.Unmarshal(data, &m),
+			"reader observed a torn write: %q", string(data))
+	}
+
+	<-done
 }
