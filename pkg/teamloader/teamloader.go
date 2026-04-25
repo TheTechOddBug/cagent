@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/cache"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/js"
@@ -167,6 +168,23 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			agent.WithNumHistoryItems(agentConfig.NumHistoryItems),
 			agent.WithCommands(expander.ExpandCommands(ctx, agentConfig.Commands)),
 			agent.WithHooks(config.MergeHooks(agentConfig.Hooks, cliHooks)),
+		}
+
+		if agentConfig.Cache != nil && agentConfig.Cache.Enabled {
+			cachePath := agentConfig.Cache.Path
+			if cachePath != "" && !filepath.IsAbs(cachePath) {
+				cachePath = filepath.Join(parentDir, cachePath)
+			}
+			c, err := cache.New(cache.Config{
+				Enabled:       true,
+				CaseSensitive: agentConfig.Cache.CaseSensitive,
+				TrimSpaces:    agentConfig.Cache.TrimSpaces,
+				Path:          cachePath,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("agent %q: initializing response cache: %w", agentConfig.Name, err)
+			}
+			opts = append(opts, agent.WithCache(c))
 		}
 
 		models, err := getModelsForAgent(ctx, cfg, &agentConfig, autoModel, runConfig)

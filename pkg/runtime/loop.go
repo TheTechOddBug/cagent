@@ -211,6 +211,31 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	defer r.finalizeEventChannel(ctx, sess, prevElicitationCh, events)
 
+	// Response cache lookup. When the agent has a cache configured and
+	// the latest user message is already in the cache, replay the
+	// stored response and skip the model entirely.
+	var cacheQuestion string
+	if c := a.Cache(); c != nil {
+		if q := sess.GetLastUserMessageContent(); q != "" {
+			cacheQuestion = q
+			if cached, ok := c.Lookup(q); ok && cached != "" {
+				slog.Debug("Response cache hit; replaying cached answer",
+					"agent", a.Name(), "session_id", sess.ID)
+				modelID := a.Model().ID()
+				events <- AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage())
+				assistantMessage := chat.Message{
+					Role:      chat.MessageRoleAssistant,
+					Content:   cached,
+					CreatedAt: time.Now().Format(time.RFC3339),
+					Model:     modelID,
+				}
+				addAgentMessage(sess, a, &assistantMessage, events)
+				r.executeStopHooks(ctx, sess, a, cached, events)
+				return
+			}
+		}
+	}
+
 	iteration := 0
 	// Use a runtime copy of maxIterations so we don't modify the session's persistent config
 	runtimeMaxIterations := sess.MaxIterations
@@ -465,6 +490,15 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		if res.Stopped {
 			slog.Debug("Conversation stopped", "agent", a.Name())
 			r.executeStopHooks(ctx, sess, a, res.Content, events)
+
+			// Persist the response in the cache so the same question
+			// returns the same answer next time. Only the first stop
+			// of the stream (i.e. the response to the original user
+			// question, before any follow-ups) is cached.
+			if c := a.Cache(); c != nil && cacheQuestion != "" && strings.TrimSpace(res.Content) != "" {
+				c.Store(cacheQuestion, res.Content)
+				cacheQuestion = ""
+			}
 
 			// Re-check steer queue: closes the race between the mid-loop drain and this stop.
 			if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {

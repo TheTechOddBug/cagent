@@ -1,0 +1,133 @@
+package cache
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNew_disabled(t *testing.T) {
+	c, err := New(Config{Enabled: false})
+	require.NoError(t, err)
+	assert.Nil(t, c)
+}
+
+func TestMemoryCache_caseSensitiveDefault(t *testing.T) {
+	c, err := New(Config{Enabled: true, CaseSensitive: true})
+	require.NoError(t, err)
+	require.NotNil(t, c)
+
+	c.Store("Hello", "world")
+
+	got, ok := c.Lookup("Hello")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+
+	_, ok = c.Lookup("hello")
+	assert.False(t, ok, "case-sensitive cache should not match different case")
+}
+
+func TestMemoryCache_caseInsensitive(t *testing.T) {
+	c, err := New(Config{Enabled: true, CaseSensitive: false})
+	require.NoError(t, err)
+
+	c.Store("Hello", "world")
+
+	got, ok := c.Lookup("HELLO")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+}
+
+func TestMemoryCache_trimSpaces(t *testing.T) {
+	c, err := New(Config{Enabled: true, TrimSpaces: true})
+	require.NoError(t, err)
+
+	c.Store("  hello  ", "world")
+
+	got, ok := c.Lookup("hello")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+
+	got, ok = c.Lookup("\thello\n")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+}
+
+func TestMemoryCache_noTrimByDefault(t *testing.T) {
+	c, err := New(Config{Enabled: true})
+	require.NoError(t, err)
+
+	c.Store("  hello  ", "world")
+
+	_, ok := c.Lookup("hello")
+	assert.False(t, ok, "without TrimSpaces, whitespace must be significant")
+}
+
+func TestMemoryCache_overwrite(t *testing.T) {
+	c, err := New(Config{Enabled: true})
+	require.NoError(t, err)
+
+	c.Store("q", "first")
+	c.Store("q", "second")
+
+	got, ok := c.Lookup("q")
+	assert.True(t, ok)
+	assert.Equal(t, "second", got)
+}
+
+func TestFileCache_persists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c1, err := New(Config{Enabled: true, Path: path, CaseSensitive: false, TrimSpaces: true})
+	require.NoError(t, err)
+	c1.Store("  Hello  ", "world")
+
+	// File must exist on disk and contain the normalized key.
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var entries map[string]string
+	require.NoError(t, json.Unmarshal(data, &entries))
+	assert.Equal(t, map[string]string{"hello": "world"}, entries)
+
+	// A new cache loaded from the same file recovers the entries.
+	c2, err := New(Config{Enabled: true, Path: path, CaseSensitive: false, TrimSpaces: true})
+	require.NoError(t, err)
+	got, ok := c2.Lookup("HELLO")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+}
+
+func TestFileCache_missingFileIsFine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "cache.json")
+
+	c, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	_, ok := c.Lookup("anything")
+	assert.False(t, ok)
+
+	c.Store("hello", "world")
+
+	got, ok := c.Lookup("hello")
+	assert.True(t, ok)
+	assert.Equal(t, "world", got)
+
+	// And the directory should have been created.
+	_, err = os.Stat(path)
+	assert.NoError(t, err)
+}
+
+func TestFileCache_corruptFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+	require.NoError(t, os.WriteFile(path, []byte("not json"), 0o600))
+
+	_, err := New(Config{Enabled: true, Path: path})
+	assert.Error(t, err)
+}
