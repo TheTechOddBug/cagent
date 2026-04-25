@@ -837,6 +837,76 @@ func TestProcessToolCalls_UnknownTool_ReturnsErrorResponse(t *testing.T) {
 	assert.Contains(t, toolContent, "not available")
 }
 
+// TestEmitAgentWarnings_RecoveryNoticeIsNotFramedAsFailure verifies that
+// when a previously-failed toolset recovers ("is now available"), the
+// emitted WarningEvent is framed neutrally rather than wrapped in the
+// "Some toolsets failed to initialize" framing used for real failures.
+//
+// Regression test for: after lazy-init OAuth completes and the toolset
+// reconnects, the user saw a notification that read
+//
+//	"Some toolsets failed to initialize for agent 'root'.
+//	 Details:
+//	 - mcp(remote host=mcp.slack.com transport=streamable) is now available"
+//
+// The body says "is now available" (success) but the framing says "failed"
+// (failure), which the user reasonably read as "is NOT available".
+func TestEmitAgentWarnings_RecoveryNoticeIsNotFramedAsFailure(t *testing.T) {
+	prov := &mockProvider{id: "test/m", stream: &mockStream{}}
+	root := agent.New("root", "agent", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+	rt, err := NewLocalRuntime(tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	root.AddToolNotice("mcp(remote host=mcp.slack.com transport=streamable) is now available")
+
+	var emitted []Event
+	rt.emitAgentWarnings(root, func(e Event) { emitted = append(emitted, e) })
+
+	require.Len(t, emitted, 1, "expected exactly one event from a single notice")
+	w, ok := emitted[0].(*WarningEvent)
+	require.True(t, ok, "expected a *WarningEvent, got %T", emitted[0])
+
+	assert.NotContains(t, strings.ToLower(w.Message), "failed",
+		"recovery notice must not be framed as a failure; got: %q", w.Message)
+	assert.Contains(t, w.Message, "is now available",
+		"recovery notice must preserve the actual content; got: %q", w.Message)
+}
+
+// TestEmitAgentWarnings_FailureAndRecoveryAreEmittedSeparately verifies that
+// when both a real failure and a recovery notice are pending, they are
+// emitted as two separate events with appropriate framing each — not
+// merged into a single message that conflates them.
+func TestEmitAgentWarnings_FailureAndRecoveryAreEmittedSeparately(t *testing.T) {
+	prov := &mockProvider{id: "test/m", stream: &mockStream{}}
+	root := agent.New("root", "agent", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+	rt, err := NewLocalRuntime(tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	root.AddToolWarning("toolset_a start failed: connection refused")
+	root.AddToolNotice("toolset_b is now available")
+
+	var emitted []*WarningEvent
+	rt.emitAgentWarnings(root, func(e Event) {
+		if w, ok := e.(*WarningEvent); ok {
+			emitted = append(emitted, w)
+		}
+	})
+
+	require.Len(t, emitted, 2, "failures and notices must be emitted as separate events")
+
+	// Identify which is which (order is failure first, then notice).
+	failure, notice := emitted[0], emitted[1]
+	assert.Contains(t, strings.ToLower(failure.Message), "failed",
+		"failure event must use the failure framing; got: %q", failure.Message)
+	assert.Contains(t, failure.Message, "toolset_a start failed: connection refused")
+
+	assert.NotContains(t, strings.ToLower(notice.Message), "failed",
+		"recovery event must NOT use the failure framing; got: %q", notice.Message)
+	assert.Contains(t, notice.Message, "toolset_b is now available")
+}
+
 func TestEmitStartupInfo(t *testing.T) {
 	// Create a simple agent with mock provider
 	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}

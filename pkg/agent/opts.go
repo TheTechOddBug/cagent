@@ -162,7 +162,7 @@ func WithCommands(commands types.Commands) Opt {
 func WithLoadTimeWarnings(warnings []string) Opt {
 	return func(a *Agent) {
 		for _, w := range warnings {
-			a.addToolWarning(w)
+			a.AddToolWarning(w)
 		}
 	}
 }
