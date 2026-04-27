@@ -208,6 +208,29 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		events <- UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, len(sess.Messages)-1)
 	}
 
+	// user_prompt_submit fires once per user message, after session_start
+	// and before the first model call. Only top-level sessions fire it:
+	// sub-sessions (transferred tasks, background agents, skill
+	// sub-sessions) carry a synthesised "Please proceed." implicit user
+	// message that no human authored, so firing the hook there would be
+	// noise. SendUserMessage is the same flag the runtime uses to decide
+	// whether to emit a UserMessageEvent, which is exactly the right
+	// signal: "a real user prompt is at the tail of the session".
+	var userPromptMsgs []chat.Message
+	if sess.SendUserMessage && len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		if lastMsg.Role == chat.MessageRoleUser {
+			stop, msg, ctxMsgs := r.executeUserPromptSubmitHooks(ctx, sess, a, lastMsg.Content, events)
+			if stop {
+				slog.Warn("user_prompt_submit hook signalled run termination",
+					"agent", a.Name(), "session_id", sess.ID, "reason", msg)
+				r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
+				return
+			}
+			userPromptMsgs = ctxMsgs
+		}
+	}
+
 	events <- StreamStarted(sess.ID, a.Name())
 
 	defer r.finalizeEventChannel(ctx, sess, prevElicitationCh, events)
@@ -351,7 +374,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// files) refresh every turn while session-level context (cwd, OS,
 		// arch) stays stable — all without bloating the stored history.
 		turnStartMsgs := r.executeTurnStartHooks(ctx, sess, a, events)
-		messages := sess.GetMessages(a, slices.Concat(sessionStartMsgs, turnStartMsgs)...)
+		messages := sess.GetMessages(a, slices.Concat(sessionStartMsgs, userPromptMsgs, turnStartMsgs)...)
 		slog.Debug("Retrieved messages for processing", "agent", a.Name(), "message_count", len(messages))
 
 		// Strip image content from messages if the model doesn't support image input.

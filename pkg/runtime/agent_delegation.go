@@ -277,8 +277,15 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	parent.ToolsApproved = s.ToolsApproved
 	parent.AddSubSession(s)
 	evts <- SubSessionCompleted(parent.ID, s, callerAgent.Name())
+
+	// subagent_stop fires after the child's stream has fully drained,
+	// using the *parent* agent's executor so handlers configured on the
+	// orchestrator see every child completion in one place.
+	response := s.GetLastAssistantMessageContent()
+	r.executeSubagentStopHooks(ctx, parent, s, callerAgent, req.AgentName, response)
+
 	span.SetStatus(codes.Ok, "sub-session completed")
-	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
+	return tools.ResultSuccess(response), nil
 }
 
 // runCollecting runs a child session and collects its output via an
@@ -325,6 +332,15 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 
 	result := s.GetLastAssistantMessageContent()
 	parent.AddSubSession(s)
+
+	// subagent_stop fires after the background sub-session has fully
+	// drained. The parent agent at the time of dispatch (whoever called
+	// run_background_agent) owns the executor; resolve via CurrentAgent
+	// because the background path doesn't carry the parent agent name.
+	if parentAgent := r.CurrentAgent(); parentAgent != nil {
+		r.executeSubagentStopHooks(ctx, parent, s, parentAgent, cfg.AgentName, result)
+	}
+
 	return &agenttool.RunResult{Result: result}
 }
 
