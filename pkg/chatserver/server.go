@@ -37,17 +37,29 @@ import (
 	"github.com/docker/docker-agent/pkg/teamloader"
 )
 
+// Options configures the chat completions server. Future improvements
+// (auth, conversations, etc.) extend this struct rather than the Run
+// signature so callers stay stable.
+type Options struct {
+	// AgentName pins the single agent to expose. Empty exposes every
+	// agent in the team and uses the team's default as the fallback.
+	AgentName string
+	// RunConfig is the runtime configuration used to load the team.
+	RunConfig *config.RuntimeConfig
+	// CORSOrigin is the allowed value for the Access-Control-Allow-Origin
+	// header. When empty, the CORS middleware is not registered at all
+	// (the server never emits any Access-Control-* response header).
+	CORSOrigin string
+}
+
 // Run starts an OpenAI-compatible HTTP server on the given listener and
 // blocks until ctx is cancelled or the server fails. The team is loaded
 // once from agentFilename and shared across requests; every chat completion
 // request gets a fresh session.
-//
-// If agentName is empty, every agent in the team is exposed and the team's
-// default agent is used when the client doesn't pin one.
-func Run(ctx context.Context, agentFilename, agentName string, runConfig *config.RuntimeConfig, ln net.Listener) error {
+func Run(ctx context.Context, agentFilename string, opts Options, ln net.Listener) error {
 	slog.Debug("Starting chat completions server", "agent", agentFilename, "addr", ln.Addr())
 
-	t, err := loadTeam(ctx, agentFilename, runConfig)
+	t, err := loadTeam(ctx, agentFilename, opts.RunConfig)
 	if err != nil {
 		return err
 	}
@@ -57,13 +69,13 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 		}
 	}()
 
-	policy, err := newAgentPolicy(t, agentName)
+	policy, err := newAgentPolicy(t, opts.AgentName)
 	if err != nil {
 		return err
 	}
 
 	httpServer := &http.Server{
-		Handler:           newRouter(&server{team: t, policy: policy}),
+		Handler:           newRouter(&server{team: t, policy: policy}, opts),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	return serve(ctx, httpServer, ln)
@@ -109,18 +121,20 @@ type server struct {
 	policy agentPolicy
 }
 
-func newRouter(s *server) http.Handler {
+func newRouter(s *server, opts Options) http.Handler {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 
 	e.Use(middleware.RequestLogger())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowHeaders: []string{"Authorization", "Content-Type", "Accept"},
-		MaxAge:       86400,
-	}))
+	if opts.CORSOrigin != "" {
+		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+			AllowOrigins: []string{opts.CORSOrigin},
+			AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+			AllowHeaders: []string{"Authorization", "Content-Type", "Accept"},
+			MaxAge:       86400,
+		}))
+	}
 
 	e.GET("/v1/models", s.handleModels)
 	e.POST("/v1/chat/completions", s.handleChatCompletions)

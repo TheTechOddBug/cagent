@@ -12,6 +12,7 @@ import (
 type chatFlags struct {
 	agentName  string
 	listenAddr string
+	corsOrigin string
 	runConfig  config.RuntimeConfig
 }
 
@@ -34,6 +35,7 @@ agent without any custom integration.`,
 
 	cmd.Flags().StringVarP(&flags.agentName, "agent", "a", "", "Name of the agent to expose (all agents if not specified)")
 	cmd.Flags().StringVarP(&flags.listenAddr, "listen", "l", "127.0.0.1:8083", "Address to listen on")
+	cmd.Flags().StringVar(&flags.corsOrigin, "cors-origin", "", "Allowed CORS origin (e.g. https://example.com); empty disables CORS entirely")
 	addRuntimeConfigFlags(cmd, &flags.runConfig)
 
 	return cmd
@@ -58,5 +60,9 @@ func (f *chatFlags) runChatCommand(cmd *cobra.Command, args []string) (commandEr
 	out.Println("Listening on", ln.Addr().String())
 	out.Println("OpenAI-compatible chat completions endpoint: http://" + ln.Addr().String() + "/v1/chat/completions")
 
-	return chatserver.Run(ctx, agentFilename, f.agentName, &f.runConfig, ln)
+	return chatserver.Run(ctx, agentFilename, chatserver.Options{
+		AgentName:  f.agentName,
+		RunConfig:  &f.runConfig,
+		CORSOrigin: f.corsOrigin,
+	}, ln)
 }

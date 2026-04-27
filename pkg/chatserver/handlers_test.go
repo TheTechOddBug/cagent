@@ -28,7 +28,7 @@ func newTestServer(exposed ...string) (*server, *echo.Echo) {
 func TestHandleModels(t *testing.T) {
 	srv, e := newTestServer("root", "reviewer")
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", http.NoBody)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/models", http.NoBody)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -53,7 +53,7 @@ func TestHandleModels(t *testing.T) {
 func TestHandleChatCompletions_RejectsBadJSON(t *testing.T) {
 	srv, e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("not json"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/chat/completions", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -66,7 +66,7 @@ func TestHandleChatCompletions_RejectsBadJSON(t *testing.T) {
 func TestHandleChatCompletions_RejectsEmptyMessages(t *testing.T) {
 	srv, e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"messages":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -85,7 +85,7 @@ func TestHandleChatCompletions_RejectsHistoryWithoutUser(t *testing.T) {
 	srv, e := newTestServer()
 
 	body := `{"messages":[{"role":"system","content":"be helpful"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -108,7 +108,7 @@ func TestWriteError_ShapeAndType(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := echo.New()
-			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 

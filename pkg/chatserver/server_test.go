@@ -1,6 +1,8 @@
 package chatserver
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -139,4 +141,31 @@ func TestErrTypeFor(t *testing.T) {
 	assert.Equal(t, "invalid_request_error", errTypeFor(404))
 	assert.Equal(t, "internal_error", errTypeFor(500))
 	assert.Equal(t, "internal_error", errTypeFor(502))
+}
+
+func TestNewRouter_CORSDisabledByDefault(t *testing.T) {
+	srv, _ := newTestServer("root")
+	r := newRouter(srv, Options{})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/v1/models", http.NoBody)
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"),
+		"no CORS header should be emitted when no origin is configured")
+}
+
+func TestNewRouter_CORSAllowsConfiguredOrigin(t *testing.T) {
+	srv, _ := newTestServer("root")
+	r := newRouter(srv, Options{CORSOrigin: "https://example.com"})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/v1/models", http.NoBody)
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
 }
