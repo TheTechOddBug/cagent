@@ -115,6 +115,15 @@ func (c *Cache) Lookup(question string) (string, bool) {
 // returns. Storing the same (question, response) pair twice is a no-op
 // and skips the file rewrite — useful when an agent's stop hook re-fires
 // with the same content (e.g. on a cache-replay turn).
+//
+// Store deliberately holds the write lock across the persist callback.
+// Releasing the lock between cloning the snapshot and writing it would
+// allow two concurrent stores S1 and S2 to take their snapshots in
+// order S1→S2 but persist them out-of-order S2→S1, which would
+// overwrite the on-disk file with S1's stale snapshot and silently lose
+// S2's entry on the next process restart. The lock window is short
+// (one fsync + rename + dir fsync) and concurrent Lookup callers are
+// blocked only for the duration of that single write.
 func (c *Cache) Store(question, response string) {
 	key := c.normalize(question)
 
@@ -131,6 +140,10 @@ func (c *Cache) Store(question, response string) {
 
 // keyNormalizer returns a function that applies the configured
 // normalization rules to a question before it is used as a cache key.
+// Trim runs before lowercase: trim only removes leading/trailing
+// whitespace and is unaffected by case, so the order is irrelevant for
+// correctness, but trim-first keeps the lowercased map keys tighter on
+// inputs like "  HELLO\n".
 func keyNormalizer(caseSensitive, trimSpaces bool) func(string) string {
 	return func(s string) string {
 		if trimSpaces {

@@ -164,6 +164,45 @@ func TestFileCache_corruptFile(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestFileCache_persistenceFailureKeepsInMemory verifies that a Store
+// whose underlying file write fails still updates the in-memory map: a
+// transient disk error must not break the running agent's turn, and a
+// subsequent Lookup must return the value the caller just wrote.
+//
+// We force a write failure by stripping write permission from the cache
+// directory after [New] returned. The persist callback (running inside
+// Store) tries os.CreateTemp in that directory and fails; the error is
+// swallowed and the cache keeps serving from memory.
+func TestFileCache_persistenceFailureKeepsInMemory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions are bypassed, can't force a write failure")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	// Strip write permission on the directory; restored before t.TempDir
+	// cleanup runs so the dir can be removed.
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	// Store must not panic or block on the underlying write failure.
+	c.Store("q", "a")
+
+	// In-memory state is intact even though the file write failed.
+	got, ok := c.Lookup("q")
+	assert.True(t, ok)
+	assert.Equal(t, "a", got)
+
+	// And the file was indeed never written.
+	_, err = os.Stat(path)
+	assert.ErrorIs(t, err, os.ErrNotExist,
+		"cache file must not exist when the parent directory is read-only")
+}
+
 // TestFileCache_atomicWriteLeavesNoTempFiles verifies that the rename-based
 // atomic write does not leak temporary files on the happy path.
 func TestFileCache_atomicWriteLeavesNoTempFiles(t *testing.T) {

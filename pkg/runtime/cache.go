@@ -14,9 +14,9 @@ import (
 
 // BuiltinCacheResponse is the name of the builtin stop hook that persists
 // an agent's response into its configured response cache. It is
-// auto-injected by [LocalRuntime.getHooksExecutor] when the agent has a
-// cache configured, mirroring the way [BuiltinAddDate] et al. are
-// auto-injected from agent flags.
+// auto-injected by [LocalRuntime.hooksExec] when the agent has a cache
+// configured, mirroring the way [builtins.AddDate] et al. are
+// auto-injected from agent flags via [builtins.ApplyAgentDefaults].
 const BuiltinCacheResponse = "cache_response"
 
 // tryReplayCachedResponse looks up the latest user message in the agent's
@@ -44,6 +44,11 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 		return false
 	}
 	cached, ok := c.Lookup(question)
+	// Treat empty stored values as misses: cache_response only stores
+	// non-empty responses, so an empty entry only surfaces if the JSON
+	// file was hand-edited or downgraded from a future version. Replaying
+	// nothing would leave the user staring at a blank assistant message,
+	// so we fall through to the model instead.
 	if !ok || cached == "" {
 		return false
 	}
@@ -81,6 +86,8 @@ func (r *LocalRuntime) cacheResponseBuiltin(_ context.Context, in *hooks.Input, 
 	}
 	a, err := r.team.Agent(in.AgentName)
 	if err != nil || a == nil {
+		slog.Debug("cache_response: agent lookup failed",
+			"agent", in.AgentName, "error", err)
 		return nil, nil
 	}
 	if c := a.Cache(); c != nil {

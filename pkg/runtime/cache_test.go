@@ -197,6 +197,38 @@ func TestCache_DisabledHasNoEffect(t *testing.T) {
 	assert.Len(t, prov.recordedMessages, 2, "without a cache, every turn must hit the model")
 }
 
+// TestCache_EmptyResponseIsNotCached documents that the cache_response
+// stop-hook deliberately drops empty (whitespace-only) assistant
+// responses on the floor: replaying nothing on a future turn would leave
+// the user staring at a blank reply with no recourse but to ask again,
+// so the model is called every time.
+func TestCache_EmptyResponseIsNotCached(t *testing.T) {
+	c, err := cache.New(cache.Config{Enabled: true})
+	require.NoError(t, err)
+
+	// Two empty-response streams; we expect the model to be called both
+	// times because the empty answer must never reach the cache.
+	stream1 := newStreamBuilder().AddContent("").AddStopWithUsage(5, 0).Build()
+	stream2 := newStreamBuilder().AddContent("").AddStopWithUsage(5, 0).Build()
+	prov := &messageRecordingProvider{
+		id:      "test/mock-model",
+		streams: []*mockStream{stream1, stream2},
+	}
+
+	sess1 := session.New(session.WithUserMessage("silent treatment"))
+	runWithCache(t, c, prov, sess1)
+	sess2 := session.New(session.WithUserMessage("silent treatment"))
+	runWithCache(t, c, prov, sess2)
+
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	assert.Len(t, prov.recordedMessages, 2,
+		"empty responses must not be cached; the model must be called every time")
+
+	_, found := c.Lookup("silent treatment")
+	assert.False(t, found, "empty assistant response must not appear in the cache")
+}
+
 func hasAgentChoice(events []Event, content string) bool {
 	for _, ev := range events {
 		if ac, ok := ev.(*AgentChoiceEvent); ok && strings.Contains(ac.Content, content) {
