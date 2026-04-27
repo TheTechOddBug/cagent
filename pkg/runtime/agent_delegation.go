@@ -105,16 +105,20 @@ type SubSessionConfig struct {
 	ExcludedTools []string
 }
 
-// delegationRequest bundles a [SubSessionConfig] with the orchestration
-// knobs only [LocalRuntime.runForwarding] needs: the OpenTelemetry span
-// identity and whether to swap the runtime's current agent for the
-// lifetime of the call.
+// delegationRequest bundles a [SubSessionConfig] with the single
+// orchestration knob [LocalRuntime.runForwarding] needs: whether to
+// swap the runtime's current agent for the lifetime of the call.
 //
 // Adding a new "spawn a sub-agent" feature is a matter of building one
 // of these and calling runForwarding (or runCollecting for the
-// non-interactive variant); none of the boilerplate around spans,
-// AgentInfo events, agent restoration, or event forwarding leaks into
-// the caller.
+// non-interactive variant); the boilerplate around AgentInfo events,
+// agent restoration, and event forwarding stays in runForwarding.
+//
+// The OpenTelemetry span is owned by the caller (each public-facing
+// handler opens its own span before calling runForwarding) so that
+// pre-delegation work — most importantly the model override applied
+// by [LocalRuntime.handleRunSkill] before forwarding — is recorded
+// under the caller's span.
 type delegationRequest struct {
 	SubSessionConfig
 
@@ -126,11 +130,6 @@ type delegationRequest struct {
 	// currentAgent, while switching is for sequential delegations where
 	// the parent loop is blocked anyway.
 	SwitchCurrentAgent bool
-
-	// SpanName is the OpenTelemetry span name (e.g. "runtime.task_transfer").
-	SpanName string
-	// SpanAttributes are extra attributes attached to the span on creation.
-	SpanAttributes []attribute.KeyValue
 }
 
 // newSubSession builds a *session.Session from a SubSessionConfig and a parent
@@ -231,15 +230,18 @@ func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, f
 //
 // On success it returns a tool result whose output is the child's last
 // assistant message. On error it has already forwarded the ErrorEvent to
-// evts and returns a wrapped error so the caller's span records it.
+// evts and returns a wrapped error.
+//
+// The caller is expected to have opened a tracing span before calling
+// runForwarding; the function records sub-session status (Ok / Error)
+// on whatever span is attached to ctx — a no-op if none.
 //
 // runForwarding handles every concern the callers used to duplicate:
-// opening the span, swapping the current agent (if requested), resolving
-// the child agent, building the sub-session, driving RunStream, and
-// recording the sub-session on the parent.
-func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts chan Event, req delegationRequest) (*tools.ToolCallResult, error) {
-	ctx, span := r.startSpan(ctx, req.SpanName, trace.WithAttributes(req.SpanAttributes...))
-	defer span.End()
+// swapping the current agent (if requested), resolving the child agent,
+// building the sub-session, driving RunStream, and recording the
+// sub-session on the parent.
+func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts chan<- Event, req delegationRequest) (*tools.ToolCallResult, error) {
+	span := trace.SpanFromContext(ctx)
 
 	callerAgent, err := r.team.Agent(r.CurrentAgentName())
 	if err != nil {
@@ -265,9 +267,10 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 			for remaining := range childEvents {
 				evts <- remaining
 			}
-			span.RecordError(fmt.Errorf("%s", errEvent.Error))
+			err := fmt.Errorf("%s", errEvent.Error)
+			span.RecordError(err)
 			span.SetStatus(codes.Error, "sub-session error")
-			return nil, fmt.Errorf("%s", errEvent.Error)
+			return nil, err
 		}
 	}
 
@@ -375,6 +378,13 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
 
+	ctx, span := r.startSpan(ctx, "runtime.task_transfer", trace.WithAttributes(
+		attribute.String("from.agent", a.Name()),
+		attribute.String("to.agent", params.Agent),
+		attribute.String("session.id", sess.ID),
+	))
+	defer span.End()
+
 	return r.runForwarding(ctx, sess, evts, delegationRequest{
 		SubSessionConfig: SubSessionConfig{
 			Task:           params.Task,
@@ -384,12 +394,6 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 			ToolsApproved:  sess.ToolsApproved,
 		},
 		SwitchCurrentAgent: true,
-		SpanName:           "runtime.task_transfer",
-		SpanAttributes: []attribute.KeyValue{
-			attribute.String("from.agent", a.Name()),
-			attribute.String("to.agent", params.Agent),
-			attribute.String("session.id", sess.ID),
-		},
 	})
 }
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -21,7 +22,7 @@ import (
 //
 // All skill-specific business rules (lookup, fork-mode validation, content
 // expansion) live in (*builtin.SkillsToolset).PrepareForkSubSession; this
-// handler keeps only the runtime-private orchestration that the [delegator]
+// handler keeps only the runtime-private orchestration that runForwarding
 // can't generalise — namely the optional model override that applies for
 // the sub-session's lifetime.
 //
@@ -44,6 +45,16 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 	}
 
 	ca := r.CurrentAgentName()
+
+	// Open the span before any pre-delegation work so model resolution
+	// (inside WithAgentModel) is recorded under runtime.run_skill rather
+	// than the parent session span.
+	ctx, span := r.startSpan(ctx, "runtime.run_skill", trace.WithAttributes(
+		attribute.String("agent", ca),
+		attribute.String("skill", prepared.SkillName),
+		attribute.String("session.id", sess.ID),
+	))
+	defer span.End()
 
 	slog.Debug("Running skill as sub-agent",
 		"agent", ca,
@@ -69,6 +80,9 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		}
 	}
 
+	// run_skill keeps the same agent (skills are sub-sessions of the
+	// caller, not delegations to another agent), so we never swap the
+	// runtime's currentAgent here.
 	return r.runForwarding(ctx, sess, evts, delegationRequest{
 		SubSessionConfig: SubSessionConfig{
 			Task:                prepared.Task,
@@ -78,15 +92,6 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 			Title:               "Skill: " + prepared.SkillName,
 			ToolsApproved:       sess.ToolsApproved,
 			ExcludedTools:       []string{builtin.ToolNameRunSkill},
-		},
-		// run_skill keeps the same agent (skills are sub-sessions of the
-		// caller, not delegations to another agent), so we never swap
-		// the runtime's currentAgent here.
-		SpanName: "runtime.run_skill",
-		SpanAttributes: []attribute.KeyValue{
-			attribute.String("agent", ca),
-			attribute.String("skill", prepared.SkillName),
-			attribute.String("session.id", sess.ID),
 		},
 	})
 }
