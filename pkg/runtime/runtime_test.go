@@ -2599,18 +2599,30 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 		assert.Nil(t, got.MultiContent)
 	})
 
-	t.Run("multi-content message with trailing text part gets newline on that part", func(t *testing.T) {
+	t.Run("multi-content message with last part text gets newline on that part", func(t *testing.T) {
 		sm := QueuedMessage{
 			MultiContent: []chat.MessagePart{
-				{Type: chat.MessagePartTypeText, Text: "look at this"},
 				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
 				{Type: chat.MessagePartTypeText, Text: "and this"},
 			},
 		}
 		got := appendNewlineToQueuedMessage(sm)
-		// Last text part (index 2) should have \n appended.
-		assert.Equal(t, "and this\n", got.MultiContent[2].Text)
-		// Other parts unchanged.
+		// Last part is text — \n appended to it.
+		assert.Equal(t, "and this\n", got.MultiContent[1].Text)
+		// Image part unchanged.
+		assert.Equal(t, chat.MessagePartTypeImageURL, got.MultiContent[0].Type)
+	})
+
+	t.Run("multi-content message with last part non-text is returned unchanged", func(t *testing.T) {
+		sm := QueuedMessage{
+			MultiContent: []chat.MessagePart{
+				{Type: chat.MessagePartTypeText, Text: "look at this"},
+				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
+			},
+		}
+		got := appendNewlineToQueuedMessage(sm)
+		// Last part is image — non-text parts have their own envelope separator;
+		// return unchanged.
 		assert.Equal(t, "look at this", got.MultiContent[0].Text)
 		assert.Equal(t, chat.MessagePartTypeImageURL, got.MultiContent[1].Type)
 	})

@@ -85,25 +85,24 @@ func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Se
 // appendNewlineToQueuedMessage returns sm with "\n" appended to its text
 // content; never mutates the caller's slice contents.
 // For plain-text messages Content is extended. For multi-content messages
-// the last text part is extended in a shallow copy of the slice. If no text
-// part exists (e.g. image-only), sm is returned unchanged — there is nothing
-// to glue against the next message.
+// only the last part is considered: if it is a text part, "\n" is appended
+// to it in a shallow copy of the slice. If the last part is not text type
+// (e.g. image), sm is returned unchanged — non-text parts carry their own
+// provider envelope that acts as a separator.
 func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
 	if len(sm.MultiContent) == 0 {
 		sm.Content += "\n"
 		return sm
 	}
+	// Only act if the last part is a text part.
+	last := len(sm.MultiContent) - 1
+	if sm.MultiContent[last].Type != chat.MessagePartTypeText {
+		return sm
+	}
 	// Shallow-copy the slice so we don't mutate the original.
 	parts := append([]chat.MessagePart(nil), sm.MultiContent...)
-	// Find the last text part and append \n to it.
-	for i := len(parts) - 1; i >= 0; i-- {
-		if parts[i].Type == chat.MessagePartTypeText {
-			parts[i].Text += "\n"
-			sm.MultiContent = parts
-			return sm
-		}
-	}
-	// No text part — nothing to glue against the next message; leave unchanged.
+	parts[last].Text += "\n"
+	sm.MultiContent = parts
 	return sm
 }
 
