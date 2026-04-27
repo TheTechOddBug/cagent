@@ -243,6 +243,13 @@ type LocalRuntime struct {
 	onToolsChanged func(Event)
 
 	bgAgents *agenttool.Handler
+
+	// delegator orchestrates sub-agent sessions (transfer_task, run_skill,
+	// run_background_agent, ...). It is the single seam through which all
+	// child sessions are built, run, and torn down so that telemetry,
+	// agent switching, and event forwarding stay consistent across
+	// features. See [delegator] for the contract.
+	delegator *delegator
 }
 
 type Opt func(*LocalRuntime)
@@ -361,6 +368,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		builtinsState:        builtinsState,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
+	r.delegator = newDelegator(r)
 
 	for _, opt := range opts {
 		opt(r)

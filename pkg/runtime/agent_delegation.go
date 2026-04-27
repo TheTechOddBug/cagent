@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
@@ -71,10 +69,11 @@ func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string)
 	return b.String()
 }
 
-// SubSessionConfig describes how to build and run a child session.
-// Both handleTaskTransfer and RunAgent (background agents) use this
-// to avoid duplicating session-construction logic. Future callers
-// (e.g. skill-as-sub-agent) can use it as well.
+// SubSessionConfig describes the shape of a child session: system prompt,
+// implicit user message, agent identity, tool approval, exclusions, etc.
+// It is the data input to [newSubSession]; the orchestration around
+// running such a session (telemetry, current-agent switching, event
+// forwarding) lives in [delegator].
 type SubSessionConfig struct {
 	// Task is the user-facing task description.
 	Task string
@@ -173,74 +172,6 @@ func mergeExcludedTools(parent, child []string) []string {
 	return merged
 }
 
-// runSubSessionForwarding runs a child session within the parent, forwarding all
-// events to the caller's event channel and propagating tool approval state
-// back to the parent when done.
-//
-// This is the "interactive" path used by transfer_task where the parent agent
-// loop is blocked while the child executes.
-func (r *LocalRuntime) runSubSessionForwarding(ctx context.Context, parent, child *session.Session, span trace.Span, evts chan Event, callerAgent string) (*tools.ToolCallResult, error) {
-	childEvents := r.RunStream(ctx, child)
-	for event := range childEvents {
-		evts <- event
-		if errEvent, ok := event.(*ErrorEvent); ok {
-			// Drain remaining events (including StreamStoppedEvent) so the
-			// TUI's streamDepth counter stays balanced.
-			for remaining := range childEvents {
-				evts <- remaining
-			}
-			span.RecordError(fmt.Errorf("%s", errEvent.Error))
-			span.SetStatus(codes.Error, "sub-session error")
-			return nil, fmt.Errorf("%s", errEvent.Error)
-		}
-	}
-
-	parent.ToolsApproved = child.ToolsApproved
-
-	parent.AddSubSession(child)
-	evts <- SubSessionCompleted(parent.ID, child, callerAgent)
-
-	span.SetStatus(codes.Ok, "sub-session completed")
-	return tools.ResultSuccess(child.GetLastAssistantMessageContent()), nil
-}
-
-// runSubSessionCollecting runs a child session, collecting output via an
-// optional content callback instead of forwarding events. This is the path
-// used by background agents and other non-interactive callers.
-//
-// It returns a RunResult containing either the final assistant message or
-// an error message.
-func (r *LocalRuntime) runSubSessionCollecting(ctx context.Context, parent, child *session.Session, onContent func(string)) *agenttool.RunResult {
-	var errMsg string
-	events := r.RunStream(ctx, child)
-	for event := range events {
-		if ctx.Err() != nil {
-			break
-		}
-		if choice, ok := event.(*AgentChoiceEvent); ok && choice.Content != "" {
-			if onContent != nil {
-				onContent(choice.Content)
-			}
-		}
-		if errEvt, ok := event.(*ErrorEvent); ok {
-			errMsg = errEvt.Error
-			break
-		}
-	}
-	// Drain remaining events so the RunStream goroutine can complete
-	// and close the channel without blocking on a full buffer.
-	for range events {
-	}
-
-	if errMsg != "" {
-		return &agenttool.RunResult{ErrMsg: errMsg}
-	}
-
-	result := child.GetLastAssistantMessageContent()
-	parent.AddSubSession(child)
-	return &agenttool.RunResult{Result: result}
-}
-
 // CurrentAgentSubAgentNames implements agenttool.Runner.
 func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 	a := r.CurrentAgent()
@@ -252,22 +183,18 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 
 // RunAgent implements agenttool.Runner. It starts a sub-agent synchronously and
 // blocks until completion or cancellation.
+//
+// Background tasks run with tools pre-approved because there is no user present
+// to respond to interactive approval prompts during async execution. This is a
+// deliberate design trade-off: the user implicitly authorises all tool calls
+// made by the sub-agent when they approve run_background_agent. Callers should
+// be aware that prompt injection in the sub-agent's context could exploit this
+// gate-bypass.
+//
+// TODO: propagate the parent session's per-tool permission rules once the
+// runtime supports per-session permission scoping rather than a single shared
+// ToolsApproved flag.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
-	child, err := r.team.Agent(params.AgentName)
-	if err != nil {
-		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
-	}
-
-	sess := params.ParentSession
-
-	// Background tasks run with tools pre-approved because there is no user present
-	// to respond to interactive approval prompts during async execution. This is a
-	// deliberate design trade-off: the user implicitly authorises all tool calls made
-	// by the sub-agent when they approve run_background_agent. Callers should be aware
-	// that prompt injection in the sub-agent's context could exploit this gate-bypass.
-	//
-	// TODO: propagate the parent session's per-tool permission rules once the runtime
-	// supports per-session permission scoping rather than a single shared ToolsApproved flag.
 	cfg := SubSessionConfig{
 		Task:           params.Task,
 		ExpectedOutput: params.ExpectedOutput,
@@ -276,10 +203,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 		ToolsApproved:  true,
 		PinAgent:       true,
 	}
-
-	s := newSubSession(sess, cfg, child)
-
-	return r.runSubSessionCollecting(ctx, sess, s, params.OnContent)
+	return r.delegator.runCollecting(ctx, params.ParentSession, cfg, params.OnContent)
 }
 
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
@@ -288,7 +212,6 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		Task           string `json:"task"`
 		ExpectedOutput string `json:"expected_output"`
 	}
-
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
@@ -300,51 +223,24 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		return errResult, nil
 	}
 
-	ctx, span := r.startSpan(ctx, "runtime.task_transfer", trace.WithAttributes(
-		attribute.String("from.agent", a.Name()),
-		attribute.String("to.agent", params.Agent),
-		attribute.String("session.id", sess.ID),
-	))
-	defer span.End()
-
 	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
 
-	// Emit agent switching start event
-	evts <- AgentSwitching(true, a.Name(), params.Agent)
-	r.executeOnAgentSwitchHooks(ctx, a, sess.ID, a.Name(), params.Agent, agentSwitchKindTransferTask)
-
-	r.setCurrentAgent(params.Agent)
-	defer func() {
-		r.setCurrentAgent(a.Name())
-
-		// Emit agent switching end event
-		evts <- AgentSwitching(false, params.Agent, a.Name())
-		r.executeOnAgentSwitchHooks(ctx, a, sess.ID, params.Agent, a.Name(), agentSwitchKindTransferTaskReturn)
-
-		// Restore original agent info in sidebar
-		evts <- AgentInfo(a.Name(), getAgentModelID(a), a.Description(), a.WelcomeMessage())
-	}()
-
-	// Emit agent info for the new agent
-	child, err := r.team.Agent(params.Agent)
-	if err != nil {
-		return nil, err
-	}
-	evts <- AgentInfo(child.Name(), getAgentModelID(child), child.Description(), child.WelcomeMessage())
-
-	slog.Debug("Creating new session with parent session", "parent_session_id", sess.ID, "tools_approved", sess.ToolsApproved)
-
-	cfg := SubSessionConfig{
-		Task:           params.Task,
-		ExpectedOutput: params.ExpectedOutput,
-		AgentName:      params.Agent,
-		Title:          "Transferred task",
-		ToolsApproved:  sess.ToolsApproved,
-	}
-
-	s := newSubSession(sess, cfg, child)
-
-	return r.runSubSessionForwarding(ctx, sess, s, span, evts, a.Name())
+	return r.delegator.runForwarding(ctx, sess, evts, delegationRequest{
+		SubSessionConfig: SubSessionConfig{
+			Task:           params.Task,
+			ExpectedOutput: params.ExpectedOutput,
+			AgentName:      params.Agent,
+			Title:          "Transferred task",
+			ToolsApproved:  sess.ToolsApproved,
+		},
+		SwitchCurrentAgent: true,
+		SpanName:           "runtime.task_transfer",
+		SpanAttributes: []attribute.KeyValue{
+			attribute.String("from.agent", a.Name()),
+			attribute.String("to.agent", params.Agent),
+			attribute.String("session.id", sess.ID),
+		},
+	})
 }
 
 func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ chan Event) (*tools.ToolCallResult, error) {

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -22,8 +21,9 @@ import (
 //
 // All skill-specific business rules (lookup, fork-mode validation, content
 // expansion) live in (*builtin.SkillsToolset).PrepareForkSubSession; this
-// handler keeps only the runtime-private orchestration: sub-session creation,
-// OpenTelemetry tracing, and event forwarding.
+// handler keeps only the runtime-private orchestration that the [delegator]
+// can't generalise — namely the optional model override that applies for
+// the sub-session's lifetime.
 //
 // This implements the `context: fork` behaviour from the SKILL.md frontmatter,
 // following the same convention as Claude Code.
@@ -43,15 +43,7 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		return errResult, nil
 	}
 
-	a := r.CurrentAgent()
-	ca := a.Name()
-
-	ctx, span := r.startSpan(ctx, "runtime.run_skill", trace.WithAttributes(
-		attribute.String("agent", ca),
-		attribute.String("skill", prepared.SkillName),
-		attribute.String("session.id", sess.ID),
-	))
-	defer span.End()
+	ca := r.CurrentAgentName()
 
 	slog.Debug("Running skill as sub-agent",
 		"agent", ca,
@@ -77,16 +69,24 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		}
 	}
 
-	cfg := SubSessionConfig{
-		Task:                prepared.Task,
-		SystemMessage:       prepared.Content,
-		ImplicitUserMessage: prepared.Task,
-		AgentName:           ca,
-		Title:               "Skill: " + prepared.SkillName,
-		ToolsApproved:       sess.ToolsApproved,
-		ExcludedTools:       []string{builtin.ToolNameRunSkill},
-	}
-
-	s := newSubSession(sess, cfg, a)
-	return r.runSubSessionForwarding(ctx, sess, s, span, evts, ca)
+	return r.delegator.runForwarding(ctx, sess, evts, delegationRequest{
+		SubSessionConfig: SubSessionConfig{
+			Task:                prepared.Task,
+			SystemMessage:       prepared.Content,
+			ImplicitUserMessage: prepared.Task,
+			AgentName:           ca,
+			Title:               "Skill: " + prepared.SkillName,
+			ToolsApproved:       sess.ToolsApproved,
+			ExcludedTools:       []string{builtin.ToolNameRunSkill},
+		},
+		// run_skill keeps the same agent (skills are sub-sessions of the
+		// caller, not delegations to another agent), so we never swap
+		// the runtime's currentAgent here.
+		SpanName: "runtime.run_skill",
+		SpanAttributes: []attribute.KeyValue{
+			attribute.String("agent", ca),
+			attribute.String("skill", prepared.SkillName),
+			attribute.String("session.id", sess.ID),
+		},
+	})
 }
