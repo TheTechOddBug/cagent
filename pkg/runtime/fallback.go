@@ -78,53 +78,21 @@ func logRetryBackoff(agentName, modelID string, attempt int, backoffDelay time.D
 		"backoff", backoffDelay)
 }
 
-// getCooldownState returns the current cooldown state for an agent (thread-safe).
-// Returns nil if no cooldown is active or if cooldown has expired.
-// Expired entries are evicted to prevent stale state accumulation.
+// getCooldownState returns the active cooldown for an agent, or nil when
+// no cooldown is active or it has expired. Expired entries are evicted
+// inside the cooldown manager.
 func (r *LocalRuntime) getCooldownState(agentName string) *fallbackCooldownState {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	state := r.fallbackCooldowns[agentName]
-	if state == nil {
-		return nil
-	}
-
-	// Check if cooldown has expired; evict if so
-	if r.now().After(state.until) {
-		delete(r.fallbackCooldowns, agentName)
-		return nil
-	}
-
-	return state
+	return r.cooldowns.Get(agentName)
 }
 
-// setCooldownState sets the cooldown state for an agent (thread-safe).
+// setCooldownState activates a cooldown for an agent.
 func (r *LocalRuntime) setCooldownState(agentName string, fallbackIndex int, cooldownDuration time.Duration) {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	r.fallbackCooldowns[agentName] = &fallbackCooldownState{
-		fallbackIndex: fallbackIndex,
-		until:         r.now().Add(cooldownDuration),
-	}
-
-	slog.Info("Fallback cooldown activated",
-		"agent", agentName,
-		"fallback_index", fallbackIndex,
-		"cooldown", cooldownDuration,
-		"until", r.fallbackCooldowns[agentName].until.Format(time.RFC3339))
+	r.cooldowns.Set(agentName, fallbackIndex, cooldownDuration)
 }
 
-// clearCooldownState clears the cooldown state for an agent (thread-safe).
+// clearCooldownState removes any active cooldown for an agent.
 func (r *LocalRuntime) clearCooldownState(agentName string) {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	if _, exists := r.fallbackCooldowns[agentName]; exists {
-		delete(r.fallbackCooldowns, agentName)
-		slog.Debug("Fallback cooldown cleared", "agent", agentName)
-	}
+	r.cooldowns.Clear(agentName)
 }
 
 // getEffectiveCooldown returns the cooldown duration to use for an agent.

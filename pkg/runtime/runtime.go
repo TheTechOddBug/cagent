@@ -224,9 +224,10 @@ type LocalRuntime struct {
 	// Library consumers can enable this via WithRetryOnRateLimit().
 	retryOnRateLimit bool
 
-	// fallbackCooldowns tracks per-agent cooldown state for sticky fallback behavior
-	fallbackCooldowns    map[string]*fallbackCooldownState
-	fallbackCooldownsMux sync.RWMutex
+	// cooldowns owns the per-agent fallback-cooldown state. See
+	// cooldown_manager.go for the eviction contract; the manager reads
+	// the runtime's clock so WithClock makes cooldown windows testable.
+	cooldowns *cooldownManager
 
 	currentAgentMu sync.RWMutex
 
@@ -407,28 +408,32 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	r := &LocalRuntime{
-		toolMap:              make(map[string]ToolHandlerFunc),
-		team:                 agents,
-		currentAgent:         defaultAgent.Name(),
-		resumeChan:           make(chan ResumeRequest),
-		elicitationRequestCh: make(chan ElicitationResult),
-		steerQueue:           NewInMemoryMessageQueue(defaultSteerQueueCapacity),
-		followUpQueue:        NewInMemoryMessageQueue(defaultFollowUpQueueCapacity),
-		sessionCompaction:    true,
-		managedOAuth:         true,
-		sessionStore:         session.NewInMemorySessionStore(),
-		fallbackCooldowns:    make(map[string]*fallbackCooldownState),
+		toolMap:                make(map[string]ToolHandlerFunc),
+		team:                   agents,
+		currentAgent:           defaultAgent.Name(),
+		resumeChan:             make(chan ResumeRequest),
+		elicitationRequestCh:   make(chan ElicitationResult),
+		steerQueue:             NewInMemoryMessageQueue(defaultSteerQueueCapacity),
+		followUpQueue:          NewInMemoryMessageQueue(defaultFollowUpQueueCapacity),
+		sessionCompaction:      true,
+		managedOAuth:           true,
+		sessionStore:           session.NewInMemorySessionStore(),
 		hooksRegistry:          hooksRegistry,
 		builtinsState:          builtinsState,
 		now:                    time.Now,
 		telemetry:              defaultTelemetry{},
 		maxOverflowCompactions: defaultMaxOverflowCompactions,
 	}
+	r.cooldowns = newCooldownManager(r.now)
 	r.bgAgents = agenttool.NewHandler(r)
 
 	for _, opt := range opts {
 		opt(r)
 	}
+
+	// If WithClock changed the runtime's clock, the cooldown manager must
+	// see it too — rebuild it now that opts have run.
+	r.cooldowns = newCooldownManager(r.now)
 
 	// Default the runtime's working directory to the process CWD when no
 	// caller supplied one. This matches the session's default and ensures
