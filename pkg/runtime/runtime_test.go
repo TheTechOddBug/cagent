@@ -2588,3 +2588,165 @@ func TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream(t *testing.T) {
 	assert.NotContains(t, steerSessionMsg.Message.Content, "<system-reminder>",
 		"end-of-iteration steer must NOT use the system-reminder envelope")
 }
+
+func TestAppendNewlineToQueuedMessage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("plain-text message gets newline appended to Content", func(t *testing.T) {
+		sm := QueuedMessage{Content: "hello"}
+		got := appendNewlineToQueuedMessage(sm)
+		assert.Equal(t, "hello\n", got.Content)
+		assert.Nil(t, got.MultiContent)
+	})
+
+	t.Run("multi-content message with trailing text part gets newline on that part", func(t *testing.T) {
+		sm := QueuedMessage{
+			MultiContent: []chat.MessagePart{
+				{Type: chat.MessagePartTypeText, Text: "look at this"},
+				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
+				{Type: chat.MessagePartTypeText, Text: "and this"},
+			},
+		}
+		got := appendNewlineToQueuedMessage(sm)
+		// Last text part (index 2) should have \n appended.
+		assert.Equal(t, "and this\n", got.MultiContent[2].Text)
+		// Other parts unchanged.
+		assert.Equal(t, "look at this", got.MultiContent[0].Text)
+		assert.Equal(t, chat.MessagePartTypeImageURL, got.MultiContent[1].Type)
+	})
+
+	t.Run("multi-content message with no text part gets a new text part appended", func(t *testing.T) {
+		sm := QueuedMessage{
+			MultiContent: []chat.MessagePart{
+				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
+			},
+		}
+		got := appendNewlineToQueuedMessage(sm)
+		require.Len(t, got.MultiContent, 2)
+		assert.Equal(t, chat.MessagePartTypeText, got.MultiContent[1].Type)
+		assert.Equal(t, "\n", got.MultiContent[1].Text)
+	})
+
+	t.Run("original QueuedMessage is not mutated", func(t *testing.T) {
+		parts := []chat.MessagePart{
+			{Type: chat.MessagePartTypeText, Text: "original"},
+		}
+		sm := QueuedMessage{MultiContent: parts}
+		_ = appendNewlineToQueuedMessage(sm)
+		assert.Equal(t, "original", parts[0].Text, "original slice must not be mutated")
+	})
+}
+
+// TestDrainAndEmitSteered_MultipleMessages verifies that when multiple messages
+// are drained from the steer queue, each is emitted as a separate session
+// message and non-last messages have "\n" appended to their content, preventing
+// the LLM from tokenising adjacent words across message boundaries as a run-on
+// string.
+func TestDrainAndEmitSteered_MultipleMessages(t *testing.T) {
+	t.Parallel()
+
+	// Use a stream that never gets called — we only exercise drainAndEmitSteered directly.
+	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
+	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	// Enqueue three plain-text steer messages before draining.
+	require.NoError(t, rt.Steer(QueuedMessage{Content: "first"}))
+	require.NoError(t, rt.Steer(QueuedMessage{Content: "second"}))
+	require.NoError(t, rt.Steer(QueuedMessage{Content: "third"}))
+
+	sess := session.New()
+	events := make(chan Event, 16)
+
+	drained := rt.drainAndEmitSteered(t.Context(), sess, events)
+	close(events)
+
+	assert.True(t, drained, "should report messages were drained")
+
+	// Three separate session messages must have been added.
+	var userMsgs []string
+	for _, item := range sess.Messages {
+		if item.IsMessage() && item.Message.Message.Role == chat.MessageRoleUser {
+			userMsgs = append(userMsgs, item.Message.Message.Content)
+		}
+	}
+	require.Len(t, userMsgs, 3, "expected 3 independent user messages")
+
+	// Non-last messages must have "\n" appended; the last must not.
+	assert.Equal(t, "first\n", userMsgs[0])
+	assert.Equal(t, "second\n", userMsgs[1])
+	assert.Equal(t, "third", userMsgs[2])
+
+	// The UserMessageEvent contents must mirror the session messages.
+	var eventMsgs []string
+	for ev := range events {
+		if ue, ok := ev.(*UserMessageEvent); ok {
+			eventMsgs = append(eventMsgs, ue.Message)
+		}
+	}
+	require.Len(t, eventMsgs, 3)
+	assert.Equal(t, "first\n", eventMsgs[0])
+	assert.Equal(t, "second\n", eventMsgs[1])
+	assert.Equal(t, "third", eventMsgs[2])
+}
+
+// TestDrainAndEmitSteered_MultiContent verifies that the "\n" separator is
+// correctly appended to multi-content messages: specifically to the last text
+// part rather than the Content field.
+func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
+	t.Parallel()
+
+	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
+	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	// Two multi-content messages.
+	require.NoError(t, rt.Steer(QueuedMessage{
+		Content: "first",
+		MultiContent: []chat.MessagePart{
+			{Type: chat.MessagePartTypeText, Text: "first"},
+			{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/a.png"}},
+			{Type: chat.MessagePartTypeText, Text: "first-text-after-img"},
+		},
+	}))
+	require.NoError(t, rt.Steer(QueuedMessage{
+		Content: "second",
+		MultiContent: []chat.MessagePart{
+			{Type: chat.MessagePartTypeText, Text: "second"},
+		},
+	}))
+
+	sess := session.New()
+	events := make(chan Event, 16)
+
+	drained := rt.drainAndEmitSteered(t.Context(), sess, events)
+	close(events)
+
+	assert.True(t, drained)
+
+	// Two session messages.
+	var items []session.Item
+	for _, item := range sess.Messages {
+		if item.IsMessage() && item.Message.Message.Role == chat.MessageRoleUser {
+			items = append(items, item)
+		}
+	}
+	require.Len(t, items, 2)
+
+	// First message: last text part must have "\n" appended.
+	firstParts := items[0].Message.Message.MultiContent
+	require.Len(t, firstParts, 3)
+	assert.Equal(t, "first-text-after-img\n", firstParts[2].Text, "last text part of non-last message should have \\n")
+	assert.Equal(t, "first", firstParts[0].Text, "other text parts must be unchanged")
+
+	// Second (last) message: no modification.
+	secondParts := items[1].Message.Message.MultiContent
+	require.Len(t, secondParts, 1)
+	assert.Equal(t, "second", secondParts[0].Text, "last message must not be modified")
+}
