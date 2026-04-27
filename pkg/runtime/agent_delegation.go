@@ -55,6 +55,7 @@ func buildTaskSystemMessage(task, expectedOutput string) string {
 	if expectedOutput != "" {
 		msg += fmt.Sprintf("\n\n<expected_output>\n%s\n</expected_output>", expectedOutput)
 	}
+	msg += "\n\nIf the task references files, treat any absolute paths in <task> as authoritative and use them as-is. If a referenced file is given by name only (e.g. \"foo.go\"), do not guess: search the workspace or ask the calling agent for the absolute path before reading or modifying the file."
 	return msg
 }
 
