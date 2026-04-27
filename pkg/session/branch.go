@@ -90,7 +90,7 @@ func copySessionMetadata(dst, src *Session, title string) {
 	dst.Permissions = clonePermissionsConfig(src.Permissions)
 	dst.AgentModelOverrides = cloneStringMap(src.AgentModelOverrides)
 	dst.CustomModelsUsed = cloneStringSlice(src.CustomModelsUsed)
-	dst.AttachedFiles = cloneStringSlice(src.AttachedFilesSnapshot())
+	dst.AttachedFiles = src.AttachedFilesSnapshot()
 }
 
 // generateBranchTitle creates a title for a branched session based on the parent title.
