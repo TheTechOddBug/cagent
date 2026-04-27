@@ -17,30 +17,28 @@ func addEnvironmentInfo(_ context.Context, in *hooks.Input, _ []string) (*hooks.
 	if in == nil || in.Cwd == "" {
 		return nil, nil
 	}
-	return hooks.NewAdditionalContextOutput(hooks.EventSessionStart, getEnvironmentInfo(in.Cwd)), nil
+	return hooks.NewAdditionalContextOutput(hooks.EventSessionStart, environmentInfo(in.Cwd)), nil
 }
 
-// getEnvironmentInfo returns formatted environment information including
-// working directory, git repository status, and platform information.
-func getEnvironmentInfo(workingDir string) string {
+// environmentInfo formats the env block injected at session_start:
+// working directory, git-repo status, and human-readable OS / arch.
+func environmentInfo(workingDir string) string {
+	gitRepo := "No"
+	if isGitRepo(workingDir) {
+		gitRepo = "Yes"
+	}
 	return fmt.Sprintf(`Here is useful information about the environment you are running in:
 	<env>
 	Working directory: %s
 	Is directory a git repo: %s
 	Operating System: %s
 	CPU Architecture: %s
-	</env>`, workingDir, boolToYesNo(isGitRepo(workingDir)), getOperatingSystem(), getArchitecture())
+	</env>`, workingDir, gitRepo, displayOS(), displayArch())
 }
 
-// boolToYesNo converts a boolean to "Yes" or "No" string.
-func boolToYesNo(b bool) string {
-	if b {
-		return "Yes"
-	}
-	return "No"
-}
-
-func getOperatingSystem() string {
+// displayOS returns a friendlier label for the common values of
+// runtime.GOOS, falling back to GOOS itself for anything exotic.
+func displayOS() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return "MacOS"
@@ -53,13 +51,11 @@ func getOperatingSystem() string {
 	}
 }
 
-func getArchitecture() string {
-	switch runtime.GOARCH {
-	case "amd64":
+// displayArch maps amd64 to its more familiar "x64" alias and passes
+// every other value of runtime.GOARCH through unchanged.
+func displayArch() string {
+	if runtime.GOARCH == "amd64" {
 		return "x64"
-	case "arm64":
-		return "arm64"
-	default:
-		return runtime.GOARCH
 	}
+	return runtime.GOARCH
 }
