@@ -1704,6 +1704,9 @@ type HookMatcherConfig struct {
 
 // HookDefinition represents a single hook configuration
 type HookDefinition struct {
+	// Name gives the hook a friendly label for logs and runtime events.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+
 	// Type specifies the hook type. Supported values:
 	//   - "command":  run a shell command (default)
 	//   - "builtin":  invoke a named, in-process Go function (the name
@@ -1725,6 +1728,15 @@ type HookDefinition struct {
 
 	// Timeout is the execution timeout in seconds (default: 60)
 	Timeout int `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+
+	// Env adds or overrides environment variables for this hook only.
+	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+
+	// WorkingDir overrides the runtime working directory for this hook.
+	WorkingDir string `json:"working_dir,omitempty" yaml:"working_dir,omitempty"`
+
+	// OnError controls non-fail-closed hook failures: warn (default), ignore, or block.
+	OnError string `json:"on_error,omitempty" yaml:"on_error,omitempty"`
 }
 
 // GetTimeout returns the per-hook execution timeout, defaulting to 60
@@ -1734,6 +1746,18 @@ func (h *HookDefinition) GetTimeout() time.Duration {
 		return 60 * time.Second
 	}
 	return time.Duration(h.Timeout) * time.Second
+}
+
+// DisplayName returns a human-friendly identifier for the hook: the
+// configured Name when set, otherwise the Command, otherwise the Type.
+func (h *HookDefinition) DisplayName() string {
+	if h.Name != "" {
+		return h.Name
+	}
+	if h.Command != "" {
+		return h.Command
+	}
+	return h.Type
 }
 
 // validate validates the HooksConfig

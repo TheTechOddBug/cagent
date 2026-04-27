@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -205,4 +208,43 @@ type handlerFunc func(context.Context, []byte) (HandlerResult, error)
 
 func (f handlerFunc) Run(ctx context.Context, input []byte) (HandlerResult, error) {
 	return f(ctx, input)
+}
+
+func TestCommandHookUsesPerHookEnvAndWorkingDir(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	scriptsDir := filepath.Join(baseDir, "scripts")
+	require.NoError(t, os.Mkdir(scriptsDir, 0o755))
+
+	exec := NewExecutor(&Config{SessionStart: []Hook{{
+		Type:       HookTypeCommand,
+		Command:    `printf '{"hook_specific_output":{"additional_context":"%s:%s"}}' "$HOOK_VALUE" "$(pwd)"`,
+		Env:        map[string]string{"HOOK_VALUE": "from-hook"},
+		WorkingDir: "scripts",
+	}}}, baseDir, os.Environ())
+
+	result, err := exec.Dispatch(t.Context(), EventSessionStart, &Input{SessionID: "s"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(result.AdditionalContext, "from-hook:"), result.AdditionalContext)
+	assert.True(t, strings.HasSuffix(result.AdditionalContext, "/scripts"), result.AdditionalContext)
+}
+
+func TestHookOnErrorBlockCanDenyNonFailClosedEvent(t *testing.T) {
+	t.Parallel()
+
+	exec := NewExecutor(&Config{PostToolUse: []MatcherConfig{{
+		Matcher: "*",
+		Hooks: []Hook{{
+			Type:    HookTypeBuiltin,
+			Command: "missing",
+			Name:    "missing builtin",
+			OnError: string(ErrorPolicyBlock),
+		}},
+	}}}, t.TempDir(), nil)
+
+	result, err := exec.Dispatch(t.Context(), EventPostToolUse, &Input{SessionID: "s", ToolName: "shell"})
+	require.NoError(t, err)
+	assert.False(t, result.Allowed)
+	assert.Contains(t, result.Message, "no builtin hook registered")
 }

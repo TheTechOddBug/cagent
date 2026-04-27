@@ -602,6 +602,10 @@
       "type": "object",
       "description": "Definition of a single hook command",
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional friendly hook name used in logs and runtime hook events."
+        },
         "type": {
           "type": "string",
           "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime. The docker-agent runtime ships these builtins: 'add_date', 'add_environment_info', 'add_prompt_files'.",
@@ -626,6 +630,27 @@
           "description": "Execution timeout in seconds (default: 60)",
           "minimum": 1,
           "default": 60
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables to add or override for this hook only.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "Working directory for this hook. Relative paths are resolved from the agent working directory."
+        },
+        "on_error": {
+          "type": "string",
+          "description": "How non-fail-closed hook failures are handled. 'warn' logs and continues (default), 'ignore' continues silently, and 'block' denies the event.",
+          "enum": [
+            "warn",
+            "ignore",
+            "block"
+          ],
+          "default": "warn"
         }
       },
       "required": [

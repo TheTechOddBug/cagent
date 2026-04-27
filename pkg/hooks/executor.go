@@ -189,7 +189,8 @@ func dedupKey(h Hook) string {
 type hookResult struct {
 	HandlerResult
 
-	err error
+	hook Hook
+	err  error
 }
 
 // runHook resolves the hook's [HookType] in the registry, applies its
@@ -198,18 +199,18 @@ type hookResult struct {
 func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hookResult {
 	factory, ok := e.registry.Lookup(hook.Type)
 	if !ok {
-		return hookResult{err: fmt.Errorf("unsupported hook type: %s", hook.Type)}
+		return hookResult{hook: hook, err: fmt.Errorf("unsupported hook type: %s", hook.Type)}
 	}
 	handler, err := factory(HandlerEnv{WorkingDir: e.workingDir, Env: e.env}, hook)
 	if err != nil {
-		return hookResult{err: err}
+		return hookResult{hook: hook, err: err}
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, hook.GetTimeout())
 	defer cancel()
 
 	res, err := handler.Run(timeoutCtx, inputJSON)
-	r := hookResult{HandlerResult: res}
+	r := hookResult{HandlerResult: res, hook: hook}
 
 	// markFailed turns r into a "did not complete" outcome: the
 	// handler's diagnostic stdout/stderr survive (aggregate surfaces
@@ -270,14 +271,18 @@ func aggregate(results []hookResult, event EventType) *Result {
 	for _, r := range results {
 		switch {
 		case r.err != nil:
-			if spec.FailClosed {
-				slog.Warn("PreToolUse hook failed to execute; denying tool call", "error", r.err)
+			policy := ErrorPolicy(r.hook.OnError)
+			if policy == "" {
+				policy = ErrorPolicyWarn
+			}
+			if spec.FailClosed || policy == ErrorPolicyBlock {
+				slog.Warn("Hook failed; blocking event", "hook", r.hook.DisplayName(), "error", r.err)
 				final.Allowed = false
 				final.ExitCode = -1
 				final.Stderr = r.Stderr
 				messages = append(messages, fmt.Sprintf("PreToolUse hook failed to execute: %v", r.err))
-			} else {
-				slog.Warn("Hook execution error", "error", r.err)
+			} else if policy != ErrorPolicyIgnore {
+				slog.Warn("Hook execution error", "hook", r.hook.DisplayName(), "error", r.err)
 			}
 			continue
 

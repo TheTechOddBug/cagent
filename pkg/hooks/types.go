@@ -76,7 +76,15 @@ type Input struct {
 // ToJSON serializes the input.
 func (i *Input) ToJSON() ([]byte, error) { return json.Marshal(i) }
 
-// Decision is a permission decision returned by a hook.
+// ErrorPolicy controls what happens when a non-fail-closed hook fails.
+type ErrorPolicy string
+
+const (
+	ErrorPolicyWarn   ErrorPolicy = "warn"
+	ErrorPolicyIgnore ErrorPolicy = "ignore"
+	ErrorPolicyBlock  ErrorPolicy = "block"
+)
+
 type Decision string
 
 const (
