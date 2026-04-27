@@ -203,6 +203,12 @@ func newRouter(s *server, opts Options) http.Handler {
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.BodyLimit(strconv.FormatInt(maxBytes, 10)))
 	e.Use(requestTimeoutMiddleware(timeout))
+
+	// Register /openapi.json *before* the bearer-auth middleware so the
+	// schema is reachable for introspection without credentials. CORS
+	// configuration is then layered for /v1/* routes.
+	e.GET("/openapi.json", s.handleOpenAPI)
+
 	if opts.APIKey != "" {
 		e.Use(bearerAuthMiddleware(opts.APIKey))
 	}
@@ -325,6 +331,11 @@ func bearerAuthMiddleware(expected string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if c.Request().Method == http.MethodOptions {
+				return next(c)
+			}
+			// Schema introspection is always reachable so tooling can
+			// discover the API without credentials.
+			if c.Path() == "/openapi.json" {
 				return next(c)
 			}
 			got, ok := strings.CutPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
