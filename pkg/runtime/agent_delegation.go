@@ -49,13 +49,26 @@ func validateAgentInList(currentAgent, targetAgent, action, listDesc string, age
 }
 
 // buildTaskSystemMessage constructs the system message for a delegated task.
-func buildTaskSystemMessage(task, expectedOutput string) string {
-	msg := "You are a member of a team of agents. Your goal is to complete the following task:"
-	msg += fmt.Sprintf("\n\n<task>\n%s\n</task>", task)
+// attachedFiles, when non-empty, lists absolute paths of files the user
+// attached to the parent conversation; they are surfaced to the sub-agent so
+// it can use them directly without scanning the workspace or guessing from a
+// bare filename.
+func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string) string {
+	var b strings.Builder
+	b.WriteString("You are a member of a team of agents. Your goal is to complete the following task:")
+	fmt.Fprintf(&b, "\n\n<task>\n%s\n</task>", task)
 	if expectedOutput != "" {
-		msg += fmt.Sprintf("\n\n<expected_output>\n%s\n</expected_output>", expectedOutput)
+		fmt.Fprintf(&b, "\n\n<expected_output>\n%s\n</expected_output>", expectedOutput)
 	}
-	return msg
+	if len(attachedFiles) > 0 {
+		b.WriteString("\n\nThe user attached these files in the original conversation. They are available for you to read at these absolute paths; prefer them over any bare filenames mentioned in <task>:\n<attached_files>")
+		for _, p := range attachedFiles {
+			fmt.Fprintf(&b, "\n- %s", p)
+		}
+		b.WriteString("\n</attached_files>")
+	}
+	b.WriteString("\n\nIf the task references files, treat any absolute paths in <task> as authoritative and use them as-is. If a referenced file is given by name only (e.g. \"foo.go\"), do not guess: search the workspace or ask the calling agent for the absolute path before reading or modifying the file.")
+	return b.String()
 }
 
 // SubSessionConfig describes how to build and run a child session.
@@ -95,9 +108,16 @@ type SubSessionConfig struct {
 // session. It consolidates the session options that were previously duplicated
 // across handleTaskTransfer and RunAgent.
 func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *agent.Agent) *session.Session {
+	// Sub-agents start in a fresh session, so they don't see the user's
+	// original messages or attached files. Snapshot the parent's attached
+	// files once and propagate them both to the system prompt (so the agent
+	// is told about them) and to the child session (so further nested
+	// transfers keep inheriting them).
+	attachedFiles := parent.AttachedFilesSnapshot()
+
 	sysMsg := cfg.SystemMessage
 	if sysMsg == "" {
-		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput)
+		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput, attachedFiles)
 	}
 
 	userMsg := cfg.ImplicitUserMessage
@@ -115,6 +135,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		session.WithToolsApproved(cfg.ToolsApproved),
 		session.WithSendUserMessage(false),
 		session.WithParentID(parent.ID),
+		session.WithAttachedFiles(attachedFiles),
 	}
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))

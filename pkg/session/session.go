@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -135,6 +136,14 @@ type Session struct {
 	// CustomModelsUsed tracks custom models (provider/model format) used during this session.
 	// These are shown in the model picker for easy re-selection.
 	CustomModelsUsed []string `json:"custom_models_used,omitempty"`
+
+	// AttachedFiles records absolute paths of files the user attached to this
+	// session via the editor's @-mentions, the in-message /attach directive, or
+	// the CLI --attach flag. Sub-sessions created via task transfer inherit
+	// this list so that delegated agents can reference the same files without
+	// having to scan the workspace or guess from a bare filename. Paths are
+	// deduplicated and order-preserved.
+	AttachedFiles []string `json:"attached_files,omitempty"`
 
 	// ExcludedTools lists tool names that should be filtered out of the agent's
 	// tool list for this session. This is used by skill sub-sessions to prevent
@@ -481,6 +490,39 @@ func (s *Session) AddMessageUsageRecord(agentName, model string, cost float64, u
 	})
 }
 
+// AddAttachedFile records absPath as a file the user attached to this session.
+// The path must be absolute; relative paths are silently dropped (with a debug
+// log) since they would be ambiguous to sub-agents started in a fresh working
+// directory. Empty paths and duplicates already present in AttachedFiles are
+// also dropped.
+//
+// The recorded paths are propagated to sub-sessions created via task transfer
+// so that delegated agents can read the same files without having to scan the
+// workspace or guess from a bare filename.
+func (s *Session) AddAttachedFile(absPath string) {
+	if absPath == "" {
+		return
+	}
+	if !filepath.IsAbs(absPath) {
+		slog.Debug("ignoring non-absolute attached file path", "session_id", s.ID, "path", absPath)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if slices.Contains(s.AttachedFiles, absPath) {
+		return
+	}
+	s.AttachedFiles = append(s.AttachedFiles, absPath)
+}
+
+// AttachedFilesSnapshot returns a copy of the session's attached file paths.
+// Callers may freely mutate the returned slice without affecting the session.
+func (s *Session) AttachedFilesSnapshot() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.AttachedFiles)
+}
+
 type Opt func(s *Session)
 
 func WithUserMessage(content string) Opt {
@@ -608,6 +650,17 @@ func WithExcludedTools(names []string) Opt {
 	}
 }
 
+// WithAttachedFiles seeds the session with absolute paths of files the user
+// attached. Used when creating sub-sessions so that delegated agents inherit
+// the parent's file context. Empty and duplicate paths are dropped.
+func WithAttachedFiles(paths []string) Opt {
+	return func(s *Session) {
+		for _, p := range paths {
+			s.AddAttachedFile(p)
+		}
+	}
+}
+
 // IsSubSession returns true if this session is a sub-session (has a parent).
 func (s *Session) IsSubSession() bool {
 	return s.ParentID != ""
@@ -713,7 +766,7 @@ func buildInvariantSystemMessages(a *agent.Agent) []chat.Message {
 
 		messages = append(messages, chat.Message{
 			Role:    chat.MessageRoleSystem,
-			Content: "You are a multi-agent system, make sure to answer the user query in the most helpful way possible. You have access to these sub-agents:\n" + text.String() + "\nIMPORTANT: You can ONLY transfer tasks to the agents listed above using their ID. The valid agent names are: " + strings.Join(validAgentIDs, ", ") + ". You MUST NOT attempt to transfer to any other agent IDs - doing so will cause system errors.\n\nIf you are the best to answer the question according to your description, you can answer it.\n\nIf another agent is better for answering the question according to its description, call `transfer_task` function to transfer the question to that agent using the agent's ID. When transferring, do not generate any text other than the function call.\n\n",
+			Content: "You are a multi-agent system, make sure to answer the user query in the most helpful way possible. You have access to these sub-agents:\n" + text.String() + "\nIMPORTANT: You can ONLY transfer tasks to the agents listed above using their ID. The valid agent names are: " + strings.Join(validAgentIDs, ", ") + ". You MUST NOT attempt to transfer to any other agent IDs - doing so will cause system errors.\n\nIf you are the best to answer the question according to your description, you can answer it.\n\nIf another agent is better for answering the question according to its description, call `transfer_task` function to transfer the question to that agent using the agent's ID. When transferring, do not generate any text other than the function call.\n\nWhen the task involves files, always include their absolute paths in the `task` description (never just bare filenames). Sub-agents start in a fresh session and do not see the conversation history or files attached by the user, so a non-absolute path may resolve to the wrong file or force the sub-agent to scan the filesystem.\n\n",
 		})
 	}
 
