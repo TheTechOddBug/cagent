@@ -191,9 +191,8 @@ type LocalRuntime struct {
 	sessionCompaction           bool
 	managedOAuth                bool
 	startupInfoEmitted          bool                   // Track if startup info has been emitted to avoid unnecessary duplication
-	elicitationRequestCh        chan ElicitationResult // Channel for receiving elicitation responses
-	elicitationEventsChannel    chan Event             // Current events channel for sending elicitation requests
-	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
+	elicitationRequestCh chan ElicitationResult // Channel for receiving elicitation responses
+	elicitation          elicitationBridge      // Owns the per-stream events channel for outbound elicitation requests
 	sessionStore                session.Store
 	workingDir                  string   // Working directory for hooks execution
 	env                         []string // Environment variables for hooks execution
@@ -1061,12 +1060,11 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 // events channel and returns the previous one. Each RunStream call swaps in
 // its own channel on entry and swaps the previous one back on exit, so nested
 // streams (sub-sessions, background agents) don't lose the parent's channel.
+//
+// Delegates to elicitationBridge; kept on LocalRuntime for the existing
+// callsites in loop.go.
 func (r *LocalRuntime) swapElicitationEventsChannel(ch chan Event) chan Event {
-	r.elicitationEventsChannelMux.Lock()
-	defer r.elicitationEventsChannelMux.Unlock()
-	prev := r.elicitationEventsChannel
-	r.elicitationEventsChannel = ch
-	return prev
+	return r.elicitation.swap(ch)
 }
 
 // elicitationHandler creates an elicitation handler that can be used by MCP clients
@@ -1074,23 +1072,16 @@ func (r *LocalRuntime) swapElicitationEventsChannel(ch chan Event) chan Event {
 func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
 	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
 
-	// Hold the read lock while sending to the channel to prevent a race
-	// with swapElicitationEventsChannel / close(events).
-	r.elicitationEventsChannelMux.RLock()
-	eventsChannel := r.elicitationEventsChannel
-	if eventsChannel == nil {
-		r.elicitationEventsChannelMux.RUnlock()
-		return tools.ElicitationResult{}, errors.New("no events channel available for elicitation")
-	}
-
 	r.executeOnUserInputHooks(ctx, "", "elicitation")
 
 	slog.Debug("Sending elicitation request event to client", "message", req.Message, "mode", req.Mode, "requested_schema", req.RequestedSchema, "url", req.URL)
 	slog.Debug("Elicitation request meta", "meta", req.Meta)
 
-	// Send elicitation request event to the runtime's client
-	eventsChannel <- ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, r.CurrentAgentName())
-	r.elicitationEventsChannelMux.RUnlock()
+	if err := r.elicitation.send(
+		ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, r.CurrentAgentName()),
+	); err != nil {
+		return tools.ElicitationResult{}, err
+	}
 
 	// Wait for response from the client
 	select {
