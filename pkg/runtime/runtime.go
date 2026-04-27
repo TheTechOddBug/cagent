@@ -397,11 +397,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	if r.modelsStore == nil {
-		modelsStore, err := modelsdev.NewStore()
-		if err != nil {
-			return nil, err
-		}
-		r.modelsStore = modelsStore
+		r.modelsStore = &lazyModelStore{}
 	}
 
 	// Validate that the current agent exists and has a model
