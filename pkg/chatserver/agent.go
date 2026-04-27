@@ -115,10 +115,11 @@ func buildSession(messages []ChatCompletionMessage) *session.Session {
 // runtime always blocks until we respond, so its case is required for
 // correctness, not just defence.
 //
-// The first error reported by the runtime is surfaced; later events in
-// the same run are still drained so the runtime can shut down cleanly.
+// All ErrorEvents seen in the run are joined into the returned error so
+// callers can see the full picture; the loop keeps draining until the
+// stream closes so the runtime can shut down cleanly.
 func runAgentLoop(ctx context.Context, rt runtime.Runtime, sess *session.Session, emit func(string)) error {
-	var runErr error
+	var runErrs []error
 	for ev := range rt.RunStream(ctx, sess) {
 		switch e := ev.(type) {
 		case *runtime.AgentChoiceEvent:
@@ -137,12 +138,10 @@ func runAgentLoop(ctx context.Context, rt runtime.Runtime, sess *session.Session
 			// stops on its own and this Resume is dropped.
 			rt.Resume(ctx, runtime.ResumeReject(""))
 		case *runtime.ErrorEvent:
-			if runErr == nil {
-				runErr = errors.New(e.Error)
-			}
+			runErrs = append(runErrs, errors.New(e.Error))
 		}
 	}
-	return runErr
+	return errors.Join(runErrs...)
 }
 
 // sessionUsage extracts approximate token usage from a completed session,
