@@ -20,6 +20,11 @@ func openMemoryStore(t *testing.T) *SQLiteSessionStore {
 	// the test does not depend on a working filesystem.
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
+	// Register the db cleanup before any potentially failing call so the
+	// connection is released even if NewSQLiteSessionStoreFromDB returns an
+	// error. Calling Close on an already-closed *sql.DB is a no-op, so the
+	// store.Close() registered below is harmless when both run.
+	t.Cleanup(func() { _ = db.Close() })
 	db.SetMaxOpenConns(1)
 
 	store, err := NewSQLiteSessionStoreFromDB(db)

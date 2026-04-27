@@ -10,6 +10,9 @@ import (
 // setNowForTest installs a fixed clock for the duration of t and restores the
 // previous clock on cleanup. Tests use this to assert on CreatedAt fields
 // without flakiness.
+//
+// The clock is a package-level variable, so tests using this helper MUST NOT
+// call t.Parallel(): two parallel tests would race on nowFn.
 func setNowForTest(t *testing.T, fixed time.Time) {
 	t.Helper()
 	prev := nowFn
@@ -20,6 +23,12 @@ func setNowForTest(t *testing.T, fixed time.Time) {
 // setIDForTest installs a deterministic ID generator for the duration of t and
 // restores the previous generator on cleanup. The supplied IDs are returned
 // in order; running out triggers t.Fatalf.
+//
+// Like setNowForTest, this helper mutates a package-level variable and is not
+// safe to use with t.Parallel(). Additionally, the installed generator calls
+// t.Fatalf if exhausted, which is only valid on the test goroutine — do not
+// use this helper if production code under test may call New() from a
+// background goroutine.
 func setIDForTest(t *testing.T, ids ...string) {
 	t.Helper()
 	prev := newIDFn
