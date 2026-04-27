@@ -1,10 +1,14 @@
 package chatserver
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -168,4 +172,40 @@ func TestNewRouter_CORSAllowsConfiguredOrigin(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestNewRouter_RejectsOversizedBody(t *testing.T) {
+	srv, _ := newTestServer("root")
+	r := newRouter(srv, Options{MaxRequestBytes: 16})
+
+	body := strings.NewReader(`{"messages":[{"role":"user","content":"this body is far longer than sixteen bytes"}]}`)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/chat/completions", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+}
+
+func TestRequestTimeoutMiddleware_AppliesDeadline(t *testing.T) {
+	e := echo.New()
+	e.Use(requestTimeoutMiddleware(5 * time.Millisecond))
+
+	var gotErr error
+	e.GET("/sleep", func(c echo.Context) error {
+		select {
+		case <-c.Request().Context().Done():
+			gotErr = c.Request().Context().Err()
+			return c.String(http.StatusOK, "ok")
+		case <-time.After(time.Second):
+			return c.String(http.StatusOK, "too slow")
+		}
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sleep", http.NoBody)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Error(t, gotErr)
+	assert.ErrorIs(t, gotErr, context.DeadlineExceeded)
 }

@@ -1,6 +1,8 @@
 package root
 
 import (
+	"time"
+
 	"github.com/spf13/cobra"
 
 	"github.com/docker/docker-agent/pkg/chatserver"
@@ -10,10 +12,12 @@ import (
 )
 
 type chatFlags struct {
-	agentName  string
-	listenAddr string
-	corsOrigin string
-	runConfig  config.RuntimeConfig
+	agentName      string
+	listenAddr     string
+	corsOrigin     string
+	maxRequestSize int64
+	requestTimeout time.Duration
+	runConfig      config.RuntimeConfig
 }
 
 func newChatCmd() *cobra.Command {
@@ -36,6 +40,8 @@ agent without any custom integration.`,
 	cmd.Flags().StringVarP(&flags.agentName, "agent", "a", "", "Name of the agent to expose (all agents if not specified)")
 	cmd.Flags().StringVarP(&flags.listenAddr, "listen", "l", "127.0.0.1:8083", "Address to listen on")
 	cmd.Flags().StringVar(&flags.corsOrigin, "cors-origin", "", "Allowed CORS origin (e.g. https://example.com); empty disables CORS entirely")
+	cmd.Flags().Int64Var(&flags.maxRequestSize, "max-request-size", 1<<20, "Maximum request body size in bytes (default 1 MiB)")
+	cmd.Flags().DurationVar(&flags.requestTimeout, "request-timeout", 5*time.Minute, "Per-request timeout (covers model + tool calls + streaming)")
 	addRuntimeConfigFlags(cmd, &flags.runConfig)
 
 	return cmd
@@ -61,8 +67,10 @@ func (f *chatFlags) runChatCommand(cmd *cobra.Command, args []string) (commandEr
 	out.Println("OpenAI-compatible chat completions endpoint: http://" + ln.Addr().String() + "/v1/chat/completions")
 
 	return chatserver.Run(ctx, agentFilename, chatserver.Options{
-		AgentName:  f.agentName,
-		RunConfig:  &f.runConfig,
-		CORSOrigin: f.corsOrigin,
+		AgentName:       f.agentName,
+		RunConfig:       &f.runConfig,
+		CORSOrigin:      f.corsOrigin,
+		MaxRequestBytes: f.maxRequestSize,
+		RequestTimeout:  f.requestTimeout,
 	}, ln)
 }

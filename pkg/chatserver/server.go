@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,7 +51,19 @@ type Options struct {
 	// header. When empty, the CORS middleware is not registered at all
 	// (the server never emits any Access-Control-* response header).
 	CORSOrigin string
+	// MaxRequestBytes caps the size of an incoming request body. Zero
+	// means use the package default (1 MiB).
+	MaxRequestBytes int64
+	// RequestTimeout caps how long a single chat completion is allowed to
+	// run. Zero means use the package default (5 minutes). The cap covers
+	// model calls, tool calls, and SSE streaming combined.
+	RequestTimeout time.Duration
 }
+
+const (
+	defaultMaxRequestBytes int64         = 1 << 20 // 1 MiB
+	defaultRequestTimeout  time.Duration = 5 * time.Minute
+)
 
 // Run starts an OpenAI-compatible HTTP server on the given listener and
 // blocks until ctx is cancelled or the server fails. The team is loaded
@@ -126,7 +139,18 @@ func newRouter(s *server, opts Options) http.Handler {
 	e.HideBanner = true
 	e.HidePort = true
 
+	maxBytes := opts.MaxRequestBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxRequestBytes
+	}
+	timeout := opts.RequestTimeout
+	if timeout <= 0 {
+		timeout = defaultRequestTimeout
+	}
+
 	e.Use(middleware.RequestLogger())
+	e.Use(middleware.BodyLimit(strconv.FormatInt(maxBytes, 10)))
+	e.Use(requestTimeoutMiddleware(timeout))
 	if opts.CORSOrigin != "" {
 		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 			AllowOrigins: []string{opts.CORSOrigin},
@@ -139,6 +163,19 @@ func newRouter(s *server, opts Options) http.Handler {
 	e.GET("/v1/models", s.handleModels)
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	return e
+}
+
+// requestTimeoutMiddleware caps each request's lifetime. Streaming
+// handlers honour the timeout via c.Request().Context().
+func requestTimeoutMiddleware(d time.Duration) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx, cancel := context.WithTimeout(c.Request().Context(), d)
+			defer cancel()
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	}
 }
 
 func (s *server) handleModels(c echo.Context) error {
