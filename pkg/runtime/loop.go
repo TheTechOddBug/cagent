@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
+	bgagent "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
 
 // registerDefaultTools wires up the built-in tool handlers (delegation,
@@ -210,6 +211,21 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		iteration := 0
 		// Use a runtime copy of maxIterations so we don't modify the session's persistent config
 		runtimeMaxIterations := sess.MaxIterations
+
+		// Initialize consecutive duplicate tool call detector
+		//
+		// Polling tools (view_background_agent, view_background_job) are
+		// expected to be called repeatedly with identical arguments while a
+		// background task is in progress. Exempt them so they never trigger
+		// the loop-termination path.
+		loopThreshold := sess.MaxConsecutiveToolCalls
+		if loopThreshold == 0 {
+			loopThreshold = 5 // default: always active
+		}
+		loopDetector := newToolLoopDetector(loopThreshold,
+			bgagent.ToolNameViewBackgroundAgent,
+			builtin.ToolNameViewBackgroundJob,
+		)
 
 		// overflowCompactions counts how many consecutive context-overflow
 		// auto-compactions have been attempted without a successful model
@@ -500,9 +516,30 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				r.reprobe(ctx, sess, a, agentTools, sessionSpan, events)
 			}
 
-			// post_tool_use hook signalled run termination (e.g. from
-			// the loop_detector builtin). Same fan-out as the inline
-			// tool-loop detector users have always seen.
+			// Check for degenerate tool call loops
+			if loopDetector.record(res.Calls) {
+				toolName := "unknown"
+				if len(res.Calls) > 0 {
+					toolName = res.Calls[0].Function.Name
+				}
+				slog.Warn("Repetitive tool call loop detected",
+					"agent", a.Name(), "tool", toolName,
+					"consecutive", loopDetector.consecutive, "session_id", sess.ID)
+				errMsg := fmt.Sprintf(
+					"Agent terminated: detected %d consecutive identical calls to %s. "+
+						"This indicates a degenerate loop where the model is not making progress.",
+					loopDetector.consecutive, toolName)
+				events <- Error(errMsg)
+				r.notifyError(ctx, a, sess.ID, errMsg)
+				loopDetector.reset()
+				return
+			}
+
+			// post_tool_use hook signalled run termination via a deny
+			// verdict (decision="block" / continue=false / exit 2).
+			// User-authored hooks can use this to stop the run; the
+			// runtime fans out the standard Error / notification /
+			// on_error stanzas before exiting.
 			if stopRun {
 				slog.Warn("post_tool_use hook signalled run termination",
 					"agent", a.Name(), "session_id", sess.ID, "reason", stopMsg)

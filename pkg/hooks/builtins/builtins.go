@@ -1,4 +1,4 @@
-// Package builtins contains the in-process hook implementations
+// Package builtins contains the stock in-process hook implementations
 // shipped with docker-agent.
 //
 // Available builtins:
@@ -11,27 +11,22 @@
 //   - add_directory_listing (session_start)   — top-level entries of cwd
 //   - add_user_info         (session_start)   — current OS user and host
 //   - add_recent_commits    (session_start)   — `git log --oneline -n N`
-//   - loop_detector         (post_tool_use)   — block on N consecutive
-//     identical tool calls
 //   - max_iterations        (before_llm_call) — hard stop after N model calls
 //
 // Reference any of them from a hook YAML entry as
 // `{type: builtin, command: "<name>"}`. The runtime additionally
 // auto-injects add_date / add_environment_info / add_prompt_files
-// from the matching agent flags, and loop_detector from
-// agent.MaxConsecutiveToolCalls.
+// from the matching agent flags.
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
-// stable for its duration. loop_detector and max_iterations are
-// stateful: their per-session counters live on the [State] returned
-// by [Register]; the runtime clears them via [State.ClearSession]
-// from session_end.
+// stable for its duration. max_iterations is stateful: its
+// per-session counter lives on the [State] returned by [Register];
+// the runtime clears it via [State.ClearSession] from session_end.
 package builtins
 
 import (
 	"errors"
-	"strconv"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 )
@@ -40,7 +35,6 @@ import (
 // It is returned by [Register] so callers can clear per-session
 // entries on session_end. Stateless builtins don't appear here.
 type State struct {
-	loopDetector  *loopDetectorBuiltin
 	maxIterations *maxIterationsBuiltin
 }
 
@@ -50,7 +44,6 @@ func (s *State) ClearSession(sessionID string) {
 	if s == nil || sessionID == "" {
 		return
 	}
-	s.loopDetector.clearSession(sessionID)
 	s.maxIterations.clearSession(sessionID)
 }
 
@@ -58,7 +51,6 @@ func (s *State) ClearSession(sessionID string) {
 // handle the caller must use to clear per-session state on session_end.
 func Register(r *hooks.Registry) (*State, error) {
 	state := &State{
-		loopDetector:  newLoopDetector(),
 		maxIterations: newMaxIterations(),
 	}
 	if err := errors.Join(
@@ -70,7 +62,6 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddDirectoryListing, addDirectoryListing),
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
-		r.RegisterBuiltin(LoopDetector, state.loopDetector.hook),
 		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
 	); err != nil {
 		return nil, err
@@ -79,19 +70,11 @@ func Register(r *hooks.Registry) (*State, error) {
 }
 
 // AgentDefaults captures the agent-level flags that map onto stock
-// builtin hook entries.
-//
-// MaxConsecutiveToolCalls and ExemptLoopTools together control the
-// auto-injected loop_detector entry: a non-zero threshold injects a
-// post_tool_use hook with that threshold and the exempt tool names.
-// The runtime supplies the exempt list so this package stays
-// decoupled from any tool constants.
+// builtin hook entries. Pass each AgentConfig.AddXxx flag as-is.
 type AgentDefaults struct {
-	AddDate                 bool
-	AddEnvironmentInfo      bool
-	AddPromptFiles          []string
-	MaxConsecutiveToolCalls int
-	ExemptLoopTools         []string
+	AddDate            bool
+	AddEnvironmentInfo bool
+	AddPromptFiles     []string
 }
 
 // ApplyAgentDefaults appends the stock builtin hook entries implied by
@@ -109,13 +92,6 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 	}
 	if d.AddEnvironmentInfo {
 		cfg.SessionStart = append(cfg.SessionStart, builtinHook(AddEnvironmentInfo))
-	}
-	if d.MaxConsecutiveToolCalls > 0 {
-		args := append([]string{strconv.Itoa(d.MaxConsecutiveToolCalls)}, d.ExemptLoopTools...)
-		cfg.PostToolUse = append(cfg.PostToolUse, hooks.MatcherConfig{
-			Matcher: "*",
-			Hooks:   []hooks.Hook{builtinHook(LoopDetector, args...)},
-		})
 	}
 	if cfg.IsEmpty() {
 		return nil

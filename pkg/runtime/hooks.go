@@ -9,24 +9,13 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/tools/builtin"
-	bgagent "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
-
-// loopDetectorExemptTools lists polling-style tools the auto-injected
-// loop_detector must ignore: they're called repeatedly with identical
-// arguments while a background task is in progress, which would
-// otherwise look like a degenerate loop.
-var loopDetectorExemptTools = []string{
-	bgagent.ToolNameViewBackgroundAgent,
-	builtin.ToolNameViewBackgroundJob,
-}
 
 // buildHooksExecutors builds a [hooks.Executor] for every agent in the
 // team that has user-configured hooks or an agent-flag that maps to a
-// builtin (AddDate / AddEnvironmentInfo / AddPromptFiles), plus the
-// always-on loop_detector. Agents with no hooks at all have no entry;
-// lookups fall through to nil so callers can short-circuit cheaply.
+// builtin (AddDate / AddEnvironmentInfo / AddPromptFiles). Agents with
+// no hooks have no entry; lookups fall through to nil so callers can
+// short-circuit cheaply.
 //
 // Called once from [NewLocalRuntime] after r.workingDir, r.env and
 // r.hooksRegistry are finalized; the resulting map is read-only for
@@ -39,19 +28,10 @@ func (r *LocalRuntime) buildHooksExecutors() {
 		if err != nil {
 			continue
 		}
-		// Loop detection is always-on, defaulting to a threshold of 5
-		// when the agent didn't set MaxConsecutiveToolCalls. This
-		// matches the historical contract of the inline detector.
-		maxConsecutive := a.MaxConsecutiveToolCalls()
-		if maxConsecutive <= 0 {
-			maxConsecutive = 5
-		}
 		cfg := builtins.ApplyAgentDefaults(hooks.FromConfig(a.Hooks()), builtins.AgentDefaults{
-			AddDate:                 a.AddDate(),
-			AddEnvironmentInfo:      a.AddEnvironmentInfo(),
-			AddPromptFiles:          a.AddPromptFiles(),
-			MaxConsecutiveToolCalls: maxConsecutive,
-			ExemptLoopTools:         loopDetectorExemptTools,
+			AddDate:            a.AddDate(),
+			AddEnvironmentInfo: a.AddEnvironmentInfo(),
+			AddPromptFiles:     a.AddPromptFiles(),
 		})
 		if cfg == nil {
 			continue

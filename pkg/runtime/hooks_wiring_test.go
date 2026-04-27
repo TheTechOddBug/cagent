@@ -12,7 +12,7 @@ import (
 )
 
 // TestHooksExecWiresAgentFlagsToBuiltins verifies the wiring performed
-// by [LocalRuntime.hooksExec] (and the underlying
+// by [LocalRuntime.buildHooksExecutors] (and the underlying
 // [builtins.ApplyAgentDefaults]): agent.AddDate / AddEnvironmentInfo /
 // AddPromptFiles flags must translate into builtin hook entries on the
 // right event:
@@ -20,10 +20,6 @@ import (
 //   - AddDate           -> turn_start (re-evaluated every turn)
 //   - AddPromptFiles    -> turn_start (file may be edited mid-session)
 //   - AddEnvironmentInfo -> session_start (wd/OS/arch don't change)
-//
-// loop_detector is auto-injected on every agent (always-on with default
-// threshold 5, matching the inline detector's historical contract), so
-// post_tool_use is always populated regardless of the flags above.
 //
 // The behavior of each builtin (what it puts in AdditionalContext) is
 // covered by pkg/hooks/builtins; this test only asserts the wiring,
@@ -37,14 +33,16 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 
 	cases := []struct {
-		name          string
-		opts          []agent.Opt
-		wantTurnStart bool
-		wantSessStart bool
+		name           string
+		opts           []agent.Opt
+		wantNoExecutor bool
+		wantTurnStart  bool
+		wantSessStart  bool
 	}{
 		{
-			name: "no flags: only the always-on loop_detector",
-			opts: []agent.Opt{agent.WithModel(prov)},
+			name:           "no flags: no implicit hooks, no executor",
+			opts:           []agent.Opt{agent.WithModel(prov)},
+			wantNoExecutor: true,
 		},
 		{
 			name:          "AddDate wires turn_start",
@@ -84,7 +82,11 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 			require.NoError(t, err)
 
 			exec := r.hooksExec(a)
-			require.NotNil(t, exec, "loop_detector is always-on, so an executor is always built")
+			if tc.wantNoExecutor {
+				assert.Nil(t, exec, "no flags must not produce an executor")
+				return
+			}
+			require.NotNil(t, exec)
 
 			// hooksExec is read-only after [LocalRuntime.buildHooksExecutors],
 			// so calling it twice returns the same pointer.
@@ -94,8 +96,6 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 				"turn_start activation must match flags")
 			assert.Equal(t, tc.wantSessStart, exec.Has(hooks.EventSessionStart),
 				"session_start activation must match flags")
-			assert.True(t, exec.Has(hooks.EventPostToolUse),
-				"loop_detector must be auto-injected on every agent")
 
 			// Smoke Dispatch: confirms the builtin name registered by
 			// hooksExec actually resolves on the runtime's private

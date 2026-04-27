@@ -33,7 +33,6 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 		builtins.AddDirectoryListing,
 		builtins.AddUserInfo,
 		builtins.AddRecentCommits,
-		builtins.LoopDetector,
 		builtins.MaxIterations,
 	} {
 		fn, ok := r.LookupBuiltin(name)
