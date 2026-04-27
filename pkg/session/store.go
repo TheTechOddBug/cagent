@@ -332,6 +332,62 @@ type SQLiteSessionStore struct {
 	db *sql.DB
 }
 
+// sessionSelectColumns is the canonical SELECT list for the sessions table.
+// The column order matches what scanSession expects; all read paths use this
+// constant so that adding a column requires updating exactly one place.
+const sessionSelectColumns = `id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id`
+
+// sessionPersistedFields holds the encoded form of a Session's JSON-bearing
+// columns plus the SQL representation of parent_id (nil for the empty
+// string, which keeps the foreign key constraint happy).
+type sessionPersistedFields struct {
+	PermissionsJSON         string
+	AgentModelOverridesJSON string
+	CustomModelsUsedJSON    string
+	ParentID                any // string or nil
+}
+
+// sessionPersistedFieldsOf marshals the JSON-bearing columns of session and
+// derives the SQL parent_id value. INSERT/UPDATE call sites use this helper
+// so the marshaling rules ("" / "{}" / "[]" defaults, NULL parent_id) live
+// in one place.
+func sessionPersistedFieldsOf(session *Session) (sessionPersistedFields, error) {
+	var f sessionPersistedFields
+
+	if session.Permissions != nil {
+		permBytes, err := json.Marshal(session.Permissions)
+		if err != nil {
+			return f, err
+		}
+		f.PermissionsJSON = string(permBytes)
+	}
+
+	f.AgentModelOverridesJSON = "{}"
+	if len(session.AgentModelOverrides) > 0 {
+		overridesBytes, err := json.Marshal(session.AgentModelOverrides)
+		if err != nil {
+			return f, err
+		}
+		f.AgentModelOverridesJSON = string(overridesBytes)
+	}
+
+	f.CustomModelsUsedJSON = "[]"
+	if len(session.CustomModelsUsed) > 0 {
+		customBytes, err := json.Marshal(session.CustomModelsUsed)
+		if err != nil {
+			return f, err
+		}
+		f.CustomModelsUsedJSON = string(customBytes)
+	}
+
+	// Use NULL for empty parent_id to avoid foreign key constraint issues.
+	if session.ParentID != "" {
+		f.ParentID = session.ParentID
+	}
+
+	return f, nil
+}
+
 // UpdateSessionTokens updates only token/cost fields.
 func (s *InMemorySessionStore) UpdateSessionTokens(_ context.Context, sessionID string, inputTokens, outputTokens int64, cost float64) error {
 	if sessionID == "" {
@@ -504,40 +560,11 @@ func (s *SQLiteSessionStore) AddSession(ctx context.Context, session *Session) e
 		return ErrEmptyID
 	}
 
-	permissionsJSON := ""
-	if session.Permissions != nil {
-		permBytes, err := json.Marshal(session.Permissions)
-		if err != nil {
-			return err
-		}
-		permissionsJSON = string(permBytes)
+	fields, err := sessionPersistedFieldsOf(session)
+	if err != nil {
+		return err
 	}
 
-	// Marshal agent model overrides (default to empty object if nil)
-	agentModelOverridesJSON := "{}"
-	if len(session.AgentModelOverrides) > 0 {
-		overridesBytes, err := json.Marshal(session.AgentModelOverrides)
-		if err != nil {
-			return err
-		}
-		agentModelOverridesJSON = string(overridesBytes)
-	}
-
-	// Marshal custom models used (default to empty array if nil)
-	customModelsUsedJSON := "[]"
-	if len(session.CustomModelsUsed) > 0 {
-		customBytes, err := json.Marshal(session.CustomModelsUsed)
-		if err != nil {
-			return err
-		}
-		customModelsUsedJSON = string(customBytes)
-	}
-
-	// Use NULL for empty parent_id to avoid foreign key constraint issues
-	var parentID any
-	if session.ParentID != "" {
-		parentID = session.ParentID
-	}
 	// Use a transaction to insert session and its items
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -553,8 +580,8 @@ func (s *SQLiteSessionStore) AddSession(ctx context.Context, session *Session) e
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.ToolsApproved, session.InputTokens, session.OutputTokens, session.Title,
 		session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
-		session.CreatedAt.Format(time.RFC3339), permissionsJSON, agentModelOverridesJSON,
-		customModelsUsedJSON, false, parentID)
+		session.CreatedAt.Format(time.RFC3339), fields.PermissionsJSON, fields.AgentModelOverridesJSON,
+		fields.CustomModelsUsedJSON, false, fields.ParentID)
 	if err != nil {
 		return err
 	}
@@ -680,7 +707,7 @@ func (s *SQLiteSessionStore) GetSession(ctx context.Context, id string) (*Sessio
 	}
 
 	row := s.db.QueryRowContext(ctx,
-		"SELECT id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id FROM sessions WHERE id = ?", id)
+		"SELECT "+sessionSelectColumns+" FROM sessions WHERE id = ?", id)
 
 	sess, err := scanSession(row)
 	if err != nil {
@@ -792,7 +819,7 @@ func (s *SQLiteSessionStore) loadSessionItemsWith(ctx context.Context, q querier
 // loadSessionWith loads a session using the provided querier.
 func (s *SQLiteSessionStore) loadSessionWith(ctx context.Context, q querier, id string) (*Session, error) {
 	row := q.QueryRowContext(ctx,
-		"SELECT id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id FROM sessions WHERE id = ?", id)
+		"SELECT "+sessionSelectColumns+" FROM sessions WHERE id = ?", id)
 
 	sess, err := scanSession(row)
 	if err != nil {
@@ -815,7 +842,7 @@ func (s *SQLiteSessionStore) loadSessionWith(ctx context.Context, q querier, id 
 // GetSessions retrieves all root sessions (excludes sub-sessions)
 func (s *SQLiteSessionStore) GetSessions(ctx context.Context) ([]*Session, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id FROM sessions WHERE parent_id IS NULL OR parent_id = '' ORDER BY created_at DESC")
+		"SELECT "+sessionSelectColumns+" FROM sessions WHERE parent_id IS NULL OR parent_id = '' ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -922,40 +949,11 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		return ErrEmptyID
 	}
 
-	permissionsJSON := ""
-	if session.Permissions != nil {
-		permBytes, err := json.Marshal(session.Permissions)
-		if err != nil {
-			return err
-		}
-		permissionsJSON = string(permBytes)
+	fields, err := sessionPersistedFieldsOf(session)
+	if err != nil {
+		return err
 	}
 
-	// Marshal agent model overrides (default to empty object if nil)
-	agentModelOverridesJSON := "{}"
-	if len(session.AgentModelOverrides) > 0 {
-		overridesBytes, err := json.Marshal(session.AgentModelOverrides)
-		if err != nil {
-			return err
-		}
-		agentModelOverridesJSON = string(overridesBytes)
-	}
-
-	// Marshal custom models used (default to empty array if nil)
-	customModelsUsedJSON := "[]"
-	if len(session.CustomModelsUsed) > 0 {
-		customBytes, err := json.Marshal(session.CustomModelsUsed)
-		if err != nil {
-			return err
-		}
-		customModelsUsedJSON = string(customBytes)
-	}
-
-	// Use NULL for empty parent_id to avoid foreign key constraint issues
-	var parentID any
-	if session.ParentID != "" {
-		parentID = session.ParentID
-	}
 	// Use a transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -988,8 +986,8 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		   parent_id = excluded.parent_id`,
 		session.ID, session.ToolsApproved, session.InputTokens, session.OutputTokens,
 		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
-		session.CreatedAt.Format(time.RFC3339), session.Starred, permissionsJSON, agentModelOverridesJSON,
-		customModelsUsedJSON, false, parentID)
+		session.CreatedAt.Format(time.RFC3339), session.Starred, fields.PermissionsJSON, fields.AgentModelOverridesJSON,
+		fields.CustomModelsUsedJSON, false, fields.ParentID)
 	if err != nil {
 		return err
 	}
@@ -1127,39 +1125,12 @@ func (s *SQLiteSessionStore) AddSubSession(ctx context.Context, parentSessionID 
 
 // addSessionTx inserts a session within a transaction.
 func (s *SQLiteSessionStore) addSessionTx(ctx context.Context, tx *sql.Tx, session *Session) error {
-	permissionsJSON := ""
-	if session.Permissions != nil {
-		permBytes, err := json.Marshal(session.Permissions)
-		if err != nil {
-			return err
-		}
-		permissionsJSON = string(permBytes)
+	fields, err := sessionPersistedFieldsOf(session)
+	if err != nil {
+		return err
 	}
 
-	agentModelOverridesJSON := "{}"
-	if len(session.AgentModelOverrides) > 0 {
-		overridesBytes, err := json.Marshal(session.AgentModelOverrides)
-		if err != nil {
-			return err
-		}
-		agentModelOverridesJSON = string(overridesBytes)
-	}
-
-	customModelsUsedJSON := "[]"
-	if len(session.CustomModelsUsed) > 0 {
-		customBytes, err := json.Marshal(session.CustomModelsUsed)
-		if err != nil {
-			return err
-		}
-		customModelsUsedJSON = string(customBytes)
-	}
-
-	// Use NULL for empty parent_id to avoid foreign key constraint issues
-	var parentID any
-	if session.ParentID != "" {
-		parentID = session.ParentID
-	}
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
 			id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message,
 			max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides,
@@ -1169,8 +1140,8 @@ func (s *SQLiteSessionStore) addSessionTx(ctx context.Context, tx *sql.Tx, sessi
 		session.ID, session.ToolsApproved, session.InputTokens, session.OutputTokens,
 		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations,
 		session.WorkingDir, session.CreatedAt.Format(time.RFC3339), session.Starred,
-		permissionsJSON, agentModelOverridesJSON, customModelsUsedJSON, false,
-		parentID)
+		fields.PermissionsJSON, fields.AgentModelOverridesJSON, fields.CustomModelsUsedJSON, false,
+		fields.ParentID)
 	return err
 }
 
