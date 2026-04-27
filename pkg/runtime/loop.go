@@ -393,9 +393,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 			// before_llm_call hooks fire just before the model is invoked.
 			// A terminating verdict (e.g. from the max_iterations builtin)
-			// stops the run loop here, before any tokens are spent on the
-			// model call. Use turn_start to contribute system messages;
-			// this event's AdditionalContext is intentionally not consumed.
+			// stops the run loop here, before any tokens are spent.
 			if stop, msg := r.executeBeforeLLMCallHooks(ctx, sess, a); stop {
 				slog.Warn("before_llm_call hook signalled run termination",
 					"agent", a.Name(), "session_id", sess.ID, "reason", msg)

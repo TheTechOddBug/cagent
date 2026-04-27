@@ -1,4 +1,4 @@
-// Package builtins contains the stock in-process hook implementations
+// Package builtins contains the in-process hook implementations
 // shipped with docker-agent.
 //
 // Available builtins:
