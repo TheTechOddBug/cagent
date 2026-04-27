@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
@@ -71,9 +73,9 @@ func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string)
 
 // SubSessionConfig describes the shape of a child session: system prompt,
 // implicit user message, agent identity, tool approval, exclusions, etc.
-// It is the data input to [newSubSession]; the orchestration around
-// running such a session (telemetry, current-agent switching, event
-// forwarding) lives in [delegator].
+// It is the data input to [newSubSession]; the orchestration around running
+// such a session (telemetry, current-agent switching, event forwarding)
+// lives in [LocalRuntime.runForwarding] and [LocalRuntime.runCollecting].
 type SubSessionConfig struct {
 	// Task is the user-facing task description.
 	Task string
@@ -101,6 +103,34 @@ type SubSessionConfig struct {
 	// tool list for the child session. This prevents recursive tool calls
 	// (e.g. run_skill calling itself in a skill sub-session).
 	ExcludedTools []string
+}
+
+// delegationRequest bundles a [SubSessionConfig] with the orchestration
+// knobs only [LocalRuntime.runForwarding] needs: the OpenTelemetry span
+// identity and whether to swap the runtime's current agent for the
+// lifetime of the call.
+//
+// Adding a new "spawn a sub-agent" feature is a matter of building one
+// of these and calling runForwarding (or runCollecting for the
+// non-interactive variant); none of the boilerplate around spans,
+// AgentInfo events, agent restoration, or event forwarding leaks into
+// the caller.
+type delegationRequest struct {
+	SubSessionConfig
+
+	// SwitchCurrentAgent, when true, swaps r.currentAgent to AgentName
+	// for the lifetime of the call and emits AgentSwitching/AgentInfo
+	// events on entry and exit. Used by transfer_task. Mutually
+	// exclusive in spirit with PinAgent: pinning is for concurrent
+	// sub-sessions that must NOT share the runtime's mutable
+	// currentAgent, while switching is for sequential delegations where
+	// the parent loop is blocked anyway.
+	SwitchCurrentAgent bool
+
+	// SpanName is the OpenTelemetry span name (e.g. "runtime.task_transfer").
+	SpanName string
+	// SpanAttributes are extra attributes attached to the span on creation.
+	SpanAttributes []attribute.KeyValue
 }
 
 // newSubSession builds a *session.Session from a SubSessionConfig and a parent
@@ -172,6 +202,129 @@ func mergeExcludedTools(parent, child []string) []string {
 	return merged
 }
 
+// swapCurrentAgent swaps the runtime's current agent from `from` to `to`,
+// emitting the AgentSwitching/AgentInfo events and invoking the on_agent_switch
+// hooks on entry, and returns a closure that reverses everything (restores
+// `from`, emits the counterpart events and the matching return-side hooks)
+// when invoked.
+//
+// Use as `defer r.swapCurrentAgent(ctx, sessionID, from, to, evts)()` so the
+// swap takes effect immediately and the restore runs at function exit.
+func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, from, to *agent.Agent, evts chan<- Event) func() {
+	evts <- AgentSwitching(true, from.Name(), to.Name())
+	r.executeOnAgentSwitchHooks(ctx, from, sessionID, from.Name(), to.Name(), agentSwitchKindTransferTask)
+	r.setCurrentAgent(to.Name())
+	evts <- AgentInfo(to.Name(), getAgentModelID(to), to.Description(), to.WelcomeMessage())
+	return func() {
+		r.setCurrentAgent(from.Name())
+		evts <- AgentSwitching(false, to.Name(), from.Name())
+		r.executeOnAgentSwitchHooks(ctx, from, sessionID, to.Name(), from.Name(), agentSwitchKindTransferTaskReturn)
+		evts <- AgentInfo(from.Name(), getAgentModelID(from), from.Description(), from.WelcomeMessage())
+	}
+}
+
+// runForwarding runs a child session synchronously, forwarding all of its
+// events to evts and propagating tool-approval state back to the parent
+// on completion. This is the "interactive" path used by transfer_task and
+// run_skill: the parent loop is blocked while the child executes, and
+// the user sees the child's events live.
+//
+// On success it returns a tool result whose output is the child's last
+// assistant message. On error it has already forwarded the ErrorEvent to
+// evts and returns a wrapped error so the caller's span records it.
+//
+// runForwarding handles every concern the callers used to duplicate:
+// opening the span, swapping the current agent (if requested), resolving
+// the child agent, building the sub-session, driving RunStream, and
+// recording the sub-session on the parent.
+func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts chan Event, req delegationRequest) (*tools.ToolCallResult, error) {
+	ctx, span := r.startSpan(ctx, req.SpanName, trace.WithAttributes(req.SpanAttributes...))
+	defer span.End()
+
+	callerAgent, err := r.team.Agent(r.CurrentAgentName())
+	if err != nil {
+		return nil, fmt.Errorf("current agent not found: %w", err)
+	}
+	child, err := r.team.Agent(req.AgentName)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.SwitchCurrentAgent {
+		defer r.swapCurrentAgent(ctx, parent.ID, callerAgent, child, evts)()
+	}
+
+	s := newSubSession(parent, req.SubSessionConfig, child)
+
+	childEvents := r.RunStream(ctx, s)
+	for event := range childEvents {
+		evts <- event
+		if errEvent, ok := event.(*ErrorEvent); ok {
+			// Drain remaining events (including StreamStoppedEvent) so the
+			// TUI's streamDepth counter stays balanced.
+			for remaining := range childEvents {
+				evts <- remaining
+			}
+			span.RecordError(fmt.Errorf("%s", errEvent.Error))
+			span.SetStatus(codes.Error, "sub-session error")
+			return nil, fmt.Errorf("%s", errEvent.Error)
+		}
+	}
+
+	parent.ToolsApproved = s.ToolsApproved
+	parent.AddSubSession(s)
+	evts <- SubSessionCompleted(parent.ID, s, callerAgent.Name())
+	span.SetStatus(codes.Ok, "sub-session completed")
+	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
+}
+
+// runCollecting runs a child session and collects its output via an
+// optional content callback instead of forwarding events. This is the
+// non-interactive path used by background agents: there's no live UI, so
+// events are dropped and only the final assistant message (or the first
+// error) matters.
+//
+// Unlike runForwarding it does not emit AgentSwitching/AgentInfo events:
+// callers like background agents PinAgent the child session so the
+// runtime never mutates the shared currentAgent state.
+func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Session, cfg SubSessionConfig, onContent func(string)) *agenttool.RunResult {
+	child, err := r.team.Agent(cfg.AgentName)
+	if err != nil {
+		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", cfg.AgentName, err)}
+	}
+
+	s := newSubSession(parent, cfg, child)
+
+	var errMsg string
+	events := r.RunStream(ctx, s)
+	for event := range events {
+		if ctx.Err() != nil {
+			break
+		}
+		if choice, ok := event.(*AgentChoiceEvent); ok && choice.Content != "" {
+			if onContent != nil {
+				onContent(choice.Content)
+			}
+		}
+		if errEvt, ok := event.(*ErrorEvent); ok {
+			errMsg = errEvt.Error
+			break
+		}
+	}
+	// Drain remaining events so the RunStream goroutine can complete and
+	// close the channel without blocking on a full buffer.
+	for range events {
+	}
+
+	if errMsg != "" {
+		return &agenttool.RunResult{ErrMsg: errMsg}
+	}
+
+	result := s.GetLastAssistantMessageContent()
+	parent.AddSubSession(s)
+	return &agenttool.RunResult{Result: result}
+}
+
 // CurrentAgentSubAgentNames implements agenttool.Runner.
 func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 	a := r.CurrentAgent()
@@ -181,29 +334,28 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 	return agentNames(a.SubAgents())
 }
 
-// RunAgent implements agenttool.Runner. It starts a sub-agent synchronously and
-// blocks until completion or cancellation.
+// RunAgent implements agenttool.Runner. It starts a sub-agent synchronously
+// and blocks until completion or cancellation.
 //
-// Background tasks run with tools pre-approved because there is no user present
-// to respond to interactive approval prompts during async execution. This is a
-// deliberate design trade-off: the user implicitly authorises all tool calls
-// made by the sub-agent when they approve run_background_agent. Callers should
-// be aware that prompt injection in the sub-agent's context could exploit this
-// gate-bypass.
+// Background tasks run with tools pre-approved because there is no user
+// present to respond to interactive approval prompts during async
+// execution. This is a deliberate design trade-off: the user implicitly
+// authorises all tool calls made by the sub-agent when they approve
+// run_background_agent. Callers should be aware that prompt injection in
+// the sub-agent's context could exploit this gate-bypass.
 //
 // TODO: propagate the parent session's per-tool permission rules once the
-// runtime supports per-session permission scoping rather than a single shared
-// ToolsApproved flag.
+// runtime supports per-session permission scoping rather than a single
+// shared ToolsApproved flag.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
-	cfg := SubSessionConfig{
+	return r.runCollecting(ctx, params.ParentSession, SubSessionConfig{
 		Task:           params.Task,
 		ExpectedOutput: params.ExpectedOutput,
 		AgentName:      params.AgentName,
 		Title:          "Background agent task",
 		ToolsApproved:  true,
 		PinAgent:       true,
-	}
-	return r.delegator.runCollecting(ctx, params.ParentSession, cfg, params.OnContent)
+	}, params.OnContent)
 }
 
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
@@ -217,15 +369,13 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	}
 
 	a := r.CurrentAgent()
-
-	// Validate that the target agent is in the current agent's sub-agents list
 	if errResult := validateAgentInList(a.Name(), params.Agent, "transfer task to", "sub-agents list", a.SubAgents()); errResult != nil {
 		return errResult, nil
 	}
 
 	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
 
-	return r.delegator.runForwarding(ctx, sess, evts, delegationRequest{
+	return r.runForwarding(ctx, sess, evts, delegationRequest{
 		SubSessionConfig: SubSessionConfig{
 			Task:           params.Task,
 			ExpectedOutput: params.ExpectedOutput,
@@ -255,7 +405,6 @@ func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session,
 		return nil, fmt.Errorf("current agent not found: %w", err)
 	}
 
-	// Validate that the target agent is in the current agent's handoffs list
 	if errResult := validateAgentInList(ca, params.Agent, "hand off to", "handoffs list", currentAgent.Handoffs()); errResult != nil {
 		return errResult, nil
 	}

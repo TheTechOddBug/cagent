@@ -69,7 +69,7 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		}
 	}
 
-	return r.delegator.runForwarding(ctx, sess, evts, delegationRequest{
+	return r.runForwarding(ctx, sess, evts, delegationRequest{
 		SubSessionConfig: SubSessionConfig{
 			Task:                prepared.Task,
 			SystemMessage:       prepared.Content,
