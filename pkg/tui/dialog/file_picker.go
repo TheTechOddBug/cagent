@@ -339,7 +339,7 @@ func (d *filePickerDialog) renderEntry(entry fileEntry, selected bool, maxWidth 
 	}
 
 	name := entry.name
-	maxNameLen := maxWidth - 20
+	maxNameLen := max(1, maxWidth-20)
 	if len(name) > maxNameLen {
 		name = name[:maxNameLen-1] + "…"
 	}
