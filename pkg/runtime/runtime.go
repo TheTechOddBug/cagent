@@ -28,64 +28,8 @@ import (
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
-type ResumeType string
-
-// ElicitationResult represents the result of an elicitation request
-type ElicitationResult struct {
-	Action  tools.ElicitationAction
-	Content map[string]any // The submitted form data (only present when action is "accept")
-}
-
-// ElicitationError represents an error from a declined/cancelled elicitation
-type ElicitationError struct {
-	Action  string
-	Message string
-}
-
-func (e *ElicitationError) Error() string {
-	return fmt.Sprintf("elicitation %s: %s", e.Action, e.Message)
-}
-
-const (
-	ResumeTypeApprove        ResumeType = "approve"
-	ResumeTypeApproveSession ResumeType = "approve-session"
-	ResumeTypeApproveTool    ResumeType = "approve-tool"
-	ResumeTypeReject         ResumeType = "reject"
-)
-
-// ResumeRequest carries the user's confirmation decision along with an optional
-// reason (used when rejecting a tool call to help the model understand why).
-type ResumeRequest struct {
-	Type     ResumeType
-	Reason   string // Optional; primarily used with ResumeTypeReject
-	ToolName string // Optional; used with ResumeTypeApproveTool to specify which tool to always allow
-}
-
-// ResumeApprove creates a ResumeRequest to approve a single tool call.
-func ResumeApprove() ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApprove}
-}
-
-// ResumeApproveSession creates a ResumeRequest to approve all tool calls for the session.
-func ResumeApproveSession() ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApproveSession}
-}
-
-// ResumeApproveTool creates a ResumeRequest to always approve a specific tool for the session.
-func ResumeApproveTool(toolName string) ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApproveTool, ToolName: toolName}
-}
-
-// ResumeReject creates a ResumeRequest to reject a tool call with an optional reason.
-func ResumeReject(reason string) ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeReject, Reason: reason}
-}
-
 // ToolHandlerFunc is a function type for handling tool calls
 type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events chan Event) (*tools.ToolCallResult, error)
-
-// ElicitationRequestHandler is a function type for handling elicitation requests
-type ElicitationRequestHandler func(ctx context.Context, message string, schema map[string]any) (map[string]any, error)
 
 // Runtime defines the contract for runtime execution
 type Runtime interface {
@@ -971,28 +915,6 @@ func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
 	}
 }
 
-// ResumeElicitation sends an elicitation response back to a waiting elicitation request
-func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
-	slog.Debug("Resuming runtime with elicitation response", "agent", r.CurrentAgentName(), "action", action)
-
-	result := ElicitationResult{
-		Action:  action,
-		Content: content,
-	}
-
-	select {
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while sending elicitation response")
-		return ctx.Err()
-	case r.elicitationRequestCh <- result:
-		slog.Debug("Elicitation response sent successfully", "action", action)
-		return nil
-	default:
-		slog.Debug("Elicitation channel not ready")
-		return errors.New("no elicitation request in progress")
-	}
-}
-
 // Steer enqueues a user message for urgent mid-turn injection into the
 // running agent loop. The message will be picked up after the current batch
 // of tool calls finishes but before the loop checks whether to stop.
@@ -1038,33 +960,4 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 		contextLimit = int64(m.Limit.Context)
 	}
 	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
-}
-
-// elicitationHandler creates an elicitation handler that can be used by MCP clients
-// This handler propagates elicitation requests to the runtime's client via events
-func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
-	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
-
-	r.executeOnUserInputHooks(ctx, "", "elicitation")
-
-	slog.Debug("Sending elicitation request event to client", "message", req.Message, "mode", req.Mode, "requested_schema", req.RequestedSchema, "url", req.URL)
-	slog.Debug("Elicitation request meta", "meta", req.Meta)
-
-	if err := r.elicitation.send(
-		ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, r.CurrentAgentName()),
-	); err != nil {
-		return tools.ElicitationResult{}, err
-	}
-
-	// Wait for response from the client
-	select {
-	case result := <-r.elicitationRequestCh:
-		return tools.ElicitationResult{
-			Action:  result.Action,
-			Content: result.Content,
-		}, nil
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while waiting for elicitation response")
-		return tools.ElicitationResult{}, ctx.Err()
-	}
 }

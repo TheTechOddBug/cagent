@@ -9,6 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestElicitationError_Error(t *testing.T) {
+	t.Parallel()
+
+	err := &ElicitationError{Action: "decline", Message: "user said no"}
+	assert.Equal(t, "elicitation decline: user said no", err.Error())
+}
+
 func TestElicitationBridge_SendBeforeSwapReturnsError(t *testing.T) {
 	t.Parallel()
 

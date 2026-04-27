@@ -99,10 +99,3 @@ func TestResumeApproveHelpers(t *testing.T) {
 		assert.Empty(t, r.Reason)
 	})
 }
-
-func TestElicitationError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &ElicitationError{Action: "decline", Message: "user said no"}
-	assert.Equal(t, "elicitation decline: user said no", err.Error())
-}
