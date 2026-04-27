@@ -16,7 +16,7 @@
 package builtins
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 )
@@ -31,16 +31,11 @@ const (
 
 // Register installs the stock builtin hooks on r.
 func Register(r *hooks.Registry) error {
-	for name, fn := range map[string]hooks.BuiltinFunc{
-		AddDate:            addDate,
-		AddEnvironmentInfo: addEnvironmentInfo,
-		AddPromptFiles:     addPromptFiles,
-	} {
-		if err := r.RegisterBuiltin(name, fn); err != nil {
-			return fmt.Errorf("register %q builtin: %w", name, err)
-		}
-	}
-	return nil
+	return errors.Join(
+		r.RegisterBuiltin(AddDate, addDate),
+		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
+		r.RegisterBuiltin(AddPromptFiles, addPromptFiles),
+	)
 }
 
 // AgentDefaults captures the agent-level flags that map onto stock
@@ -59,10 +54,6 @@ func (d AgentDefaults) IsZero() bool {
 // ApplyAgentDefaults appends the stock builtin hook entries implied by
 // d to cfg, returning the (possibly mutated) config.
 //
-// add_date and add_prompt_files target turn_start so they recompute
-// every turn; add_environment_info targets session_start because cwd /
-// OS / arch don't change during a session.
-//
 // A nil cfg is treated as empty; the returned value is non-nil iff at
 // least one hook (user-configured or auto-injected) is present.
 func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
@@ -70,28 +61,23 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 		cfg = &hooks.Config{}
 	}
 	if d.AddDate {
-		cfg.TurnStart = append(cfg.TurnStart, hooks.Hook{
-			Type:    hooks.HookTypeBuiltin,
-			Command: AddDate,
-		})
+		cfg.TurnStart = append(cfg.TurnStart, builtinHook(AddDate))
 	}
 	if len(d.AddPromptFiles) > 0 {
-		cfg.TurnStart = append(cfg.TurnStart, hooks.Hook{
-			Type:    hooks.HookTypeBuiltin,
-			Command: AddPromptFiles,
-			Args:    d.AddPromptFiles,
-		})
+		cfg.TurnStart = append(cfg.TurnStart, builtinHook(AddPromptFiles, d.AddPromptFiles...))
 	}
 	if d.AddEnvironmentInfo {
-		cfg.SessionStart = append(cfg.SessionStart, hooks.Hook{
-			Type:    hooks.HookTypeBuiltin,
-			Command: AddEnvironmentInfo,
-		})
+		cfg.SessionStart = append(cfg.SessionStart, builtinHook(AddEnvironmentInfo))
 	}
 	if cfg.IsEmpty() {
 		return nil
 	}
 	return cfg
+}
+
+// builtinHook returns a hook entry that dispatches to the named builtin.
+func builtinHook(name string, args ...string) hooks.Hook {
+	return hooks.Hook{Type: hooks.HookTypeBuiltin, Command: name, Args: args}
 }
 
 // turnStartContext wraps additional context as a turn_start output.
