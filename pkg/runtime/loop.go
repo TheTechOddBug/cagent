@@ -47,6 +47,65 @@ func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessag
 	events <- UserMessage(sm.Content, sess.ID, sm.MultiContent, len(sess.Messages)-1)
 }
 
+// drainAndEmitSteered drains all messages from the steer queue and injects
+// them into the session as individual user messages. When multiple messages
+// are drained, a "\n" is appended to the content of every non-last message.
+// Some chat templates concatenate consecutive user messages without a
+// separator before tokenisation, which would cause trailing/leading word
+// fragments from adjacent messages to be glued together. The "\n" prevents
+// this without merging the messages into one.
+//
+// It also snapshots the message count before any messages are added and
+// returns it alongside the drained flag so the caller can pass it to
+// compactIfNeeded without a separate len(sess.GetAllMessages()) call.
+//
+// NOTE: the appended \n is persisted in the session message and included in
+// UserMessageEvent. This is a deliberate trade-off: because the runtime passes
+// chat.Message slices directly to the provider, this is the only injection
+// point that doesn't require restructuring. TUI consumers may see a trailing
+// newline on non-last steered messages in multi-drain batches.
+//
+// Returns (true, messageCountBefore) if any messages were drained and emitted;
+// (false, 0) otherwise.
+func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Session, events chan<- Event) (bool, int) {
+	steered := r.steerQueue.Drain(ctx)
+	if len(steered) == 0 {
+		return false, 0
+	}
+	messageCountBefore := len(sess.GetAllMessages())
+	for i, sm := range steered {
+		if i < len(steered)-1 {
+			sm = appendNewlineToQueuedMessage(sm)
+		}
+		r.appendSteerAndEmit(sess, sm, events)
+	}
+	return true, messageCountBefore
+}
+
+// appendNewlineToQueuedMessage returns sm with "\n" appended to its text
+// content; never mutates the caller's slice contents.
+// For plain-text messages Content is extended. For multi-content messages
+// only the last part is considered: if it is a text part, "\n" is appended
+// to it in a shallow copy of the slice. If the last part is not text type
+// (e.g. image), sm is returned unchanged — non-text parts carry their own
+// provider envelope that acts as a separator.
+func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
+	if len(sm.MultiContent) == 0 {
+		sm.Content += "\n"
+		return sm
+	}
+	// Only act if the last part is a text part.
+	last := len(sm.MultiContent) - 1
+	if sm.MultiContent[last].Type != chat.MessagePartTypeText {
+		return sm
+	}
+	// Shallow-copy the slice so we don't mutate the original.
+	parts := append([]chat.MessagePart(nil), sm.MultiContent...)
+	parts[last].Text += "\n"
+	sm.MultiContent = parts
+	return sm
+}
+
 // finalizeEventChannel performs cleanup at the end of a RunStream goroutine:
 // restores the previous elicitation channel, emits the StreamStopped event,
 // fires hooks, and closes the events channel.
@@ -302,11 +361,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 			// Drain steer messages queued while idle or before the first model call
 			// (covers idle-window and first-turn-miss races).
-			if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
-				messageCountBeforeSteer := len(sess.GetAllMessages())
-				for _, sm := range steered {
-					r.appendSteerAndEmit(sess, sm, events)
-				}
+			if drained, messageCountBeforeSteer := r.drainAndEmitSteered(ctx, sess, events); drained {
 				r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeSteer, events)
 			}
 
@@ -435,11 +490,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			toolModelOverride = resolveToolCallModelOverride(res.Calls, agentTools)
 
 			// Drain steer messages that arrived during tool calls.
-			if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
-				for _, sm := range steered {
-					r.appendSteerAndEmit(sess, sm, events)
-				}
-
+			if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {
 				r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 				continue
 			}
@@ -449,10 +500,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				r.executeStopHooks(ctx, sess, a, res.Content, events)
 
 				// Re-check steer queue: closes the race between the mid-loop drain and this stop.
-				if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
-					for _, sm := range steered {
-						r.appendSteerAndEmit(sess, sm, events)
-					}
+				if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {
 					r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 					continue
 				}
