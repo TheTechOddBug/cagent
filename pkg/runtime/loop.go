@@ -252,8 +252,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				events <- MaxIterationsReached(runtimeMaxIterations)
 
 				maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", runtimeMaxIterations)
-				r.executeNotificationHooks(ctx, a, sess.ID, "warning", maxIterMsg)
-				r.executeOnMaxIterationsHooks(ctx, a, sess.ID, maxIterMsg)
+				r.notifyMaxIterations(ctx, a, sess.ID, maxIterMsg)
 				r.executeOnUserInputHooks(ctx, sess.ID, "max iterations reached")
 
 				// In non-interactive mode (e.g. MCP server), auto-stop instead of
@@ -434,8 +433,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				telemetry.RecordError(ctx, err.Error())
 				errMsg := modelerrors.FormatError(err)
 				events <- Error(errMsg)
-				r.executeNotificationHooks(ctx, a, sess.ID, "error", errMsg)
-				r.executeOnErrorHooks(ctx, a, sess.ID, errMsg)
+				r.notifyError(ctx, a, sess.ID, errMsg)
 				streamSpan.End()
 				return
 			}
@@ -501,8 +499,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 						"This indicates a degenerate loop where the model is not making progress.",
 					loopDetector.consecutive, toolName)
 				events <- Error(errMsg)
-				r.executeNotificationHooks(ctx, a, sess.ID, "error", errMsg)
-				r.executeOnErrorHooks(ctx, a, sess.ID, errMsg)
+				r.notifyError(ctx, a, sess.ID, errMsg)
 				loopDetector.reset()
 				return
 			}
