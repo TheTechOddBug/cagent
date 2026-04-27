@@ -1,4 +1,4 @@
-package runtime
+package toolexec
 
 import (
 	"encoding/json"
@@ -9,40 +9,49 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// toolLoopDetector detects consecutive identical tool call batches.
+// LoopDetector detects consecutive identical tool call batches.
 // When the model issues the same tool call(s) N times in a row without
 // making progress, the detector signals that the agent should be terminated.
-type toolLoopDetector struct {
+//
+// The zero value is not usable; callers must construct a detector with
+// [NewLoopDetector].
+type LoopDetector struct {
 	lastSignature string
 	consecutive   int
 	threshold     int
 	exemptTools   map[string]struct{}
 }
 
-// newToolLoopDetector creates a detector that triggers after threshold
+// NewLoopDetector creates a detector that triggers after threshold
 // consecutive identical call batches. Tool names passed in exemptTools
 // are polling-safe: batches composed entirely of exempt tools (e.g.
 // view_background_agent, view_background_job) never count toward the
 // consecutive-duplicate limit.
-func newToolLoopDetector(threshold int, exemptTools ...string) *toolLoopDetector {
+func NewLoopDetector(threshold int, exemptTools ...string) *LoopDetector {
 	exempt := make(map[string]struct{}, len(exemptTools))
 	for _, name := range exemptTools {
 		exempt[name] = struct{}{}
 	}
-	return &toolLoopDetector{threshold: threshold, exemptTools: exempt}
+	return &LoopDetector{threshold: threshold, exemptTools: exempt}
 }
 
-// reset clears the detector state so it can be reused after recovery.
-func (d *toolLoopDetector) reset() {
+// Consecutive returns the number of consecutive identical batches recorded
+// since the last reset (or since a non-matching batch was seen).
+func (d *LoopDetector) Consecutive() int {
+	return d.consecutive
+}
+
+// Reset clears the detector state so it can be reused after recovery.
+func (d *LoopDetector) Reset() {
 	d.lastSignature = ""
 	d.consecutive = 0
 }
 
-// record updates the detector with the latest tool call batch and returns
+// Record updates the detector with the latest tool call batch and returns
 // true if the consecutive-duplicate threshold has been reached.
 // Batches composed entirely of exempt (polling) tools are silently
 // skipped so that expected polling patterns are not flagged.
-func (d *toolLoopDetector) record(calls []tools.ToolCall) bool {
+func (d *LoopDetector) Record(calls []tools.ToolCall) bool {
 	if len(calls) == 0 {
 		return false
 	}
@@ -69,7 +78,7 @@ func (d *toolLoopDetector) record(calls []tools.ToolCall) bool {
 
 // isExemptBatch returns true when every call in the batch targets a
 // polling-exempt tool.
-func (d *toolLoopDetector) isExemptBatch(calls []tools.ToolCall) bool {
+func (d *LoopDetector) isExemptBatch(calls []tools.ToolCall) bool {
 	if len(d.exemptTools) == 0 {
 		return false
 	}

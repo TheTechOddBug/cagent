@@ -1,4 +1,4 @@
-package runtime
+package toolexec
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	bgagent "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
 
-func TestToolLoopDetector(t *testing.T) {
+func TestLoopDetector(t *testing.T) {
 	makeCalls := func(pairs ...string) []tools.ToolCall {
 		var calls []tools.ToolCall
 		for i := 0; i < len(pairs); i += 2 {
@@ -169,18 +169,18 @@ func TestToolLoopDetector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := newToolLoopDetector(tt.threshold, tt.exemptTools...)
+			d := NewLoopDetector(tt.threshold, tt.exemptTools...)
 			var tripped bool
 			for _, batch := range tt.batches {
-				if d.record(batch) {
+				if d.Record(batch) {
 					tripped = true
 				}
 			}
 			if tripped != tt.wantTrip {
 				t.Errorf("tripped = %v, want %v", tripped, tt.wantTrip)
 			}
-			if d.consecutive != tt.wantCount {
-				t.Errorf("consecutive = %d, want %d", d.consecutive, tt.wantCount)
+			if d.Consecutive() != tt.wantCount {
+				t.Errorf("consecutive = %d, want %d", d.Consecutive(), tt.wantCount)
 			}
 		})
 	}
