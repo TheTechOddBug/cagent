@@ -139,41 +139,31 @@ func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Sessi
 	}, events)
 }
 
-// executeNotificationHooks runs notification hooks when the agent emits
-// a user-facing notification. Hook output is informational — it does
-// not suppress or rewrite the notification.
-func (r *LocalRuntime) executeNotificationHooks(ctx context.Context, a *agent.Agent, sessionID, level, message string) {
-	if level != "error" && level != "warning" {
-		slog.Error("Invalid notification level", "level", level, "expected", "error|warning")
-		return
-	}
-	r.dispatchHook(ctx, a, hooks.EventNotification, &hooks.Input{
+// notifyError fires both notification(level=error) and on_error in one
+// call. They're always emitted together (an error is always also a
+// user-facing notification), so collapsing them into one call expresses
+// intent more directly than firing two events at every callsite.
+func (r *LocalRuntime) notifyError(ctx context.Context, a *agent.Agent, sessionID, message string) {
+	r.notify(ctx, a, hooks.EventNotification, sessionID, "error", message)
+	r.notify(ctx, a, hooks.EventOnError, sessionID, "error", message)
+}
+
+// notifyMaxIterations fires both notification(level=warning) and
+// on_max_iterations. Same rationale as [notifyError]: the two are
+// always emitted together when the iteration limit is reached.
+func (r *LocalRuntime) notifyMaxIterations(ctx context.Context, a *agent.Agent, sessionID, message string) {
+	r.notify(ctx, a, hooks.EventNotification, sessionID, "warning", message)
+	r.notify(ctx, a, hooks.EventOnMaxIterations, sessionID, "warning", message)
+}
+
+// notify is the shared dispatch path for the (level, message)-shaped
+// hook events: notification, on_error, on_max_iterations. They all
+// take the same Input fields and are observational (no Result is
+// honored), so a single helper covers them all.
+func (r *LocalRuntime) notify(ctx context.Context, a *agent.Agent, event hooks.EventType, sessionID, level, message string) {
+	r.dispatchHook(ctx, a, event, &hooks.Input{
 		SessionID:           sessionID,
 		NotificationLevel:   level,
-		NotificationMessage: message,
-	}, nil)
-}
-
-// executeOnErrorHooks fires on_error when the runtime hits an error
-// during a turn (model failures, tool-call loops). Fires alongside the
-// broader notification event; on_error is the structured entry point
-// for users who want to react only to errors.
-func (r *LocalRuntime) executeOnErrorHooks(ctx context.Context, a *agent.Agent, sessionID, message string) {
-	r.dispatchHook(ctx, a, hooks.EventOnError, &hooks.Input{
-		SessionID:           sessionID,
-		NotificationLevel:   "error",
-		NotificationMessage: message,
-	}, nil)
-}
-
-// executeOnMaxIterationsHooks fires on_max_iterations when the runtime
-// reaches its configured max_iterations limit. Fires alongside the
-// broader notification event; on_max_iterations is the structured entry
-// point for users who want to react only to that condition.
-func (r *LocalRuntime) executeOnMaxIterationsHooks(ctx context.Context, a *agent.Agent, sessionID, message string) {
-	r.dispatchHook(ctx, a, hooks.EventOnMaxIterations, &hooks.Input{
-		SessionID:           sessionID,
-		NotificationLevel:   "warning",
 		NotificationMessage: message,
 	}, nil)
 }

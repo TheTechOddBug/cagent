@@ -123,35 +123,14 @@ func (e *Executor) Has(event EventType) bool {
 // don't have to remember. Defaults [Input.Cwd] to the executor's
 // working directory when the caller didn't supply one.
 func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) (*Result, error) {
-	matchers := e.events[event]
-	if len(matchers) == 0 {
+	hooks := e.hooksFor(event, input.ToolName)
+	if len(hooks) == 0 {
 		return &Result{Allowed: true}, nil
 	}
+
 	input.HookEventName = event
 	if input.Cwd == "" {
 		input.Cwd = e.workingDir
-	}
-
-	// Collect, filter by tool name, and dedup by (type, command, args).
-	// Dedup catches the common case of an explicit YAML hook overlapping
-	// a runtime auto-injected one (e.g. WithAddDate plus a user-authored
-	// add_date entry).
-	seen := make(map[string]bool)
-	var hooks []Hook
-	for _, m := range matchers {
-		if !m.matches(input.ToolName) {
-			continue
-		}
-		for _, h := range m.hooks {
-			key := dedupKey(h)
-			if !seen[key] {
-				seen[key] = true
-				hooks = append(hooks, h)
-			}
-		}
-	}
-	if len(hooks) == 0 {
-		return &Result{Allowed: true}, nil
 	}
 
 	slog.Debug("Executing hooks", "event", event, "session_id", input.SessionID, "count", len(hooks))
@@ -169,6 +148,29 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 	wg.Wait()
 
 	return aggregate(results, event), nil
+}
+
+// hooksFor returns the deduplicated list of hooks that should run for
+// (event, toolName). Dedup by (type, command, args) catches the common
+// case of an explicit YAML hook overlapping a runtime auto-injected
+// one (e.g. WithAddDate plus a user-authored add_date entry).
+func (e *Executor) hooksFor(event EventType, toolName string) []Hook {
+	seen := make(map[string]bool)
+	var hooks []Hook
+	for _, m := range e.events[event] {
+		if !m.matches(toolName) {
+			continue
+		}
+		for _, h := range m.hooks {
+			key := dedupKey(h)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			hooks = append(hooks, h)
+		}
+	}
+	return hooks
 }
 
 // dedupKey returns a deterministic key identifying a hook by (type, command, args).
