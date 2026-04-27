@@ -14,8 +14,11 @@ const maxRange = ^uint32(0)
 
 // lockExclusive blocks until an exclusive lock is held on the file.
 // Windows has no flock, so we use LockFileEx with LOCKFILE_EXCLUSIVE_LOCK.
-// The lock is mandatory (kernel-enforced) on Windows, which is at least
-// as strict as the advisory flock used on Unix.
+//
+// The lock is mandatory (kernel-enforced) on Windows, unlike the advisory
+// flock used on Unix. However, since we lock a separate .lock file (not
+// the data file itself), both platforms achieve the same effect: serializing
+// the read-modify-write window without preventing direct reads of cache.json.
 func lockExclusive(f *os.File) error {
 	var ol windows.Overlapped
 	return windows.LockFileEx(

@@ -156,6 +156,10 @@ func (c *Cache) Store(question, response string) {
 		}
 	}
 
+	// Update in-memory map after persist (not before) so that if persist
+	// fails, we still have the entry in memory for this process. The next
+	// Lookup will reload from disk if another process wrote successfully.
+
 	c.entries[key] = response
 }
 
@@ -194,7 +198,8 @@ func (c *Cache) persistToDisk(key, response string) error {
 // maybeReload reloads c.entries from disk when the file mtime has
 // advanced since our last load. Called from Lookup; a no-op when the
 // cache is in-memory only or when the file can't be stat'd (in-memory
-// state is preserved).
+// state is preserved). Re-stats the file under the write lock to avoid
+// TOCTOU races.
 func (c *Cache) maybeReload() {
 	if c.path == "" {
 		return
@@ -213,9 +218,14 @@ func (c *Cache) maybeReload() {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Re-check under the write lock: another goroutine may have just
-	// reloaded us.
-	if info.ModTime().Equal(c.mtime) {
+	// Re-stat under the write lock to avoid TOCTOU: the file could have
+	// been modified between the initial stat and the lock acquisition.
+	// Using the stale info would risk storing a mtime that doesn't match
+	// the content we're about to load.
+	info, err = os.Stat(c.path)
+	if err != nil || info.ModTime().Equal(c.mtime) {
+		// File disappeared or another goroutine already reloaded to this
+		// mtime; nothing to do.
 		return
 	}
 	fresh := make(map[string]string)
@@ -266,8 +276,11 @@ func loadFromFile(path string, entries map[string]string) error {
 }
 
 // mtimeOf returns the file modification time at path, or the zero value
-// if path doesn't exist or can't be stat'd. The zero value is safe to
-// compare via [time.Time.Equal] in [Cache.maybeReload].
+// if path doesn't exist or can't be stat'd.
+//
+// The zero value (time.Time{}) is a sentinel meaning "file not found"
+// and is safe to compare via [time.Time.Equal] in [Cache.maybeReload]: it
+// will never equal a real mtime, so the reload will proceed as expected.
 func mtimeOf(path string) time.Time {
 	if info, err := os.Stat(path); err == nil {
 		return info.ModTime()
