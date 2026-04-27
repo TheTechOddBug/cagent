@@ -215,6 +215,7 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 		Permissions:         session.Permissions,
 		AgentModelOverrides: session.AgentModelOverrides,
 		CustomModelsUsed:    session.CustomModelsUsed,
+		AttachedFiles:       session.AttachedFilesSnapshot(),
 		ParentID:            session.ParentID,
 	}
 

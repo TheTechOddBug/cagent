@@ -139,7 +139,11 @@ func (a *App) SendFirstMessage() tea.Cmd {
 	cmds := []tea.Cmd{
 		func() tea.Msg {
 			// Use the shared PrepareUserMessage function for consistent attachment handling
-			userMsg := cli.PrepareUserMessage(context.Background(), a.runtime, *a.firstMessage, a.firstMessageAttach)
+			userMsg, attachedPath := cli.PrepareUserMessage(context.Background(), a.runtime, *a.firstMessage, a.firstMessageAttach)
+			// Record the attached file on the session so sub-agents created via
+			// task transfer can reference it through their inherited
+			// AttachedFiles list.
+			a.session.AddAttachedFile(attachedPath)
 
 			// If the message has multi-content (attachments), we need to handle it specially
 			if len(userMsg.Message.MultiContent) > 0 {
@@ -300,6 +304,10 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 			for _, att := range attachments {
 				switch {
 				case att.FilePath != "":
+					// Record the attached path on the session so that sub-agents
+					// created via task transfer inherit it. The editor already
+					// resolves @-mentions to absolute paths before this point.
+					a.session.AddAttachedFile(att.FilePath)
 					// File-reference attachment: read and classify from disk.
 					a.processFileAttachment(ctx, att, &textBuilder, &binaryParts)
 				case att.Content != "":

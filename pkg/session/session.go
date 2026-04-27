@@ -136,6 +136,13 @@ type Session struct {
 	// These are shown in the model picker for easy re-selection.
 	CustomModelsUsed []string `json:"custom_models_used,omitempty"`
 
+	// AttachedFiles records absolute paths of files the user attached to this
+	// session via @-mentions in the editor or /attach directives. Sub-sessions
+	// created via task transfer inherit this list so that delegated agents can
+	// reference the same files without having to scan the workspace or guess
+	// from a bare filename. Paths are deduplicated and order-preserved.
+	AttachedFiles []string `json:"attached_files,omitempty"`
+
 	// ExcludedTools lists tool names that should be filtered out of the agent's
 	// tool list for this session. This is used by skill sub-sessions to prevent
 	// recursive run_skill calls.
@@ -481,6 +488,31 @@ func (s *Session) AddMessageUsageRecord(agentName, model string, cost float64, u
 	})
 }
 
+// AddAttachedFile records absPath as a file the user attached to this session.
+// Empty paths are ignored; duplicates (already in AttachedFiles) are dropped.
+// The recorded paths are propagated to sub-sessions created via task transfer
+// so that delegated agents can read the same files without having to scan the
+// workspace or guess from a bare filename.
+func (s *Session) AddAttachedFile(absPath string) {
+	if absPath == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if slices.Contains(s.AttachedFiles, absPath) {
+		return
+	}
+	s.AttachedFiles = append(s.AttachedFiles, absPath)
+}
+
+// AttachedFilesSnapshot returns a copy of the session's attached file paths.
+// Callers may freely mutate the returned slice without affecting the session.
+func (s *Session) AttachedFilesSnapshot() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.AttachedFiles)
+}
+
 type Opt func(s *Session)
 
 func WithUserMessage(content string) Opt {
@@ -605,6 +637,17 @@ func WithID(id string) Opt {
 func WithExcludedTools(names []string) Opt {
 	return func(s *Session) {
 		s.ExcludedTools = names
+	}
+}
+
+// WithAttachedFiles seeds the session with absolute paths of files the user
+// attached. Used when creating sub-sessions so that delegated agents inherit
+// the parent's file context. Empty and duplicate paths are dropped.
+func WithAttachedFiles(paths []string) Opt {
+	return func(s *Session) {
+		for _, p := range paths {
+			s.AddAttachedFile(p)
+		}
 	}
 }
 

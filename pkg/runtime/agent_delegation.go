@@ -49,11 +49,25 @@ func validateAgentInList(currentAgent, targetAgent, action, listDesc string, age
 }
 
 // buildTaskSystemMessage constructs the system message for a delegated task.
-func buildTaskSystemMessage(task, expectedOutput string) string {
+// attachedFiles, when non-empty, lists absolute paths of files the user
+// attached to the parent conversation; they are surfaced to the sub-agent so
+// it can use them directly without scanning the workspace or guessing from a
+// bare filename.
+func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string) string {
 	msg := "You are a member of a team of agents. Your goal is to complete the following task:"
 	msg += fmt.Sprintf("\n\n<task>\n%s\n</task>", task)
 	if expectedOutput != "" {
 		msg += fmt.Sprintf("\n\n<expected_output>\n%s\n</expected_output>", expectedOutput)
+	}
+	if len(attachedFiles) > 0 {
+		var b strings.Builder
+		b.WriteString("\n\nThe user attached these files in the original conversation. They are available for you to read at these absolute paths; prefer them over any bare filenames mentioned in <task>:\n<attached_files>")
+		for _, p := range attachedFiles {
+			b.WriteString("\n- ")
+			b.WriteString(p)
+		}
+		b.WriteString("\n</attached_files>")
+		msg += b.String()
 	}
 	msg += "\n\nIf the task references files, treat any absolute paths in <task> as authoritative and use them as-is. If a referenced file is given by name only (e.g. \"foo.go\"), do not guess: search the workspace or ask the calling agent for the absolute path before reading or modifying the file."
 	return msg
@@ -96,9 +110,16 @@ type SubSessionConfig struct {
 // session. It consolidates the session options that were previously duplicated
 // across handleTaskTransfer and RunAgent.
 func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *agent.Agent) *session.Session {
+	// Inherit the parent's attached files so that delegated agents can read
+	// the same files the user attached to the original conversation, without
+	// having to scan the workspace or guess from a bare filename. This works
+	// recursively: sub-sub-sessions also inherit because we copy the parent
+	// session's AttachedFiles, and the child session is itself populated.
+	attachedFiles := parent.AttachedFilesSnapshot()
+
 	sysMsg := cfg.SystemMessage
 	if sysMsg == "" {
-		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput)
+		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput, attachedFiles)
 	}
 
 	userMsg := cfg.ImplicitUserMessage
@@ -116,6 +137,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		session.WithToolsApproved(cfg.ToolsApproved),
 		session.WithSendUserMessage(false),
 		session.WithParentID(parent.ID),
+		session.WithAttachedFiles(attachedFiles),
 	}
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
