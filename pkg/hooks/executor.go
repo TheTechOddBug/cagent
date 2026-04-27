@@ -88,6 +88,8 @@ func compileEvents(c *Config) map[EventType][]matcher {
 		EventOnAgentSwitch:          flat(c.OnAgentSwitch),
 		EventOnSessionResume:        flat(c.OnSessionResume),
 		EventOnToolApprovalDecision: flat(c.OnToolApprovalDecision),
+		EventBeforeCompaction:       flat(c.BeforeCompaction),
+		EventAfterCompaction:        flat(c.AfterCompaction),
 	}
 }
 
@@ -341,6 +343,13 @@ func aggregate(results []hookResult, event EventType) *Result {
 					}
 					maps.Copy(final.ModifiedInput, hso.UpdatedInput)
 				}
+			}
+			if event == EventBeforeCompaction && hso.Summary != "" && final.Summary == "" {
+				// First non-empty summary wins. Concatenating multiple
+				// summaries would produce nonsense, so we keep the first
+				// hook's verdict and let later hooks fall through to the
+				// observational path.
+				final.Summary = hso.Summary
 			}
 			if hso.AdditionalContext != "" {
 				contexts = append(contexts, hso.AdditionalContext)

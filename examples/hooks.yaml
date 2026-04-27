@@ -21,6 +21,8 @@
 #   notification      - errors / warnings emitted by the runtime (catch-all)
 #   on_error          - structured handler for runtime errors
 #   on_max_iterations - structured handler for hitting max_iterations
+#   before_compaction - veto a compaction OR supply a custom summary string
+#   after_compaction  - observe a successful compaction (logging, audits)
 #
 # Handler kinds:
 #
@@ -52,6 +54,7 @@
 #   /tmp/agent-notifications.log   (notification)
 #   /tmp/agent-errors.log          (on_error)
 #   /tmp/agent-max-iter.log        (on_max_iterations)
+#   /tmp/agent-compactions.log     (before_compaction, after_compaction)
 #
 
 agents:
@@ -270,3 +273,55 @@ agents:
             INPUT=$(cat)
             MESSAGE=$(echo "$INPUT" | jq -r '.notification_message // "no message"')
             echo "[$(date)] max-iterations: $MESSAGE" >> /tmp/agent-max-iter.log
+
+      # ====================================================================
+      # BEFORE-COMPACTION - fires immediately before the runtime compacts
+      # the session. The Input carries:
+      #   .input_tokens       - current session input-token count
+      #   .output_tokens      - current session output-token count
+      #   .context_limit      - the model's context-window size, when known
+      #   .compaction_reason  - "threshold" (proactive 90% trigger),
+      #                         "overflow" (post-overflow auto-recovery),
+      #                         or "manual" (user-invoked /compact).
+      #
+      # Two ways to influence the runtime:
+      #
+      #   1. Veto: exit with code 2 (or return permission_decision="deny").
+      #      The runtime skips compaction entirely. CAUTION: vetoing during
+      #      compaction_reason="overflow" leaves the session unable to make
+      #      progress — gate by reason if you need this.
+      #
+      #   2. Replace: return hookSpecificOutput.summary to supply a custom
+      #      summary string. The runtime applies it verbatim and skips the
+      #      LLM-based summarization. Useful for non-LLM strategies (drop
+      #      oldest tool results, dedupe, stub-out long blobs, ...).
+      # ====================================================================
+      before_compaction:
+        - type: command
+          timeout: 30
+          command: |
+            INPUT=$(cat)
+            REASON=$(echo "$INPUT" | jq -r '.compaction_reason // "manual"')
+            INPUT_TOK=$(echo "$INPUT" | jq -r '.input_tokens // 0')
+            OUTPUT_TOK=$(echo "$INPUT" | jq -r '.output_tokens // 0')
+            LIMIT=$(echo "$INPUT" | jq -r '.context_limit // 0')
+            echo "[$(date)] [→] compacting (reason=$REASON, in=$INPUT_TOK, out=$OUTPUT_TOK, ctx=$LIMIT)" \
+              >> /tmp/agent-compactions.log
+            # Pure observability — fall through to the LLM-based default.
+            echo '{"continue": true}'
+
+      # ====================================================================
+      # AFTER-COMPACTION - fires after a successful compaction has applied
+      # a summary to the session. The Input carries the produced summary
+      # text in .summary alongside the same token / reason fields.
+      # Purely observational — output is ignored.
+      # ====================================================================
+      after_compaction:
+        - type: command
+          timeout: 10
+          command: |
+            INPUT=$(cat)
+            REASON=$(echo "$INPUT" | jq -r '.compaction_reason // "manual"')
+            LEN=$(echo "$INPUT" | jq -r '.summary // ""' | wc -c | tr -d ' ')
+            echo "[$(date)] [✓] compacted (reason=$REASON, summary=$LEN chars)" \
+              >> /tmp/agent-compactions.log
