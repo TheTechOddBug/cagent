@@ -100,12 +100,13 @@ type model struct {
 	height   int
 
 	// Height tracking system fields
-	scrollOffset  int                  // Current scroll position in lines
-	bottomSlack   int                  // Extra blank lines added after content shrinks
-	renderedLines []string             // Cached rendered content as lines (avoids split/join per frame)
-	renderedItems map[int]renderedItem // Cache of rendered items with positions
-	totalHeight   int                  // Total height of all content in lines
-	renderDirty   bool                 // True when rendered content needs rebuild
+	scrollOffset      int                    // Current scroll position in lines
+	bottomSlack       int                    // Extra blank lines added after content shrinks
+	slackAnimationSub animation.Subscription // Subscription to animation ticks while slack > 0
+	renderedLines     []string               // Cached rendered content as lines (avoids split/join per frame)
+	renderedItems     map[int]renderedItem   // Cache of rendered items with positions
+	totalHeight       int                    // Total height of all content in lines
+	renderDirty       bool                   // True when rendered content needs rebuild
 
 	selection selectionState
 
@@ -267,6 +268,17 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 			// Child state changed (e.g., spinner tick), invalidate render cache
 			m.renderDirty = true
+		}
+	}
+
+	// On animation ticks, decay any leftover bottom slack so empty lines don't
+	// persist after thinking text fades out. This must run AFTER the children
+	// have processed the tick (so reasoning blocks have already updated their
+	// fade state) and BEFORE tui.go's animation.HasActive() check, so the
+	// registration reflects whether more ticks are needed.
+	if _, ok := msg.(animation.TickMsg); ok {
+		if cmd := m.tickBottomSlackDecay(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 
@@ -515,34 +527,15 @@ func (m *model) View() string {
 		return ""
 	}
 
-	prevTotalHeight := m.totalHeight
-	prevScrollableHeight := m.totalHeight + m.bottomSlack
-	m.ensureAllItemsRendered()
+	m.updateScrollState()
+	// Best-effort: keep slack subscription in sync. The returned cmd (if any)
+	// is dropped because View() cannot return commands. The fade-out path —
+	// which is where this matters — handles registration in Update via
+	// tickBottomSlackDecay before tui.go's HasActive() check.
+	_ = m.maintainSlackAnimation()
 
 	if m.totalHeight == 0 {
 		return ""
-	}
-
-	if m.userHasScrolled {
-		m.bottomSlack = 0
-	} else {
-		delta := m.totalHeight - prevTotalHeight
-		if delta < 0 {
-			m.bottomSlack += -delta
-		} else if delta > 0 && m.bottomSlack > 0 {
-			consume := min(delta, m.bottomSlack)
-			m.bottomSlack -= consume
-		}
-	}
-
-	scrollableHeight := m.totalHeight + m.bottomSlack
-	maxScrollOffset := max(0, scrollableHeight-m.height)
-
-	// Auto-scroll when content grows beyond any slack.
-	if !m.userHasScrolled && scrollableHeight > prevScrollableHeight {
-		m.scrollOffset = maxScrollOffset
-	} else {
-		m.scrollOffset = max(0, min(m.scrollOffset, maxScrollOffset))
 	}
 
 	// Use cached lines directly - O(1) instead of O(totalHeight) split
@@ -579,6 +572,79 @@ func (m *model) View() string {
 	m.scrollview.SetContent(m.renderedLines, m.totalScrollableHeight())
 	m.scrollview.SetScrollOffset(m.scrollOffset)
 	return m.scrollview.ViewWithLines(visibleLines)
+}
+
+// updateScrollState recomputes rendered content, bottom slack and scroll offset
+// based on the current state of the message list. It is called both from View()
+// (so non-tick paths see the latest state) and from Update() on animation ticks
+// so that the animation registration reflects whether slack > 0 before the
+// next tick is scheduled.
+func (m *model) updateScrollState() {
+	prevTotalHeight := m.totalHeight
+	prevScrollableHeight := m.totalHeight + m.bottomSlack
+	m.ensureAllItemsRendered()
+
+	if m.userHasScrolled {
+		m.bottomSlack = 0
+	} else {
+		delta := m.totalHeight - prevTotalHeight
+		switch {
+		case delta < 0:
+			m.bottomSlack += -delta
+			// Cap slack so the viewport is never mostly empty after a large
+			// shrinkage (e.g., several thinking-text tool calls fading out at
+			// once). Without this, the user would see an empty screen and have
+			// to manually scroll back to the bottom.
+			if maxSlack := m.maxBottomSlack(); m.bottomSlack > maxSlack {
+				m.bottomSlack = maxSlack
+			}
+		case delta > 0 && m.bottomSlack > 0:
+			consume := min(delta, m.bottomSlack)
+			m.bottomSlack -= consume
+		}
+	}
+
+	scrollableHeight := m.totalHeight + m.bottomSlack
+	maxScrollOffset := max(0, scrollableHeight-m.height)
+
+	// Auto-scroll when content grows beyond any slack.
+	if !m.userHasScrolled && scrollableHeight > prevScrollableHeight {
+		m.scrollOffset = maxScrollOffset
+	} else {
+		m.scrollOffset = max(0, min(m.scrollOffset, maxScrollOffset))
+	}
+}
+
+// maxBottomSlack returns the maximum number of blank lines that can be added
+// after content shrinks. The cap is intentionally small: enough to absorb a
+// typical tool fade-out (~2 lines) without making the viewport feel empty.
+func (m *model) maxBottomSlack() int {
+	return max(1, min(5, m.height/3))
+}
+
+// maintainSlackAnimation registers or unregisters the messages component with
+// the animation coordinator based on whether slack > 0. The registration keeps
+// animation ticks firing so tickBottomSlackDecay can gradually clear empty
+// lines after thinking text fades out.
+func (m *model) maintainSlackAnimation() tea.Cmd {
+	if m.bottomSlack > 0 {
+		return m.slackAnimationSub.Start()
+	}
+	m.slackAnimationSub.Stop()
+	return nil
+}
+
+// tickBottomSlackDecay updates slack from any height changes since the previous
+// render and decays slack by one line per tick. It must be called from Update
+// on animation.TickMsg AFTER children have processed the tick, so that fade
+// animations have already updated their height and the registration reflects
+// the post-tick state before tui.go checks animation.HasActive().
+func (m *model) tickBottomSlackDecay() tea.Cmd {
+	m.updateScrollState()
+	if !m.userHasScrolled && m.bottomSlack > 0 {
+		m.bottomSlack--
+	}
+	return m.maintainSlackAnimation()
 }
 
 // SetSize sets the dimensions of the component
