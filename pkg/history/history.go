@@ -1,11 +1,11 @@
 package history
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -86,13 +86,8 @@ func (h *History) migrateOldHistory(homeDir string) error {
 }
 
 func (h *History) Add(message string) error {
-	// Update in-memory list: remove duplicate and append to end
-	h.Messages = slices.DeleteFunc(h.Messages, func(m string) bool {
-		return m == message
-	})
-	h.Messages = append(h.Messages, message)
+	h.addInMemory(message)
 	h.current = len(h.Messages)
-
 	return h.append(message)
 }
 
@@ -100,19 +95,12 @@ func (h *History) Previous() string {
 	if len(h.Messages) == 0 {
 		return ""
 	}
-
-	// If we're at -1 (initial state), start from the end
-	if h.current == -1 {
+	switch {
+	case h.current == -1:
 		h.current = len(h.Messages) - 1
-		return h.Messages[h.current]
+	case h.current > 0:
+		h.current--
 	}
-
-	// If we're at the beginning, stay there
-	if h.current <= 0 {
-		return h.Messages[0]
-	}
-
-	h.current--
 	return h.Messages[h.current]
 }
 
@@ -120,21 +108,18 @@ func (h *History) Next() string {
 	if len(h.Messages) == 0 {
 		return ""
 	}
-
 	if h.current >= len(h.Messages)-1 {
 		h.current = len(h.Messages)
 		return ""
 	}
-
 	h.current++
 	return h.Messages[h.current]
 }
 
 // LatestMatch returns the most recent history entry that extends the provided
-// prefix, or the latest message when no prefix is supplied.
+// prefix, or an empty string when none does.
 func (h *History) LatestMatch(prefix string) string {
-	for i := len(h.Messages) - 1; i >= 0; i-- {
-		msg := h.Messages[i]
+	for _, msg := range slices.Backward(h.Messages) {
 		if strings.HasPrefix(msg, prefix) && len(msg) > len(prefix) {
 			return msg
 		}
@@ -147,44 +132,40 @@ func (h *History) LatestMatch(prefix string) string {
 // Returns the matched message, its index, and whether a match was found.
 // An empty query matches any entry.
 func (h *History) FindPrevContains(query string, from int) (msg string, idx int, ok bool) {
-	if len(h.Messages) == 0 {
-		return "", -1, false
-	}
-
-	start := min(from-1, len(h.Messages)-1)
-
 	query = strings.ToLower(query)
-	for i := start; i >= 0; i-- {
+	for i := min(from-1, len(h.Messages)-1); i >= 0; i-- {
 		if query == "" || strings.Contains(strings.ToLower(h.Messages[i]), query) {
 			return h.Messages[i], i, true
 		}
 	}
-
 	return "", -1, false
 }
 
 // FindNextContains searches forward through history for a message containing query.
 // from is an exclusive lower bound index. Pass -1 to start from the oldest.
 // Returns the matched message, its index, and whether a match was found.
+// An empty query matches any entry.
 func (h *History) FindNextContains(query string, from int) (msg string, idx int, ok bool) {
-	if len(h.Messages) == 0 {
-		return "", -1, false
-	}
-
-	start := max(from+1, 0)
-
 	query = strings.ToLower(query)
-	for i := start; i < len(h.Messages); i++ {
+	for i := max(from+1, 0); i < len(h.Messages); i++ {
 		if query == "" || strings.Contains(strings.ToLower(h.Messages[i]), query) {
 			return h.Messages[i], i, true
 		}
 	}
-
 	return "", -1, false
 }
 
 func (h *History) SetCurrent(i int) {
 	h.current = i
+}
+
+// addInMemory removes any prior occurrence of message and appends it as the
+// most recent entry.
+func (h *History) addInMemory(message string) {
+	h.Messages = slices.DeleteFunc(h.Messages, func(m string) bool {
+		return m == message
+	})
+	h.Messages = append(h.Messages, message)
 }
 
 func (h *History) append(message string) error {
@@ -213,51 +194,19 @@ func (h *History) load() error {
 		return err
 	}
 
-	// Count lines to pre-size the slice.
-	n := 0
-	for _, b := range data {
-		if b == '\n' {
-			n++
-		}
-	}
-
-	// Parse all lines. Each line is a JSON-encoded string (e.g. "hello").
-	// strconv.Unquote handles the same escape sequences as JSON and is
-	// much faster than json.Unmarshal for quoted strings.
-	all := make([]string, 0, n)
-	s := string(data)
-	for s != "" {
-		i := strings.IndexByte(s, '\n')
-		var line string
-		if i < 0 {
-			line = s
-			s = ""
-		} else {
-			line = s[:i]
-			s = s[i+1:]
-		}
-		if line == "" {
+	// The file is append-only with one JSON-encoded string per line.
+	// Replaying each entry through addInMemory naturally deduplicates,
+	// keeping the latest occurrence of each message.
+	for line := range bytes.Lines(data) {
+		line = bytes.TrimRight(line, "\n")
+		if len(line) == 0 {
 			continue
 		}
-
-		message, err := strconv.Unquote(line)
-		if err != nil {
+		var msg string
+		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
-		all = append(all, message)
+		h.addInMemory(msg)
 	}
-
-	// Deduplicate keeping the latest occurrence of each message.
-	seen := make(map[string]struct{}, len(all))
-	h.Messages = make([]string, 0, len(all))
-	for i := len(all) - 1; i >= 0; i-- {
-		if _, dup := seen[all[i]]; dup {
-			continue
-		}
-		seen[all[i]] = struct{}{}
-		h.Messages = append(h.Messages, all[i])
-	}
-	slices.Reverse(h.Messages)
-
 	return nil
 }
