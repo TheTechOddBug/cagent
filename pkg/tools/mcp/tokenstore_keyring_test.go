@@ -17,8 +17,7 @@ func TestKeyringTokenStore_RoundTrip(t *testing.T) {
 	resourceURL := "https://example.com/mcp"
 
 	// Initially no token
-	_, err := store.GetToken(resourceURL)
-	if err == nil {
+	if _, err := store.GetToken(resourceURL); err == nil {
 		t.Fatal("expected error for missing token")
 	}
 
@@ -31,13 +30,13 @@ func TestKeyringTokenStore_RoundTrip(t *testing.T) {
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
 	}
 	if err := store.StoreToken(resourceURL, token); err != nil {
-		t.Fatalf("StoreToken failed: %v", err)
+		t.Fatalf("StoreToken: %v", err)
 	}
 
 	// Retrieve it
 	got, err := store.GetToken(resourceURL)
 	if err != nil {
-		t.Fatalf("GetToken failed: %v", err)
+		t.Fatalf("GetToken: %v", err)
 	}
 	if got.AccessToken != "access-123" {
 		t.Errorf("AccessToken = %q, want %q", got.AccessToken, "access-123")
@@ -48,11 +47,9 @@ func TestKeyringTokenStore_RoundTrip(t *testing.T) {
 
 	// Remove it
 	if err := store.RemoveToken(resourceURL); err != nil {
-		t.Fatalf("RemoveToken failed: %v", err)
+		t.Fatalf("RemoveToken: %v", err)
 	}
-
-	_, err = store.GetToken(resourceURL)
-	if err == nil {
+	if _, err := store.GetToken(resourceURL); err == nil {
 		t.Fatal("expected error after RemoveToken")
 	}
 }
@@ -70,12 +67,12 @@ func TestKeyringTokenStore_JSONRoundTrip(t *testing.T) {
 
 	data, err := json.Marshal(token)
 	if err != nil {
-		t.Fatalf("Marshal failed: %v", err)
+		t.Fatalf("Marshal: %v", err)
 	}
 
 	var got OAuthToken
 	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal failed: %v", err)
+		t.Fatalf("Unmarshal: %v", err)
 	}
 
 	if got.AccessToken != token.AccessToken || got.RefreshToken != token.RefreshToken || got.Scope != token.Scope {
@@ -85,210 +82,176 @@ func TestKeyringTokenStore_JSONRoundTrip(t *testing.T) {
 
 func TestKeyringTokenStore_RemoveNonExistent(t *testing.T) {
 	store := NewInMemoryTokenStore()
-	// Should not error when removing a non-existent token
 	if err := store.RemoveToken("https://nonexistent.example.com"); err != nil {
 		t.Fatalf("RemoveToken for non-existent key should not error: %v", err)
 	}
 }
 
-// countingKeyring wraps another keyring.Keyring and counts how many times
-// each operation is invoked. Used to assert that the bundle layout really
-// does collapse N tokens into a single underlying keyring read.
+// countingKeyring tracks how many times Get and Set are invoked on the
+// underlying ring. Used to assert that the bundled layout collapses N
+// tokens into a single keyring read.
 type countingKeyring struct {
-	inner keyring.Keyring
-	gets  int
-	sets  int
-	rems  int
-	keys  int
+	keyring.Keyring
+
+	gets, sets int
 }
 
 func newCountingKeyring() *countingKeyring {
-	return &countingKeyring{inner: keyring.NewArrayKeyring(nil)}
+	return &countingKeyring{Keyring: keyring.NewArrayKeyring(nil)}
 }
 
 func (k *countingKeyring) Get(key string) (keyring.Item, error) {
 	k.gets++
-	return k.inner.Get(key)
-}
-
-func (k *countingKeyring) GetMetadata(key string) (keyring.Metadata, error) {
-	return k.inner.GetMetadata(key)
+	return k.Keyring.Get(key)
 }
 
 func (k *countingKeyring) Set(item keyring.Item) error {
 	k.sets++
-	return k.inner.Set(item)
-}
-
-func (k *countingKeyring) Remove(key string) error {
-	k.rems++
-	return k.inner.Remove(key)
-}
-
-func (k *countingKeyring) Keys() ([]string, error) {
-	k.keys++
-	return k.inner.Keys()
+	return k.Keyring.Set(item)
 }
 
 // TestBundledKeyringStore_ReadsCollapsedToOneGet verifies the central
-// claim of the bundled storage layout: regardless of how many resource
-// URLs are looked up, the underlying keyring only sees a single Get for
-// the bundle key. This is what avoids the "many keychain prompts on
-// macOS" problem the bundled layout was introduced to solve.
+// claim of the bundled layout: regardless of how many resource URLs are
+// looked up, the underlying keyring sees only a single Get for the bundle
+// key. This is what avoids the "many keychain prompts on macOS" problem.
 func TestBundledKeyringStore_ReadsCollapsedToOneGet(t *testing.T) {
-	ring := newCountingKeyring()
-	store := newKeyringTokenStore(ring)
-
-	// Pre-populate three tokens by going through the public API once.
-	for i, url := range []string{
-		"https://server-a.example/mcp",
-		"https://server-b.example/mcp",
-		"https://server-c.example/mcp",
-	} {
-		err := store.StoreToken(url, &OAuthToken{AccessToken: "at-" + string(rune('A'+i))})
-		if err != nil {
-			t.Fatalf("StoreToken(%s) failed: %v", url, err)
-		}
-	}
-
-	// Drop the cache so that we exercise a fresh load() like a new process
-	// would. Use a new store wrapping the same ring.
-	ring.gets = 0
-	ring.sets = 0
-	ring.rems = 0
-	ring.keys = 0
-
-	store2 := newKeyringTokenStore(ring)
-
-	// Read each token several times; only the first read should hit the
-	// keyring.
-	for range 5 {
-		for _, url := range []string{
-			"https://server-a.example/mcp",
-			"https://server-b.example/mcp",
-			"https://server-c.example/mcp",
-		} {
-			if _, err := store2.GetToken(url); err != nil {
-				t.Fatalf("GetToken(%s) failed: %v", url, err)
-			}
-		}
-	}
-
-	// 15 GetToken calls covering 3 distinct URLs must result in exactly
-	// one underlying Get on the bundle key.
-	if ring.gets != 1 {
-		t.Errorf("expected exactly 1 underlying keyring Get, got %d", ring.gets)
-	}
-	if ring.sets != 0 {
-		t.Errorf("read-only path must not write to the keyring, got %d Set calls", ring.sets)
-	}
-}
-
-// TestBundledKeyringStore_StoreReusesSameItem verifies that storing tokens
-// for many different resource URLs all go to the same keyring item, so
-// macOS only ever asks for permission on a single item ACL.
-func TestBundledKeyringStore_StoreReusesSameItem(t *testing.T) {
-	ring := newCountingKeyring()
-	store := newKeyringTokenStore(ring)
-
 	urls := []string{
 		"https://server-a.example/mcp",
 		"https://server-b.example/mcp",
 		"https://server-c.example/mcp",
 	}
-	for _, url := range urls {
-		if err := store.StoreToken(url, &OAuthToken{AccessToken: "at"}); err != nil {
-			t.Fatalf("StoreToken(%s) failed: %v", url, err)
+
+	ring := newCountingKeyring()
+	store := newKeyringTokenStore(ring)
+	for i, url := range urls {
+		if err := store.StoreToken(url, &OAuthToken{AccessToken: "at-" + string(rune('A'+i))}); err != nil {
+			t.Fatalf("StoreToken(%s): %v", url, err)
 		}
 	}
 
-	keys, err := ring.inner.Keys()
+	// Drop the cache by wrapping the same ring with a fresh store, so we
+	// exercise a real load() like a new process would.
+	ring.gets, ring.sets = 0, 0
+	fresh := newKeyringTokenStore(ring)
+
+	// Read each token several times; only the first read should hit the
+	// keyring.
+	for range 5 {
+		for _, url := range urls {
+			if _, err := fresh.GetToken(url); err != nil {
+				t.Fatalf("GetToken(%s): %v", url, err)
+			}
+		}
+	}
+
+	if ring.gets != 1 {
+		t.Errorf("expected exactly 1 underlying keyring Get, got %d", ring.gets)
+	}
+	if ring.sets != 0 {
+		t.Errorf("read-only path must not write, got %d Set calls", ring.sets)
+	}
+}
+
+// TestBundledKeyringStore_StoreReusesSameItem verifies that storing
+// tokens for many different resource URLs all go to the same keyring item
+// — so macOS only ever asks for permission on a single ACL.
+func TestBundledKeyringStore_StoreReusesSameItem(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	store := newKeyringTokenStore(ring)
+
+	for _, url := range []string{
+		"https://server-a.example/mcp",
+		"https://server-b.example/mcp",
+		"https://server-c.example/mcp",
+	} {
+		if err := store.StoreToken(url, &OAuthToken{AccessToken: "at"}); err != nil {
+			t.Fatalf("StoreToken(%s): %v", url, err)
+		}
+	}
+
+	keys, err := ring.Keys()
 	if err != nil {
-		t.Fatalf("Keys() failed: %v", err)
+		t.Fatalf("Keys: %v", err)
 	}
 	if len(keys) != 1 || keys[0] != bundleKey {
 		t.Fatalf("expected single bundle item %q, got %v", bundleKey, keys)
 	}
 }
 
-// TestBundledKeyringStore_LegacyMigration confirms tokens previously stored
-// with the per-resource layout are folded into the bundle on first load
-// and the legacy entries are cleaned up.
+// TestBundledKeyringStore_LegacyMigration confirms tokens previously
+// stored with the per-resource layout are folded into the bundle on first
+// load and the legacy entries are cleaned up.
 func TestBundledKeyringStore_LegacyMigration(t *testing.T) {
-	inner := keyring.NewArrayKeyring(nil)
+	ring := keyring.NewArrayKeyring(nil)
 
-	// Simulate three tokens stored under the previous layout.
 	urls := []string{
 		"https://legacy-a.example/mcp",
 		"https://legacy-b.example/mcp",
 	}
 	for _, url := range urls {
-		data, err := json.Marshal(&OAuthToken{AccessToken: "legacy-" + url})
-		if err != nil {
-			t.Fatalf("marshal failed: %v", err)
-		}
-		if err := inner.Set(keyring.Item{
-			Key:  legacyTokenPrefix + url,
-			Data: data,
-		}); err != nil {
-			t.Fatalf("seed legacy item failed: %v", err)
-		}
+		seedLegacyToken(t, ring, url, &OAuthToken{AccessToken: "legacy-" + url})
 	}
 	// Also seed the legacy index, which should be removed without
 	// becoming a token entry.
-	if err := inner.Set(keyring.Item{
+	if err := ring.Set(keyring.Item{
 		Key:  legacyIndexKey,
 		Data: []byte(`["https://legacy-a.example/mcp"]`),
 	}); err != nil {
-		t.Fatalf("seed legacy index failed: %v", err)
+		t.Fatalf("seed legacy index: %v", err)
 	}
 
-	store := newKeyringTokenStore(inner)
+	store := newKeyringTokenStore(ring)
 
-	// Reading any token triggers migration.
-	got, err := store.GetToken("https://legacy-a.example/mcp")
+	// Reading any token triggers migration; both legacy tokens should be
+	// reachable afterwards.
+	for _, url := range urls {
+		got, err := store.GetToken(url)
+		if err != nil {
+			t.Fatalf("GetToken(%s): %v", url, err)
+		}
+		if want := "legacy-" + url; got.AccessToken != want {
+			t.Errorf("AccessToken for %s = %q, want %q", url, got.AccessToken, want)
+		}
+	}
+
+	// The keyring should now contain only the bundle key.
+	keys, err := ring.Keys()
 	if err != nil {
-		t.Fatalf("GetToken failed: %v", err)
-	}
-	if got.AccessToken != "legacy-https://legacy-a.example/mcp" {
-		t.Errorf("unexpected access token after migration: %q", got.AccessToken)
-	}
-
-	// Both legacy tokens should be reachable.
-	if _, err := store.GetToken("https://legacy-b.example/mcp"); err != nil {
-		t.Errorf("expected legacy-b token to be migrated, got: %v", err)
-	}
-
-	// The keyring should now contain only the bundle key — legacy items
-	// (including the index) are removed during migration.
-	keys, err := inner.Keys()
-	if err != nil {
-		t.Fatalf("Keys() failed: %v", err)
+		t.Fatalf("Keys: %v", err)
 	}
 	if len(keys) != 1 || keys[0] != bundleKey {
 		t.Errorf("expected only bundle key after migration, got %v", keys)
 	}
 }
 
+func seedLegacyToken(t *testing.T, ring keyring.Keyring, url string, tok *OAuthToken) {
+	t.Helper()
+	data, err := json.Marshal(tok)
+	if err != nil {
+		t.Fatalf("marshal legacy token: %v", err)
+	}
+	if err := ring.Set(keyring.Item{Key: legacyTokenPrefix + url, Data: data}); err != nil {
+		t.Fatalf("seed legacy item: %v", err)
+	}
+}
+
 // TestBundledKeyringStore_RemoveCleansBundle verifies that deleting a
-// token rewrites the bundle without it, so subsequent reads no longer
-// see it even if the in-memory cache is dropped.
+// token rewrites the bundle without it, so subsequent reads no longer see
+// it even after the in-memory cache is dropped.
 func TestBundledKeyringStore_RemoveCleansBundle(t *testing.T) {
 	ring := keyring.NewArrayKeyring(nil)
 	store := newKeyringTokenStore(ring)
 
 	url := "https://to-remove.example/mcp"
 	if err := store.StoreToken(url, &OAuthToken{AccessToken: "x"}); err != nil {
-		t.Fatalf("StoreToken failed: %v", err)
+		t.Fatalf("StoreToken: %v", err)
 	}
 	if err := store.RemoveToken(url); err != nil {
-		t.Fatalf("RemoveToken failed: %v", err)
+		t.Fatalf("RemoveToken: %v", err)
 	}
 
-	// Fresh store wrapping the same ring sees an empty bundle.
-	store2 := newKeyringTokenStore(ring)
-	if _, err := store2.GetToken(url); err == nil {
-		t.Fatalf("expected GetToken to fail after RemoveToken")
+	if _, err := newKeyringTokenStore(ring).GetToken(url); err == nil {
+		t.Fatal("expected GetToken to fail after RemoveToken")
 	}
 }
 
@@ -296,25 +259,19 @@ func TestBundledKeyringStore_RemoveCleansBundle(t *testing.T) {
 // crash callers — we treat it as empty and let the OAuth flow re-populate.
 func TestBundledKeyringStore_CorruptBundle(t *testing.T) {
 	ring := keyring.NewArrayKeyring(nil)
-	if err := ring.Set(keyring.Item{
-		Key:  bundleKey,
-		Data: []byte("this is not json"),
-	}); err != nil {
-		t.Fatalf("seed corrupt bundle failed: %v", err)
+	if err := ring.Set(keyring.Item{Key: bundleKey, Data: []byte("not json")}); err != nil {
+		t.Fatalf("seed corrupt bundle: %v", err)
 	}
 
 	store := newKeyringTokenStore(ring)
 
-	// GetToken should not error with a parser problem; it should just
-	// behave as if the token is absent.
-	_, err := store.GetToken("https://anything.example/mcp")
-	if err == nil {
+	if _, err := store.GetToken("https://anything.example/mcp"); err == nil {
 		t.Fatal("expected GetToken to report missing token, got nil")
 	}
 
-	// And StoreToken on top of a corrupt bundle should overwrite it.
+	// StoreToken on top of a corrupt bundle should overwrite it.
 	if err := store.StoreToken("https://anything.example/mcp", &OAuthToken{AccessToken: "fresh"}); err != nil {
-		t.Fatalf("StoreToken after corrupt bundle failed: %v", err)
+		t.Fatalf("StoreToken after corrupt bundle: %v", err)
 	}
 	got, err := store.GetToken("https://anything.example/mcp")
 	if err != nil || got.AccessToken != "fresh" {
@@ -322,77 +279,64 @@ func TestBundledKeyringStore_CorruptBundle(t *testing.T) {
 	}
 }
 
-// TestListOAuthTokens_ReturnsBundleEntries exercises the public list
-// helper end-to-end through the singleton accessor by pre-seeding the
-// underlying keyring directly.
-//
-// It does NOT touch NewKeyringTokenStore() because that would couple the
-// test to whichever keyring backend happens to be available on the host;
-// we already cover the singleton wiring in tokenstore_keyring.go via
-// integration with NewRemoteToolset.
-func TestListOAuthTokens_BundleShape(t *testing.T) {
+// TestKeyringTokenStore_ListReturnsAllEntries exercises the list helper
+// used by `agent debug oauth list`.
+func TestKeyringTokenStore_ListReturnsAllEntries(t *testing.T) {
 	ring := keyring.NewArrayKeyring(nil)
 	store := newKeyringTokenStore(ring)
 
 	if err := store.StoreToken("https://a.example/mcp", &OAuthToken{AccessToken: "a"}); err != nil {
-		t.Fatalf("StoreToken failed: %v", err)
+		t.Fatalf("StoreToken: %v", err)
 	}
 	if err := store.StoreToken("https://b.example/mcp", &OAuthToken{AccessToken: "b"}); err != nil {
-		t.Fatalf("StoreToken failed: %v", err)
+		t.Fatalf("StoreToken: %v", err)
 	}
 
-	// Snapshot through a fresh wrapper so the cache is reloaded from the
-	// keyring (mirroring what ListOAuthTokens would do across processes).
-	snap := newKeyringTokenStore(ring).snapshot()
-	if len(snap) != 2 {
-		t.Fatalf("expected 2 entries in snapshot, got %d: %+v", len(snap), snap)
+	// Reload from the ring (mirroring what a fresh process would do).
+	entries := newKeyringTokenStore(ring).list()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %+v", len(entries), entries)
 	}
-	if snap["https://a.example/mcp"].AccessToken != "a" {
-		t.Errorf("unexpected access token for a: %+v", snap["https://a.example/mcp"])
+	byURL := map[string]string{}
+	for _, e := range entries {
+		byURL[e.ResourceURL] = e.Token.AccessToken
 	}
-	if snap["https://b.example/mcp"].AccessToken != "b" {
-		t.Errorf("unexpected access token for b: %+v", snap["https://b.example/mcp"])
+	if byURL["https://a.example/mcp"] != "a" || byURL["https://b.example/mcp"] != "b" {
+		t.Errorf("unexpected entries: %+v", byURL)
 	}
 }
 
 // failingKeyring returns a fixed error from Get; used to make sure the
-// store doesn't permanently fail when keychain access is denied.
+// store doesn't permanently re-prompt when keychain access is denied.
 type failingKeyring struct {
 	keyring.Keyring
 
 	getErr error
 }
 
-func (k *failingKeyring) Get(_ string) (keyring.Item, error) {
+func (k *failingKeyring) Get(string) (keyring.Item, error) {
 	return keyring.Item{}, k.getErr
 }
 
-func (k *failingKeyring) Set(_ keyring.Item) error { return nil }
-func (k *failingKeyring) Remove(_ string) error    { return nil }
-func (k *failingKeyring) Keys() ([]string, error)  { return nil, nil }
-func (k *failingKeyring) GetMetadata(_ string) (keyring.Metadata, error) {
-	return keyring.Metadata{}, nil
-}
+// Other Keyring methods aren't called on this test's path, but provide
+// no-op implementations so a stray call wouldn't nil-deref the embedded
+// interface.
+func (*failingKeyring) Set(keyring.Item) error                       { return nil }
+func (*failingKeyring) Remove(string) error                          { return nil }
+func (*failingKeyring) Keys() ([]string, error)                      { return nil, nil }
+func (*failingKeyring) GetMetadata(string) (keyring.Metadata, error) { return keyring.Metadata{}, nil }
 
 // TestBundledKeyringStore_LoadFailureIsCachedOnce checks that a single
 // keyring failure does not turn into an avalanche of repeated prompts:
-// load() marks the cache as loaded eagerly, so a denied access only
-// surfaces once per process (not once per token operation).
+// load() marks the cache as loaded eagerly so a denied access surfaces
+// once per process, not once per token operation.
 func TestBundledKeyringStore_LoadFailureIsCachedOnce(t *testing.T) {
 	ring := &failingKeyring{getErr: errors.New("simulated denied access")}
 	store := newKeyringTokenStore(ring)
 
-	// First call surfaces the error in the form of "no token found"
-	// (not as a Get error — denied access shouldn't trip up the rest of
-	// the OAuth machinery; it should just trigger a fresh OAuth flow).
 	if _, err := store.GetToken("https://a.example/mcp"); err == nil {
 		t.Fatal("expected GetToken to report missing token after denied keyring access")
 	}
-
-	// Multiple subsequent calls must not re-issue Get on the keyring.
-	// We can't observe Get count via the failingKeyring here; instead,
-	// rely on the side-effect that the second call returns the same
-	// "missing token" error rather than a long delay or panic.
 	if _, err := store.GetToken("https://b.example/mcp"); err == nil {
 		t.Fatal("expected GetToken to report missing token after denied keyring access")
 	}
