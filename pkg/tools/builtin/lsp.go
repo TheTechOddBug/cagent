@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 )
 
 const (
@@ -63,6 +64,11 @@ type lspHandler struct {
 	stdout      *bufio.Reader
 	initialized atomic.Bool
 	requestID   atomic.Int64
+
+	// supervisor manages process lifecycle (start, watcher goroutine,
+	// auto-restart on crash, graceful Stop). Per-request methods consult
+	// it via ensureInitialized to lazy-start on first use.
+	supervisor *lifecycle.Supervisor
 
 	// Configuration
 	command    string
@@ -329,16 +335,30 @@ type lspInlayHint struct {
 
 // NewLSPTool creates a new LSP tool that connects to an LSP server.
 func NewLSPTool(command string, args, env []string, workingDir string) *LSPTool {
-	return &LSPTool{
-		handler: &lspHandler{
-			command:     command,
-			args:        args,
-			env:         env,
-			workingDir:  workingDir,
-			diagnostics: make(map[string][]lspDiagnostic),
-			openFiles:   make(map[string]int),
-		},
+	h := &lspHandler{
+		command:     command,
+		args:        args,
+		env:         env,
+		workingDir:  workingDir,
+		diagnostics: make(map[string][]lspDiagnostic),
+		openFiles:   make(map[string]int),
 	}
+	h.supervisor = lifecycle.New(
+		"lsp/"+command,
+		&lspConnector{h: h},
+		lifecycle.Policy{
+			Restart: lifecycle.RestartOnFailure,
+			Logger:  slog.With("component", "lsp.supervisor", "command", command),
+			OnDisconnect: func(error) {
+				// Reset diagnostics on disconnect: the next server may not
+				// re-emit them and stale data is worse than nothing.
+				h.diagnosticsMu.Lock()
+				h.diagnostics = make(map[string][]lspDiagnostic)
+				h.diagnosticsMu.Unlock()
+			},
+		},
+	)
+	return &LSPTool{handler: h}
 }
 
 // SetFileTypes sets the file types (extensions) that this LSP server handles.
@@ -357,16 +377,12 @@ func (t *LSPTool) HandlesFile(path string) bool {
 	return t.handler.handlesFile(path)
 }
 
-func (t *LSPTool) Start(context.Context) error {
-	t.handler.mu.Lock()
-	defer t.handler.mu.Unlock()
-	return t.handler.startLocked()
+func (t *LSPTool) Start(ctx context.Context) error {
+	return t.handler.supervisor.Start(ctx)
 }
 
-func (t *LSPTool) Stop(context.Context) error {
-	t.handler.mu.Lock()
-	defer t.handler.mu.Unlock()
-	return t.handler.stopLocked()
+func (t *LSPTool) Stop(ctx context.Context) error {
+	return t.handler.supervisor.Stop(ctx)
 }
 
 func (t *LSPTool) Instructions() string {
@@ -470,125 +486,34 @@ func (t *LSPTool) Tools(context.Context) ([]tools.Tool, error) {
 }
 
 // lspHandler implementation
-
-// startLocked starts the LSP server process. The caller must hold h.mu.
-// The process is managed by a background context so that it outlives any
-// single request.
-func (h *lspHandler) startLocked() error {
-	if h.cmd != nil {
-		return errors.New("LSP server already running")
-	}
-
-	slog.Debug("Starting LSP server", "command", h.command, "args", h.args)
-
-	// Use a background context for the process lifetime so that the LSP
-	// server is not killed when a caller's request context ends.
-	processCtx, processCancel := context.WithCancel(context.Background())
-
-	cmd := exec.CommandContext(processCtx, h.command, h.args...)
-	cmd.Env = append(os.Environ(), h.env...)
-	cmd.Dir = h.workingDir
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		processCancel()
-		return fmt.Errorf("failed to create stdin pipe: %w", err)
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		processCancel()
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	stderrBuf := &concurrent.Buffer{}
-	cmd.Stderr = stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		stdin.Close()
-		processCancel()
-		return fmt.Errorf("failed to start LSP server: %w", err)
-	}
-
-	h.cmd = cmd
-	h.cancel = processCancel
-	h.stdin = stdin
-	h.stdout = bufio.NewReader(stdout)
-
-	go h.readNotifications(processCtx, stderrBuf)
-
-	slog.Debug("LSP server started successfully")
-	return nil
-}
-
-// stopLocked shuts down the LSP server process. The caller must hold h.mu.
-func (h *lspHandler) stopLocked() error {
-	if h.cmd == nil {
-		return nil
-	}
-
-	slog.Debug("Stopping LSP server")
-
-	if h.initialized.Load() {
-		_, _ = h.sendRequestLocked("shutdown", nil)
-		_ = h.sendNotificationLocked("exit", nil)
-	}
-
-	h.stdin.Close()
-
-	// Cancel the process-lifetime context to stop the readNotifications
-	// goroutine and (if the process didn't exit cleanly) kill the process.
-	if h.cancel != nil {
-		h.cancel()
-		h.cancel = nil
-	}
-
-	err := h.cmd.Wait()
-	h.cmd = nil
-	h.stdin = nil
-	h.stdout = nil
-	h.initialized.Store(false)
-
-	h.openFilesMu.Lock()
-	h.openFiles = make(map[string]int)
-	h.openFilesMu.Unlock()
-
-	if err != nil {
-		if _, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil
-		}
-		return fmt.Errorf("LSP server exited with error: %w", err)
-	}
-
-	slog.Debug("LSP server stopped")
-	return nil
-}
+//
+// Process lifecycle (spawn, watch, auto-restart, graceful close) lives in
+// lspConnector / lspSession (see lsp_lifecycle.go). The handler is
+// responsible for the per-request JSON-RPC protocol and the persistent
+// state (open files, diagnostics) that survives reconnects.
 
 func (h *lspHandler) ensureInitialized() error {
 	if h.initialized.Load() && h.cmd != nil {
 		return nil
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Re-check under lock.
-	if h.initialized.Load() && h.cmd != nil {
-		return nil
-	}
-
-	if h.cmd == nil {
-		if err := h.startLocked(); err != nil {
+	// Lazy-start through the supervisor. Concurrent ensureInitialized
+	// callers serialize inside Supervisor.Start.
+	if !h.supervisor.IsReady() {
+		if err := h.supervisor.Start(context.Background()); err != nil {
 			return fmt.Errorf("failed to start LSP server: %w", err)
 		}
 	}
 
-	if h.initialized.Load() {
-		return nil
+	// After Start returns, Connect has populated h.cmd and run the
+	// initialize+initialized handshake under h.mu. Verify under the
+	// lock to avoid races with concurrent disconnect.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.initialized.Load() || h.cmd == nil {
+		return lifecycle.ErrNotStarted
 	}
-
-	return h.initializeLocked()
+	return nil
 }
 
 // initializeLocked performs the LSP initialize/initialized handshake.
