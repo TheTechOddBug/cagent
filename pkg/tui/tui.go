@@ -256,7 +256,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 	// Initialize shared command history
 	historyStore, err := history.New()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize command history: %v\n", err)
+		slog.Warn("Failed to initialize command history", "error", err)
 	}
 
 	initialSessionState := service.NewSessionState(initialApp.Session())
