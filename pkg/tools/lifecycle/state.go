@@ -46,9 +46,11 @@ var stateNames = [...]string{
 	StateFailed:     "failed",
 }
 
-// String returns a short, lowercase human-readable name.
+// String returns a short, lowercase human-readable name. Out-of-range or
+// negative State values fall back to "state(N)" instead of panicking on
+// the lookup array.
 func (s State) String() string {
-	if int(s) < len(stateNames) && stateNames[s] != "" {
+	if s >= 0 && int(s) < len(stateNames) && stateNames[s] != "" {
 		return stateNames[s]
 	}
 	return fmt.Sprintf("state(%d)", s)

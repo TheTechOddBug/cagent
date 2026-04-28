@@ -162,11 +162,24 @@ func (h *lspHandler) publishSession(cmd *exec.Cmd, stdin io.WriteCloser, stdout 
 func (h *lspHandler) clearSession() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.clearSessionLocked()
+}
+
+// clearSessionLocked is the inner half of clearSession; the caller must
+// already hold h.mu. Used by Close so the shutdown handshake and the
+// state nilling happen atomically (no concurrent per-request method can
+// slip in and write to a soon-to-be-closed stdin).
+//
+// initialized is cleared BEFORE the field nilling so a concurrent
+// ensureInitialized fast-path (which only reads the atomic) sees
+// initialized=false and falls through to the slow path that re-checks
+// under h.mu.
+func (h *lspHandler) clearSessionLocked() {
+	h.initialized.Store(false)
 	h.cmd = nil
 	h.cancel = nil
 	h.stdin = nil
 	h.stdout = nil
-	h.initialized.Store(false)
 	h.capabilities = nil
 	h.serverInfo = nil
 	h.openFilesMu.Lock()
@@ -249,15 +262,19 @@ func (s *lspSession) Close(ctx context.Context) error {
 
 	slog.Debug("Stopping LSP server")
 
-	// Best-effort shutdown handshake; the process is going away regardless.
+	// Hold h.mu across the entire teardown (shutdown handshake AND state
+	// clearing) so a concurrent per-request method can't slip in between
+	// the two and write to a soon-to-be-closed stdin while the server
+	// has already received "exit".
 	s.h.mu.Lock()
 	if s.h.initialized.Load() {
+		// Best-effort: the process is going away regardless.
 		_, _ = s.h.sendRequestLocked("shutdown", nil)
 		_ = s.h.sendNotificationLocked("exit", nil)
 	}
+	s.h.clearSessionLocked()
 	s.h.mu.Unlock()
 
-	s.h.clearSession()
 	_ = s.stdin.Close()
 	s.processCancel()
 

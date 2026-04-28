@@ -1444,6 +1444,14 @@ func (h *lspHandler) sendNotificationLocked(method string, params any) error {
 }
 
 func (h *lspHandler) writeMessageLocked(msg any) error {
+	// Defend against a Close that ran between ensureInitialized's atomic
+	// fast path and our acquisition of h.mu: clearSessionLocked nils
+	// h.stdin under the same lock, so under h.mu a nil stdin means "the
+	// session has been torn down".
+	if h.stdin == nil {
+		return lifecycle.ErrNotStarted
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -1481,6 +1489,9 @@ func (h *lspHandler) readResponseLocked(expectedID int64) (json.RawMessage, erro
 }
 
 func (h *lspHandler) readMessageLocked() ([]byte, error) {
+	if h.stdout == nil {
+		return nil, lifecycle.ErrNotStarted
+	}
 	var contentLength int
 	for {
 		line, err := h.stdout.ReadString('\n')

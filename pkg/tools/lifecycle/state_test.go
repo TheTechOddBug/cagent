@@ -25,6 +25,7 @@ func TestState_String(t *testing.T) {
 		{lifecycle.StateRestarting, "restarting"},
 		{lifecycle.StateFailed, "failed"},
 		{lifecycle.State(99), "state(99)"},
+		{lifecycle.State(-1), "state(-1)"}, // must not panic on negative
 	}
 	for _, tc := range cases {
 		assert.Check(t, is.Equal(tc.state.String(), tc.want))
