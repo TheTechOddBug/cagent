@@ -256,6 +256,26 @@ func (t *oauthTransport) roundTrip(req *http.Request, isRetry bool) (*http.Respo
 
 			authServer := req.URL.Scheme + "://" + req.URL.Host
 			if err := t.handleOAuthFlow(req.Context(), authServer, wwwAuth); err != nil {
+				// requestElicitation surfaces a bare AuthorizationRequiredError
+				// when the runtime hasn't wired up the elicitation bridge yet,
+				// which normally means OAuth was triggered too early (the
+				// WithoutInteractivePrompts marker would have caught this case
+				// at the top of roundTrip, but a missing marker shouldn't
+				// translate into a scary "no elicitation handler configured"
+				// for the user). Treat the same as the explicit non-interactive
+				// path: flag the toolset as needing auth and let it retry on
+				// the next conversation turn with a properly-wired bridge.
+				var authErr *AuthorizationRequiredError
+				if errors.As(err, &authErr) {
+					slog.Debug("OAuth flow deferred: elicitation bridge not ready", "url", t.baseURL)
+					if authErr.URL == "" {
+						authErr.URL = t.baseURL
+					}
+					t.mu.Lock()
+					t.lastAuthRequired = true
+					t.mu.Unlock()
+					return nil, authErr
+				}
 				return nil, fmt.Errorf("OAuth flow failed: %w", err)
 			}
 

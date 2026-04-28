@@ -730,6 +730,33 @@ func TestOAuthTransport_NonInteractiveCtxSkipsElicitation(t *testing.T) {
 	}
 }
 
+// TestRequestElicitation_NoHandlerReturnsAuthRequired verifies that when
+// the OAuth transport asks the session client for an elicitation but no
+// handler has been wired up yet (typically because the runtime hasn't
+// called configureToolsetHandlers for this toolset), the session client
+// surfaces a recognisable AuthorizationRequiredError rather than an
+// opaque "no elicitation handler configured" message.
+//
+// Without this, a transient gap between the start of the OAuth flow and
+// the runtime wiring up the elicitation bridge would surface to the user
+// as an internal-looking error instead of being treated as a normal
+// "needs auth, retry next turn" deferral. Pairs with the higher-level
+// TestInitialize_OAuthDefersWhenElicitationBridgeNotReady which exercises
+// the same invariant through the full Initialize → Connect → OAuth flow.
+func TestRequestElicitation_NoHandlerReturnsAuthRequired(t *testing.T) {
+	var c sessionClient
+
+	// No SetElicitationHandler call: the handler stays nil, simulating the
+	// window before configureToolsetHandlers wires it up.
+	_, err := c.requestElicitation(t.Context(), nil)
+	if err == nil {
+		t.Fatal("requestElicitation must return an error when no handler is configured")
+	}
+	if !IsAuthorizationRequired(err) {
+		t.Errorf("requestElicitation must return AuthorizationRequiredError so the OAuth flow can be silently deferred; got: %v", err)
+	}
+}
+
 // TestExtractServerMessage covers the body-to-string conversion used when
 // wrapping Initialize errors. The goal is to pick the most human-readable
 // string out of whatever the server returns so it can be shown as a TUI
