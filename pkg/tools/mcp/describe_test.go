@@ -51,3 +51,27 @@ func TestToolsetDescribe_GatewayRef(t *testing.T) {
 	gt := &GatewayToolset{Toolset: inner, cleanUp: func() error { return nil }}
 	assert.Check(t, is.Equal(gt.Describe(), "mcp(ref=github-official)"))
 }
+
+// TestToolsetName_PrefersConfiguredName guards against shadowing the
+// user-set YAML name: the prefix is also applied to every exposed tool
+// ("github_get_issue"), so it has to win in the /tools dialog too.
+func TestToolsetName_PrefersConfiguredName(t *testing.T) {
+	t.Parallel()
+
+	ts := NewToolsetCommand("github", "docker", []string{"mcp", "gateway"}, nil, "")
+	assert.Check(t, is.Equal(ts.Name(), "github"))
+}
+
+// TestToolsetName_FallsBackToDescription guards against the regression
+// of unnamed MCPs all rendering as the YAML type "mcp" in the /tools
+// dialog: when no YAML name is set, Name() returns the description so
+// every toolset still has a self-identifying label.
+func TestToolsetName_FallsBackToDescription(t *testing.T) {
+	t.Parallel()
+
+	stdio := NewToolsetCommand("", "python", nil, nil, "")
+	assert.Check(t, is.Equal(stdio.Name(), "mcp(stdio cmd=python)"))
+
+	remote := NewRemoteToolset("", "https://api.github.com/mcp", "streamable", nil, nil)
+	assert.Check(t, is.Equal(remote.Name(), "mcp(remote host=api.github.com transport=streamable)"))
+}

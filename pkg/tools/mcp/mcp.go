@@ -201,12 +201,20 @@ func (ts *Toolset) Describe() string {
 	return ts.description
 }
 
-// Name returns the user-facing identifier for this MCP toolset, set
-// from the YAML `name:` field. Empty when the YAML left it unset; in
-// that case the registry wraps the toolset with tools.WithName so the
-// /tools dialog still shows a stable label.
+// Name returns the user-facing identifier for this MCP toolset.
+//
+// When the YAML provides a `name:` field it always wins (it's also the
+// prefix applied to every tool exposed by the server, so a stable user
+// choice). Otherwise we fall back to the description — "mcp(stdio
+// cmd=docker)", "mcp(remote host=api.github.com)", "mcp(ref=duckduckgo)"
+// — because that disambiguates between several unnamed MCP toolsets
+// far better than the bare YAML type "mcp" the registry would otherwise
+// fall back to.
 func (ts *Toolset) Name() string {
-	return ts.name
+	if ts.name != "" {
+		return ts.name
+	}
+	return ts.description
 }
 
 // Kind returns a short, user-friendly classification of this toolset:
