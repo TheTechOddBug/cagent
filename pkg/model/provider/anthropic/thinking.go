@@ -114,9 +114,9 @@ func validThinkingTokens(tokens, maxTokens int64) (int64, bool) {
 // `thinking.type=enabled` (token-based extended thinking) and instead requires
 // `thinking.type=adaptive`.
 //
-// As of late 2025, Anthropic's API rejects token-based thinking budgets for
-// Claude Opus 4.6 and 4.7 (and their dated variants). For these models we
-// transparently switch token-based budgets to adaptive thinking. See:
+// Anthropic's API rejects token-based thinking budgets for Claude Opus 4.6 and
+// 4.7 (and their dated variants). For these models we transparently switch
+// token-based budgets to adaptive thinking. See:
 // https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
 func requiresAdaptiveThinking(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
