@@ -172,6 +172,13 @@ type Supervisor struct {
 	forceRestart bool          // set by RestartAndWait so the watcher reconnects
 	restarted    chan struct{} // closed and replaced on each successful restart
 
+	// done is closed exactly once: when the supervisor enters a terminal
+	// state (Stopped via Stop, or Failed because tryRestart gave up). It
+	// lets RestartAndWait return promptly instead of waiting for its
+	// timeout when no further restart will ever happen.
+	doneOnce sync.Once
+	done     chan struct{}
+
 	// randFloat is used for Backoff jitter; tests may override.
 	randFloat func() float64
 }
@@ -186,7 +193,15 @@ func New(name string, connector Connector, policy Policy) *Supervisor {
 		tracker:   NewTracker(),
 		randFloat: rand.Float64,
 		restarted: make(chan struct{}),
+		done:      make(chan struct{}),
 	}
+}
+
+// signalDone closes the done channel exactly once. It is the only way to
+// transition the supervisor into a terminal-from-RestartAndWait's-view
+// state; callers should signalDone whenever they enter Stopped or Failed.
+func (s *Supervisor) signalDone() {
+	s.doneOnce.Do(func() { close(s.done) })
 }
 
 // State returns a snapshot of the supervisor's current state.
@@ -239,9 +254,6 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if s.stopping {
 		s.mu.Unlock()
 		return ErrNotStarted
-	}
-	if s.restarted == nil {
-		s.restarted = make(chan struct{})
 	}
 	s.mu.Unlock()
 
@@ -298,6 +310,7 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.tracker.Set(StateStopped)
+	s.signalDone()
 
 	if sess == nil {
 		return nil
@@ -314,8 +327,9 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 
 // RestartAndWait closes the current session (if any) so the watcher
 // reconnects, then blocks until the next successful reconnect, ctx
-// cancellation, or timeout. It is the supervisor-level analogue of the
-// previous forceReconnectAndWait helper.
+// cancellation, supervisor shutdown (Stop or Failed), or timeout.
+// It is the supervisor-level analogue of the previous
+// forceReconnectAndWait helper.
 func (s *Supervisor) RestartAndWait(ctx context.Context, timeout time.Duration) error {
 	s.mu.Lock()
 	if s.stopping {
@@ -340,6 +354,13 @@ func (s *Supervisor) RestartAndWait(ctx context.Context, timeout time.Duration) 
 	select {
 	case <-restartCh:
 		return nil
+	case <-s.done:
+		// Stop or terminal Failed; report the latest error if any so
+		// the caller can surface it.
+		if err := s.tracker.LastError(); err != nil {
+			return err
+		}
+		return ErrNotStarted
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(timeout):
@@ -394,6 +415,7 @@ func (s *Supervisor) watch(ctx context.Context) {
 			if cb := s.policy.OnFailed; cb != nil {
 				cb(waitErr)
 			}
+			s.signalDone()
 			return
 		}
 
@@ -446,6 +468,7 @@ func (s *Supervisor) tryRestart(ctx context.Context) bool {
 			if cb := s.policy.OnFailed; cb != nil {
 				cb(lastErr)
 			}
+			s.signalDone()
 			return false
 		}
 

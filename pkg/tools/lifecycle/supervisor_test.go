@@ -281,6 +281,69 @@ func TestSupervisor_StopBeforeStart(t *testing.T) {
 	assert.NilError(t, s.Stop(t.Context()))
 }
 
+// TestSupervisor_StopWakesRestartAndWait verifies that a Stop() while
+// another goroutine is blocked in RestartAndWait causes RestartAndWait
+// to return promptly with ErrNotStarted instead of waiting for its
+// timeout.
+func TestSupervisor_StopWakesRestartAndWait(t *testing.T) {
+	t.Parallel()
+
+	sess := newFakeSession()
+	c := newScriptedConnector(scriptStep{session: sess})
+	s := lifecycle.New("test", c, lifecycle.Policy{Backoff: fastBackoff})
+	assert.NilError(t, s.Start(t.Context()))
+
+	done := make(chan error, 1)
+	go func() { done <- s.RestartAndWait(t.Context(), 30*time.Second) }()
+
+	// Give RestartAndWait time to enter its select.
+	time.Sleep(20 * time.Millisecond)
+	assert.NilError(t, s.Stop(t.Context()))
+
+	select {
+	case err := <-done:
+		// We expect either ErrNotStarted or the supervisor's last error.
+		assert.Check(t, err != nil)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RestartAndWait did not return after Stop")
+	}
+}
+
+// TestSupervisor_FailedWakesRestartAndWait verifies that when the
+// supervisor exhausts its restart budget while RestartAndWait is
+// blocked, the call returns with the last error rather than waiting
+// for its timeout.
+func TestSupervisor_FailedWakesRestartAndWait(t *testing.T) {
+	t.Parallel()
+
+	sess1 := newFakeSession()
+	c := newScriptedConnector(
+		scriptStep{session: sess1},
+		scriptStep{err: errors.New("fail-1")},
+		scriptStep{err: errors.New("fail-2")},
+	)
+	s := lifecycle.New("test", c, lifecycle.Policy{
+		MaxAttempts: 2,
+		Backoff:     fastBackoff,
+	})
+	assert.NilError(t, s.Start(t.Context()))
+
+	done := make(chan error, 1)
+	go func() { done <- s.RestartAndWait(t.Context(), 30*time.Second) }()
+
+	// Give RestartAndWait time to enter its select, then crash the session.
+	time.Sleep(20 * time.Millisecond)
+	sess1.fail(errors.New("crash"))
+
+	select {
+	case err := <-done:
+		assert.Check(t, err != nil)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RestartAndWait did not return after supervisor failed")
+	}
+	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+}
+
 // TestSupervisor_PermanentErrorsDontRestart verifies that wait errors that
 // are classified as Permanent (e.g. ErrAuthRequired) cause the supervisor
 // to enter Failed without consuming restart attempts.

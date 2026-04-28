@@ -4,12 +4,15 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 )
+
+var utf8Valid = utf8.Valid
 
 func TestFormatToolsetStatus_Empty(t *testing.T) {
 	t.Parallel()
@@ -61,4 +64,28 @@ func TestFormatToolsetStatus_TruncatesLongErrors(t *testing.T) {
 	out := strings.Join(d.renderLines(80, 24), "\n")
 	// The "…" marker must appear because the error is truncated.
 	assert.Contains(t, out, "…")
+}
+
+// TestFormatToolsetStatus_TruncatesAtRuneBoundary guards against
+// byte-based truncation of multi-byte UTF-8 sequences (each emoji is
+// 4 bytes; a byte-truncating algorithm would land mid-codepoint and
+// produce invalid UTF-8 — lipgloss would then either panic or render
+// a replacement character).
+func TestFormatToolsetStatus_TruncatesAtRuneBoundary(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("\U0001F600", 1000) // 1000 "😀" runes (4 bytes each)
+	statuses := []tools.ToolsetStatus{{
+		Name:      "x",
+		State:     lifecycle.StateFailed,
+		LastError: errors.New(long),
+	}}
+	d := NewToolsetsDialog(statuses).(*toolsetsDialog)
+	out := strings.Join(d.renderLines(80, 24), "\n")
+	// Every byte in the output must be a valid UTF-8 sequence.
+	assert.True(t, utf8ValidString(out), "truncated output must remain valid UTF-8")
+	assert.Contains(t, out, "…")
+}
+
+func utf8ValidString(s string) bool {
+	return utf8Valid([]byte(s))
 }

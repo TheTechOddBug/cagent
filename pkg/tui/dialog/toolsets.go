@@ -72,16 +72,28 @@ func formatToolsetStatus(s *tools.ToolsetStatus, _ int) []string {
 	if s.LastError != nil {
 		// Truncate very long error messages so they don't blow out the
 		// dialog width. The dialog is scroll-capable, so a one-line
-		// summary is enough.
-		msg := s.LastError.Error()
-		const maxLen = 240
-		if len(msg) > maxLen {
-			msg = msg[:maxLen] + "…"
-		}
+		// summary is enough. Use rune-aware truncation so we never
+		// split a multi-byte UTF-8 sequence (which would produce
+		// invalid output and breaks lipgloss styling on the result).
+		msg := truncateRunes(s.LastError.Error(), 240)
 		out = append(out, "  "+styles.ErrorStyle.Render("last_error: "+strings.ReplaceAll(msg, "\n", " ")))
 	}
 
 	return out
+}
+
+// truncateRunes returns s shortened to at most maxRunes Unicode code
+// points, with a single "…" appended if truncation occurred. It is safe
+// for arbitrary UTF-8 input.
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "…"
 }
 
 // formatStateBadge returns a short bracketed label for the lifecycle state,

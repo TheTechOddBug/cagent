@@ -145,60 +145,79 @@ func (c *lspConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
 		handler()
 	}
 
-	return &lspSession{h: h, processCancel: processCancel, stdin: stdin}, nil
+	return &lspSession{
+		h:             h,
+		processCancel: processCancel,
+		stdin:         stdin,
+		cmd:           cmd,
+		waitDone:      make(chan struct{}),
+	}, nil
 }
 
 // lspSession is a single live LSP server session. Its Wait blocks on the
 // process exiting; its Close performs the LSP shutdown handshake and
 // terminates the process.
+//
+// cmd.Wait must be called exactly once per *exec.Cmd; both Wait and Close
+// can race to be the caller. We solve this with a shared sync.Once that
+// runs the wait body in a single goroutine and exposes the result via the
+// pre-allocated waitDone channel. Both Wait and Close block on waitDone
+// to observe the process exit.
 type lspSession struct {
 	h             *lspHandler
 	processCancel context.CancelFunc
 	stdin         io.WriteCloser
+	cmd           *exec.Cmd // captured at construction; never nilled by handler teardown
 
 	mu     sync.Mutex
 	closed bool
-	// waitDone is closed once cmd.Wait has returned; reading from it
-	// either returns the result or blocks until the wait completes.
+
 	waitOnce sync.Once
 	waitErr  error
-	waitDone chan struct{}
+	waitDone chan struct{} // pre-allocated in Connect; closed by the wait goroutine
 }
 
 // Wait blocks until the LSP process exits and returns the exit status,
 // mapping clean exits and signal-induced exits to nil/typed errors as
 // the supervisor expects.
+//
+// Wait is safe to call concurrently with Close: the underlying cmd.Wait
+// runs at most once, sequenced by waitOnce, and both callers block on
+// the same waitDone channel.
 func (s *lspSession) Wait() error {
-	s.waitOnce.Do(func() {
-		s.waitDone = make(chan struct{})
-		go func() {
-			defer close(s.waitDone)
-			s.h.mu.Lock()
-			cmd := s.h.cmd
-			s.h.mu.Unlock()
-			if cmd == nil {
-				return
-			}
-			err := cmd.Wait()
-			if err != nil {
-				// An *exec.ExitError after a signal-induced shutdown
-				// (Close→cancel) is expected; treat it as a clean exit
-				// so the supervisor only restarts on actual crashes.
-				s.mu.Lock()
-				closed := s.closed
-				s.mu.Unlock()
-				if closed {
-					s.waitErr = nil
-					return
-				}
-				s.waitErr = fmt.Errorf("%w: %w", lifecycle.ErrServerCrashed, err)
-				return
-			}
-			s.waitErr = nil
-		}()
-	})
+	s.startWaitOnce()
 	<-s.waitDone
 	return s.waitErr
+}
+
+// startWaitOnce launches a single goroutine to drive cmd.Wait and record
+// the result. It is called by both Wait (the supervisor's normal path)
+// and Close (so a Close-initiated shutdown still records a clean exit
+// even if Wait was never called).
+func (s *lspSession) startWaitOnce() {
+	s.waitOnce.Do(func() {
+		go func() {
+			defer close(s.waitDone)
+			if s.cmd == nil {
+				return
+			}
+			err := s.cmd.Wait()
+			if err == nil {
+				return
+			}
+			// An *exec.ExitError after a signal-induced shutdown
+			// (Close→cancel) is expected; treat it as a clean exit
+			// so the supervisor only restarts on actual crashes.
+			s.mu.Lock()
+			closed := s.closed
+			s.mu.Unlock()
+			if closed {
+				s.waitErr = nil
+				return
+			}
+			s.waitErr = fmt.Errorf("%w: %w", lifecycle.ErrServerCrashed, err)
+		}()
+	})
 }
 
 // Close performs the LSP shutdown handshake and tears down the process.
@@ -222,7 +241,6 @@ func (s *lspSession) Close(ctx context.Context) error {
 		_, _ = h.sendRequestLocked("shutdown", nil)
 		_ = h.sendNotificationLocked("exit", nil)
 	}
-	cmd := h.cmd
 	h.cancel = nil
 	h.cmd = nil
 	h.stdin = nil
@@ -238,10 +256,12 @@ func (s *lspSession) Close(ctx context.Context) error {
 	_ = s.stdin.Close()
 	s.processCancel()
 
-	if cmd != nil {
-		// Wait for the process to exit so resources are released.
-		_ = cmd.Wait()
-	}
+	// Ensure cmd.Wait runs exactly once — either because the supervisor
+	// already started it via lspSession.Wait, or because we are the only
+	// caller. waitDone is the synchronisation point; blocking on it
+	// guarantees Close returns only after the OS process is reaped.
+	s.startWaitOnce()
+	<-s.waitDone
 
 	// Honour cancellation: a context-cancelled close is not an error.
 	if ctx.Err() != nil {
