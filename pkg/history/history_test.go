@@ -418,6 +418,36 @@ func TestHistory_SetCurrent(t *testing.T) {
 	assert.Empty(t, h.Next())
 }
 
+func TestHistory_SetCurrentOutOfRange(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	h, err := New(tmpDir)
+	require.NoError(t, err)
+
+	require.NoError(t, h.Add("first"))
+	require.NoError(t, h.Add("second"))
+
+	// A negative value clamps to 0; Previous returns the oldest entry.
+	h.SetCurrent(-5)
+	assert.Equal(t, "first", h.Previous())
+
+	// A value past the end clamps to len(Messages); Next returns empty.
+	h.SetCurrent(100)
+	assert.Empty(t, h.Next())
+
+	// And from the clamped position, Previous returns the latest entry.
+	h.SetCurrent(100)
+	assert.Equal(t, "second", h.Previous())
+
+	// On empty history, SetCurrent never causes a panic.
+	empty, err := New(t.TempDir())
+	require.NoError(t, err)
+	empty.SetCurrent(-5)
+	assert.Empty(t, empty.Previous())
+	empty.SetCurrent(100)
+	assert.Empty(t, empty.Next())
+}
+
 func TestHistory_VeryLongMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 

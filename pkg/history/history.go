@@ -71,9 +71,11 @@ func (h *History) Next() string {
 	return h.Messages[h.current]
 }
 
-// SetCurrent positions the cursor at index i.
+// SetCurrent positions the cursor at index i, clamped to [0, len(Messages)].
+// Keeping the cursor in this range guarantees that subsequent Previous and
+// Next calls never index out of bounds.
 func (h *History) SetCurrent(i int) {
-	h.current = i
+	h.current = max(0, min(i, len(h.Messages)))
 }
 
 // LatestMatch returns the most recent entry that strictly extends prefix, or
@@ -152,7 +154,7 @@ func (h *History) load() error {
 	}
 
 	for line := range bytes.Lines(data) {
-		line = bytes.TrimRight(line, "\n")
+		line = bytes.TrimSuffix(line, []byte("\n"))
 		if len(line) == 0 {
 			continue
 		}
