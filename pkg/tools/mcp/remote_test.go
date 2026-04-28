@@ -267,3 +267,78 @@ func TestInitialize_NonInteractiveCtxDefersOAuthAndDoesNotBlock(t *testing.T) {
 		t.Fatalf("Initialize blocked for too long; non-interactive ctx must short-circuit OAuth: %v", ctx.Err())
 	}
 }
+
+// TestInitialize_OAuthDefersWhenElicitationBridgeNotReady verifies that
+// when Initialize runs against a server that requires OAuth under a
+// regular interactive context but no elicitation handler has been wired
+// up yet (the runtime's configureToolsetHandlers hasn't run for this
+// toolset), Initialize returns the same recognisable
+// AuthorizationRequiredError as the explicit non-interactive deferral
+// path — not an opaque "OAuth flow failed: ... no elicitation handler
+// configured" message.
+//
+// Pairs with TestInitialize_NonInteractiveCtxDefersOAuthAndDoesNotBlock:
+// that test exercises the explicit deferral via the
+// WithoutInteractivePrompts marker; this one exercises the safety net
+// for when the marker is missing (e.g. an early MCP probe issued from a
+// code path that hasn't been taught about the marker yet) but the
+// runtime hasn't attached its elicitation handler. In that situation
+// the toolset must be quietly retried on the next conversation turn,
+// when configureToolsetHandlers has wired everything up; surfacing a
+// raw "no elicitation handler configured" error to the user
+// communicates a confusing internal-state problem instead.
+func TestInitialize_OAuthDefersWhenElicitationBridgeNotReady(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		// 401 + WWW-Authenticate to drive the OAuth transport into the
+		// elicitation step. The resource URL points back at our own server
+		// so the metadata fetches don't blow up on DNS — we want the test
+		// to actually reach the elicitation call so the no-handler branch
+		// is exercised.
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource=%q`, srv.URL+"/.well-known/oauth-protected-resource"))
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	// 404 on every well-known endpoint so the OAuth flow falls through
+	// to default metadata (no registration endpoint, no scopes) and gets
+	// to the elicitation step quickly.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	// Default newRemoteClient: managed=false, so the unmanaged OAuth
+	// flow runs. That path reaches requestElicitation without needing
+	// dynamic client registration, which keeps the test focused on the
+	// bridge-not-ready behaviour.
+	client := newRemoteClient(srv.URL, "streamable", nil, NewInMemoryTokenStore(), nil)
+
+	// Plain interactive ctx (no WithoutInteractivePrompts marker). The
+	// elicitation handler is intentionally not wired up.
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Initialize(ctx, nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "Initialize should fail with a deferred-auth error when no elicitation handler is wired up")
+		assert.True(t, IsAuthorizationRequired(err),
+			"Initialize must return AuthorizationRequiredError when the runtime hasn't attached an elicitation handler yet (so the toolset is silently retried on the next conversation turn instead of surfacing a confusing 'no elicitation handler configured' message); got: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("Initialize blocked for too long: %v", ctx.Err())
+	}
+}

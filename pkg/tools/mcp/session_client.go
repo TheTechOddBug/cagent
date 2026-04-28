@@ -160,13 +160,24 @@ func (c *sessionClient) SetElicitationHandler(handler tools.ElicitationHandler) 
 // requestElicitation invokes the registered elicitation handler directly.
 // This is used by the OAuth transport to trigger elicitation outside of
 // the normal MCP request flow.
+//
+// When no handler is wired up (typically because the OAuth flow ran before
+// the runtime had a chance to attach its elicitation bridge — e.g. during
+// a startup probe whose context lost the WithoutInteractivePrompts marker),
+// we surface the recognisable AuthorizationRequiredError sentinel rather
+// than a bare "no elicitation handler configured" error. That keeps the
+// failure mode of "client side not ready yet" identical to the explicit
+// non-interactive deferral: the toolset is flagged as needing auth and
+// silently retried on the next conversation turn, instead of bubbling a
+// confusing message up to the user.
 func (c *sessionClient) requestElicitation(ctx context.Context, req *gomcp.ElicitParams) (tools.ElicitationResult, error) {
 	c.mu.RLock()
 	handler := c.elicitationHandler
 	c.mu.RUnlock()
 
 	if handler == nil {
-		return tools.ElicitationResult{}, errors.New("no elicitation handler configured")
+		slog.Debug("OAuth flow requested elicitation before the runtime wired up a handler; deferring")
+		return tools.ElicitationResult{}, &AuthorizationRequiredError{}
 	}
 
 	return handler(ctx, req)
