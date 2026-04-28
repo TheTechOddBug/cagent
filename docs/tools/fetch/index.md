@@ -28,9 +28,21 @@ toolsets:
 
 ### Options
 
-| Property  | Type | Default | Description                                                       |
-| --------- | ---- | ------- | ----------------------------------------------------------------- |
-| `timeout` | int  | `30`    | Default request timeout in seconds (overridable per tool call).   |
+| Property          | Type           | Default | Description                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeout`         | int            | `30`    | Default request timeout in seconds (overridable per tool call).                                                                                                                                                                                                                                                              |
+| `allowed_domains` | array[string]  | _none_  | Allow-list of hosts the tool may fetch. When set, every URL whose host is **not** in the list is rejected before any network call is made. Mutually exclusive with `blocked_domains`.                                                                                                                                        |
+| `blocked_domains` | array[string]  | _none_  | Deny-list of hosts the tool must not fetch. URLs whose host matches one of these patterns are rejected before any network call (including `robots.txt`) is made. Mutually exclusive with `allowed_domains`.                                                                                                                  |
+
+### Domain matching
+
+Domain patterns in `allowed_domains` and `blocked_domains` use the following rules (case-insensitive):
+
+- **Bare domain** — `example.com` matches the host `example.com` _and_ any subdomain such as `docs.example.com`. It does **not** match unrelated hosts that share a suffix (e.g. `badexample.com`).
+- **Leading dot** — `.example.com` matches **only** strict subdomains (`docs.example.com`, `a.b.example.com`), not the apex `example.com`.
+- **IP literal** — IP addresses are matched exactly (`169.254.169.254`).
+
+The lists are mutually exclusive: a single fetch toolset may set either `allowed_domains` or `blocked_domains`, but not both.
 
 ### Custom Timeout
 
@@ -38,6 +50,27 @@ toolsets:
 toolsets:
   - type: fetch
     timeout: 60
+```
+
+### Restrict to specific domains
+
+```yaml
+toolsets:
+  - type: fetch
+    allowed_domains:
+      - docker.com          # docker.com and *.docker.com
+      - github.com          # github.com and *.github.com
+      - .githubusercontent.com  # only subdomains, e.g. raw.githubusercontent.com
+```
+
+### Block sensitive hosts
+
+```yaml
+toolsets:
+  - type: fetch
+    blocked_domains:
+      - 169.254.169.254       # cloud metadata endpoint
+      - internal.example.com  # internal corporate hostnames
 ```
 
 ## Tool Interface

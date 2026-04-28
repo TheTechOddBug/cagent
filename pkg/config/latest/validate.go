@@ -79,6 +79,15 @@ func (t *Toolset) validate() error {
 	if len(t.FileTypes) > 0 && t.Type != "lsp" {
 		return errors.New("file_types can only be used with type 'lsp'")
 	}
+	if len(t.AllowedDomains) > 0 && t.Type != "fetch" {
+		return errors.New("allowed_domains can only be used with type 'fetch'")
+	}
+	if len(t.BlockedDomains) > 0 && t.Type != "fetch" {
+		return errors.New("blocked_domains can only be used with type 'fetch'")
+	}
+	if len(t.AllowedDomains) > 0 && len(t.BlockedDomains) > 0 {
+		return errors.New("allowed_domains and blocked_domains are mutually exclusive")
+	}
 	if len(t.Models) > 0 && t.Type != "model_picker" {
 		return errors.New("models can only be used with type 'model_picker'")
 	}

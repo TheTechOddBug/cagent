@@ -34,7 +34,9 @@ var (
 )
 
 type fetchHandler struct {
-	timeout time.Duration
+	timeout        time.Duration
+	allowedDomains []string
+	blockedDomains []string
 }
 
 type FetchToolArgs struct {
@@ -110,6 +112,12 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 	// Only allow HTTP and HTTPS
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		result.Error = "only HTTP and HTTPS URLs are supported"
+		return result
+	}
+
+	// Enforce domain allow/deny lists configured on the toolset.
+	if err := h.checkDomainAllowed(parsedURL); err != nil {
+		result.Error = err.Error()
 		return result
 	}
 
@@ -254,6 +262,66 @@ func (h *fetchHandler) fetchRobots(ctx context.Context, client *http.Client, tar
 	return robots, nil
 }
 
+// checkDomainAllowed returns nil if u's host is permitted by the configured
+// allow- and block-lists, or a descriptive error otherwise. When neither list
+// is configured, every URL is allowed.
+func (h *fetchHandler) checkDomainAllowed(u *url.URL) error {
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("URL has no host")
+	}
+	if len(h.blockedDomains) > 0 && matchesAnyDomain(host, h.blockedDomains) {
+		return fmt.Errorf("URL host %q is blocked by blocked_domains", host)
+	}
+	if len(h.allowedDomains) > 0 && !matchesAnyDomain(host, h.allowedDomains) {
+		return fmt.Errorf("URL host %q is not in allowed_domains", host)
+	}
+	return nil
+}
+
+// matchesAnyDomain reports whether host matches any of the supplied patterns.
+// See matchesDomain for the matching rules.
+func matchesAnyDomain(host string, patterns []string) bool {
+	for _, p := range patterns {
+		if matchesDomain(host, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesDomain reports whether host matches pattern.
+//
+// Matching rules (case-insensitive):
+//   - An empty pattern matches nothing.
+//   - A pattern with a leading dot (".example.com") matches strict subdomains
+//     of example.com but NOT example.com itself.
+//   - Any other pattern ("example.com") matches the host exactly and any of
+//     its subdomains (e.g. "docs.example.com"). It does NOT match unrelated
+//     hosts that share a suffix (e.g. "badexample.com").
+func matchesDomain(host, pattern string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if host == "" || pattern == "" {
+		return false
+	}
+	// Strip IPv6 brackets if any (url.URL.Hostname already does this, but be safe).
+	host = strings.Trim(host, "[]")
+
+	subdomainOnly := strings.HasPrefix(pattern, ".")
+	if subdomainOnly {
+		pattern = strings.TrimPrefix(pattern, ".")
+		if pattern == "" {
+			return false
+		}
+		return strings.HasSuffix(host, "."+pattern)
+	}
+	if host == pattern {
+		return true
+	}
+	return strings.HasSuffix(host, "."+pattern)
+}
+
 func htmlToMarkdown(html string) string {
 	markdown, err := htmltomarkdown.ConvertString(html)
 	if err != nil {
@@ -288,10 +356,39 @@ func WithTimeout(timeout time.Duration) FetchToolOption {
 	}
 }
 
-func (t *FetchTool) Instructions() string {
-	return `## Fetch Tool
+// WithAllowedDomains restricts the fetch tool to URLs whose host matches one
+// of the supplied domain patterns. See matchesDomain for matching rules.
+// An empty or nil slice disables the allow-list (every host is allowed).
+func WithAllowedDomains(domains []string) FetchToolOption {
+	return func(t *FetchTool) {
+		t.handler.allowedDomains = domains
+	}
+}
 
-Fetch content from HTTP/HTTPS URLs. Supports multiple URLs per call, output format selection (text, markdown, html), and respects robots.txt.`
+// WithBlockedDomains forbids the fetch tool from fetching URLs whose host
+// matches one of the supplied domain patterns. See matchesDomain for matching
+// rules. An empty or nil slice disables the deny-list.
+func WithBlockedDomains(domains []string) FetchToolOption {
+	return func(t *FetchTool) {
+		t.handler.blockedDomains = domains
+	}
+}
+
+func (t *FetchTool) Instructions() string {
+	var b strings.Builder
+	b.WriteString("## Fetch Tool\n\n")
+	b.WriteString("Fetch content from HTTP/HTTPS URLs. Supports multiple URLs per call, output format selection (text, markdown, html), and respects robots.txt.")
+	if len(t.handler.allowedDomains) > 0 {
+		b.WriteString("\n\nThis tool is restricted to the following domains (and their subdomains): ")
+		b.WriteString(strings.Join(t.handler.allowedDomains, ", "))
+		b.WriteString(". Requests to any other host will fail without making a network call.")
+	}
+	if len(t.handler.blockedDomains) > 0 {
+		b.WriteString("\n\nThis tool is forbidden from fetching the following domains (and their subdomains): ")
+		b.WriteString(strings.Join(t.handler.blockedDomains, ", "))
+		b.WriteString(". Requests to those hosts will fail without making a network call.")
+	}
+	return b.String()
 }
 
 func (t *FetchTool) Tools(context.Context) ([]tools.Tool, error) {
