@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/docker/docker-agent/pkg/shellpath"
@@ -150,7 +151,7 @@ func hookEnv(base []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {
 		return base
 	}
-	env := append([]string{}, base...)
+	env := slices.Clone(base)
 	if len(env) == 0 {
 		env = os.Environ()
 	}
