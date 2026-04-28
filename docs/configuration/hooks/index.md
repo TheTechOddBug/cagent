@@ -152,6 +152,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 | `add_user_info`         | `session_start`   | _none_                 | Adds the current OS user (username and full name) and the hostname.                                                   |
 | `add_recent_commits`    | `session_start`   | _none_, or `["<N>"]`   | Adds `git log --oneline -n N`. `N` defaults to 10; pass a positive integer to override.                               |
 | `max_iterations`        | `before_llm_call` | `["<N>"]` (required)   | Hard-stops the agent after `N` model calls. State is per-session and reset at `session_end`.                          |
+| `redact_secrets`        | `pre_tool_use`    | _none_                 | Scrubs detected secrets (API keys, tokens, private keys, …) out of every tool call's arguments. Auto-registered by `redact_secrets: true` on the agent. |
 
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Per-turn vs. per-session
@@ -162,7 +163,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Auto-injected built-ins
 </div>
-  <p>The agent flags <code>add_date: true</code>, <code>add_environment_info: true</code>, and <code>add_prompt_files: [...]</code> are shorthands that auto-register the matching built-in hook. You don't need to repeat them under <code>hooks:</code> — set the flag <em>or</em> the hook entry, not both.</p>
+  <p>The agent flags <code>add_date: true</code>, <code>add_environment_info: true</code>, <code>add_prompt_files: [...]</code>, and <code>redact_secrets: true</code> are shorthands that auto-register the matching built-in hook. You don't need to repeat them under <code>hooks:</code> — set the flag <em>or</em> the hook entry, not both. <code>redact_secrets</code> is a special case: the agent flag <em>also</em> enables a runtime <code>before_llm_call</code> message transform that scrubs outgoing chat content; the hook entry on its own only covers tool arguments.</p>
 </div>
 
 <div class="callout callout-warning" markdown="1">
