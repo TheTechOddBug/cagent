@@ -254,7 +254,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 	}
 
 	// Initialize shared command history
-	historyStore, err := history.New()
+	historyStore, err := history.New("")
 	if err != nil {
 		slog.Warn("Failed to initialize command history", "error", err)
 	}
