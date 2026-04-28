@@ -1,4 +1,4 @@
-package runtime
+package toolexec
 
 import (
 	"testing"
@@ -8,12 +8,12 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-func TestResolveToolCallModelOverride_NoCalls(t *testing.T) {
-	result := resolveToolCallModelOverride(nil, nil)
+func TestResolveModelOverride_NoCalls(t *testing.T) {
+	result := ResolveModelOverride(nil, nil)
 	assert.Empty(t, result)
 }
 
-func TestResolveToolCallModelOverride_NoOverride(t *testing.T) {
+func TestResolveModelOverride_NoOverride(t *testing.T) {
 	agentTools := []tools.Tool{
 		{Name: "read_file"},
 		{Name: "write_file"},
@@ -22,11 +22,11 @@ func TestResolveToolCallModelOverride_NoOverride(t *testing.T) {
 		{Function: tools.FunctionCall{Name: "read_file"}},
 	}
 
-	result := resolveToolCallModelOverride(calls, agentTools)
+	result := ResolveModelOverride(calls, agentTools)
 	assert.Empty(t, result)
 }
 
-func TestResolveToolCallModelOverride_SingleOverride(t *testing.T) {
+func TestResolveModelOverride_SingleOverride(t *testing.T) {
 	agentTools := []tools.Tool{
 		{Name: "read_file", ModelOverride: "openai/gpt-4o-mini"},
 		{Name: "write_file"},
@@ -35,11 +35,11 @@ func TestResolveToolCallModelOverride_SingleOverride(t *testing.T) {
 		{Function: tools.FunctionCall{Name: "read_file"}},
 	}
 
-	result := resolveToolCallModelOverride(calls, agentTools)
+	result := ResolveModelOverride(calls, agentTools)
 	assert.Equal(t, "openai/gpt-4o-mini", result)
 }
 
-func TestResolveToolCallModelOverride_FirstOverrideWins(t *testing.T) {
+func TestResolveModelOverride_FirstOverrideWins(t *testing.T) {
 	agentTools := []tools.Tool{
 		{Name: "read_file", ModelOverride: "openai/gpt-4o-mini"},
 		{Name: "search_kb", ModelOverride: "anthropic/claude-haiku"},
@@ -49,11 +49,11 @@ func TestResolveToolCallModelOverride_FirstOverrideWins(t *testing.T) {
 		{Function: tools.FunctionCall{Name: "search_kb"}},
 	}
 
-	result := resolveToolCallModelOverride(calls, agentTools)
+	result := ResolveModelOverride(calls, agentTools)
 	assert.Equal(t, "openai/gpt-4o-mini", result)
 }
 
-func TestResolveToolCallModelOverride_MixedOverrideAndNonOverride(t *testing.T) {
+func TestResolveModelOverride_MixedOverrideAndNonOverride(t *testing.T) {
 	agentTools := []tools.Tool{
 		{Name: "read_file"},
 		{Name: "search_kb", ModelOverride: "openai/gpt-4o-mini"},
@@ -65,11 +65,11 @@ func TestResolveToolCallModelOverride_MixedOverrideAndNonOverride(t *testing.T) 
 
 	// read_file has no override, search_kb does. Since read_file is first
 	// but has no override, we skip it and use search_kb's.
-	result := resolveToolCallModelOverride(calls, agentTools)
+	result := ResolveModelOverride(calls, agentTools)
 	assert.Equal(t, "openai/gpt-4o-mini", result)
 }
 
-func TestResolveToolCallModelOverride_UnknownTool(t *testing.T) {
+func TestResolveModelOverride_UnknownTool(t *testing.T) {
 	agentTools := []tools.Tool{
 		{Name: "read_file"},
 	}
@@ -77,6 +77,6 @@ func TestResolveToolCallModelOverride_UnknownTool(t *testing.T) {
 		{Function: tools.FunctionCall{Name: "unknown_tool"}},
 	}
 
-	result := resolveToolCallModelOverride(calls, agentTools)
+	result := ResolveModelOverride(calls, agentTools)
 	assert.Empty(t, result)
 }

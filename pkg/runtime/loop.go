@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/compaction"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
@@ -225,7 +226,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	if loopThreshold == 0 {
 		loopThreshold = 5 // default: always active
 	}
-	loopDetector := newToolLoopDetector(loopThreshold,
+	loopDetector := toolexec.NewLoopDetector(loopThreshold,
 		bgagent.ToolNameViewBackgroundAgent,
 		builtin.ToolNameViewBackgroundJob,
 	)
@@ -318,7 +319,6 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		if err != nil {
 			slog.Debug("Failed to get model definition", "error", err)
 		}
-
 		// We can only compact if we know the limit.
 		var contextLimit int64
 		if m != nil {
@@ -423,21 +423,22 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		}
 
 		// Check for degenerate tool call loops
-		if loopDetector.record(res.Calls) {
+		if loopDetector.Record(res.Calls) {
 			toolName := "unknown"
 			if len(res.Calls) > 0 {
 				toolName = res.Calls[0].Function.Name
 			}
+			consecutive := loopDetector.Consecutive()
 			slog.Warn("Repetitive tool call loop detected",
 				"agent", a.Name(), "tool", toolName,
-				"consecutive", loopDetector.consecutive, "session_id", sess.ID)
+				"consecutive", consecutive, "session_id", sess.ID)
 			errMsg := fmt.Sprintf(
 				"Agent terminated: detected %d consecutive identical calls to %s. "+
 					"This indicates a degenerate loop where the model is not making progress.",
-				loopDetector.consecutive, toolName)
+				consecutive, toolName)
 			events <- Error(errMsg)
 			r.notifyError(ctx, a, sess.ID, errMsg)
-			loopDetector.reset()
+			loopDetector.Reset()
 			return
 		}
 
@@ -454,7 +455,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		}
 
 		// Record per-toolset model override for the next LLM turn.
-		toolModelOverride = resolveToolCallModelOverride(res.Calls, agentTools)
+		toolModelOverride = toolexec.ResolveModelOverride(res.Calls, agentTools)
 
 		// Drain steer messages that arrived during tool calls.
 		if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {

@@ -1,4 +1,4 @@
-package runtime
+package toolexec
 
 import (
 	"log/slog"
@@ -6,10 +6,10 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// resolveToolCallModelOverride returns the per-toolset model override from the
+// ResolveModelOverride returns the per-toolset model override from the
 // given tool calls, or "" if none. When multiple tools specify different
 // overrides, the first one wins.
-func resolveToolCallModelOverride(calls []tools.ToolCall, agentTools []tools.Tool) string {
+func ResolveModelOverride(calls []tools.ToolCall, agentTools []tools.Tool) string {
 	if len(calls) == 0 {
 		return ""
 	}
