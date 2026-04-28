@@ -47,6 +47,12 @@ type Runtime interface {
 	// Used by the /toolsets dialog. Best-effort: toolsets that don't expose
 	// state appear with State == StateStopped/Ready as appropriate.
 	CurrentAgentToolsetStatuses() []tools.ToolsetStatus
+
+	// RestartToolset finds the named toolset on the active agent and asks
+	// its supervisor to drop the current session and reconnect. Returns
+	// an error if no toolset matches name or the toolset does not
+	// implement tools.Restartable.
+	RestartToolset(ctx context.Context, name string) error
 	// EmitStartupInfo emits initial agent, team, and toolset information for immediate display.
 	// When sess is non-nil and contains token data, a TokenUsageEvent is also emitted
 	// so the UI can display context usage percentage on session restore.
@@ -529,6 +535,41 @@ func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 		statuses = append(statuses, toolsetStatusFor(ts))
 	}
 	return statuses
+}
+
+// RestartToolset locates the named toolset on the active agent and
+// asks it to restart in place. The supervisor closes the current
+// session and reconnects; this method blocks until the new session
+// is Ready, ctx is cancelled, or the underlying supervisor's
+// timeout elapses.
+//
+// Returns an error when:
+//   - no toolset matches name (matches use the same logic as the
+//     /toolsets dialog: the toolset's Name() if any, otherwise its
+//     description),
+//   - the toolset is not supervisor-backed (no Restartable capability),
+//   - the supervisor itself returned an error (timeout, classified
+//     transport failure, etc.).
+func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
+	a := r.CurrentAgent()
+	if a == nil {
+		return errors.New("no active agent")
+	}
+	for _, ts := range a.ToolSets() {
+		inner := ts
+		if s, ok := ts.(*tools.StartableToolSet); ok {
+			inner = s.ToolSet
+		}
+		if nameFor(ts, tools.DescribeToolSet(ts)) != name {
+			continue
+		}
+		restartable, ok := tools.As[tools.Restartable](inner)
+		if !ok {
+			return fmt.Errorf("toolset %q does not support restart", name)
+		}
+		return restartable.Restart(ctx)
+	}
+	return fmt.Errorf("toolset %q not found", name)
 }
 
 // toolsetStatusFor builds a ToolsetStatus for ts, unwrapping StartableToolSet

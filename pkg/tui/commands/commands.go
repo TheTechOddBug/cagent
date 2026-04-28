@@ -263,6 +263,18 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
+			ID:           "session.toolset.restart",
+			Label:        "Restart Toolset",
+			SlashCommand: "/toolset-restart",
+			Description:  "Force a supervisor-driven restart of one toolset (usage: /toolset-restart <name>)",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(arg string) tea.Cmd {
+				name := strings.TrimSpace(arg)
+				return core.CmdHandler(messages.RestartToolsetMsg{Name: name})
+			},
+		},
+		{
 			ID:           "session.title",
 			Label:        "Title",
 			SlashCommand: "/title",

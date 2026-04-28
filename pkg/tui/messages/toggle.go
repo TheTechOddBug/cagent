@@ -28,4 +28,8 @@ type (
 	// ShowToolsetsDialogMsg shows the toolset lifecycle dialog (the
 	// supervisor-aware view: state, restarts, last error per toolset).
 	ShowToolsetsDialogMsg struct{}
+
+	// RestartToolsetMsg asks the runtime to restart the named toolset by
+	// triggering its supervisor's RestartAndWait.
+	RestartToolsetMsg struct{ Name string }
 )

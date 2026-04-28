@@ -24,6 +24,18 @@ type Statable interface {
 	State() lifecycle.StateInfo
 }
 
+// Restartable is implemented by toolsets that can be restarted in place
+// (typically the supervisor-backed MCP and LSP toolsets). Restart closes
+// the active session and waits for the supervisor to bring up a fresh one,
+// or returns an error on timeout.
+//
+// The expected use case is post-OAuth recovery ("I just authenticated,
+// reconnect this MCP") and operator-driven debugging through the
+// /toolset-restart slash command.
+type Restartable interface {
+	Restart(ctx context.Context) error
+}
+
 // Instructable is implemented by toolsets that provide custom instructions.
 type Instructable interface {
 	Instructions() string

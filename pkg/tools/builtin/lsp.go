@@ -400,6 +400,13 @@ func (t *LSPTool) State() lifecycle.StateInfo {
 	return t.handler.supervisor.State()
 }
 
+// Restart forces the supervisor to terminate the current LSP session and
+// reconnect. Blocks until the new session reaches Ready, ctx is cancelled,
+// or 35s elapses (matching the MCP toolset).
+func (t *LSPTool) Restart(ctx context.Context) error {
+	return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
+}
+
 func (t *LSPTool) Instructions() string {
 	return `# LSP Code Intelligence Tools
 

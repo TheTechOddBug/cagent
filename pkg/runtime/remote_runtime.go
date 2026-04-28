@@ -131,6 +131,13 @@ func (r *RemoteRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 	return nil
 }
 
+// RestartToolset is not implemented for remote runtimes; toolset
+// restart is a server-side concern. Returns an error so the caller
+// can surface a clear message.
+func (r *RemoteRuntime) RestartToolset(context.Context, string) error {
+	return errors.New("restart-toolset is not supported for remote runtimes")
+}
+
 // EmitStartupInfo emits initial agent, team, and toolset information
 func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session, events chan Event) {
 	agentName, cfg := r.resolvedAgent(ctx)

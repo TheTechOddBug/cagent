@@ -383,6 +383,20 @@ func (m *appModel) handleShowToolsetsDialog() (tea.Model, tea.Cmd) {
 	})
 }
 
+// handleRestartToolset asks the runtime to restart the named toolset.
+// Errors and successes are surfaced via notification toasts; we do not
+// open a dialog because the user already knows what they asked for and
+// the result fits in one line.
+func (m *appModel) handleRestartToolset(name string) (tea.Model, tea.Cmd) {
+	if name == "" {
+		return m, notification.ErrorCmd("usage: /toolset-restart <name>")
+	}
+	if err := m.application.RestartToolset(context.Background(), name); err != nil {
+		return m, notification.ErrorCmd(fmt.Sprintf("Failed to restart %q: %v", name, err))
+	}
+	return m, notification.InfoCmd(fmt.Sprintf("Toolset %q restarted", name))
+}
+
 // --- MCP prompts ---
 
 func (m *appModel) handleShowMCPPromptInput(promptName string, promptInfo any) (tea.Model, tea.Cmd) {
