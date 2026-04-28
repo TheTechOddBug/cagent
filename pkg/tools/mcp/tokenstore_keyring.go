@@ -5,20 +5,39 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
+	"sync"
 
 	"github.com/99designs/keyring"
 )
 
-const keyringServiceName = "docker-agent-oauth"
+// All OAuth tokens for all MCP servers are stored under a single keyring
+// item. On macOS each keychain item carries its own ACL, so storing N
+// tokens as N items would prompt the user N times the first time each is
+// read (and again whenever the binary's signature changes). Bundling them
+// collapses that to a single prompt — and a single "Always Allow"
+// decision — for any number of MCP servers.
+const (
+	keyringServiceName = "docker-agent-oauth"
+	bundleKey          = "oauth:tokens"
 
-const indexKey = "oauth:_index"
+	// Items written by the previous one-token-per-item layout, migrated
+	// into the bundle on first load and then removed.
+	legacyTokenPrefix = "oauth:"
+	legacyIndexKey    = "oauth:_index"
+)
 
-// KeyringTokenStore implements OAuthTokenStore using the OS-native credential store
-// (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+// KeyringTokenStore implements OAuthTokenStore by caching the bundled
+// keyring item in memory: the OAuth transport's hot path stays in memory
+// after the first hit, and writes always target the same keyring item so
+// the user's "Always Allow" decision keeps applying to refreshes and to
+// new MCP servers.
 type KeyringTokenStore struct {
 	ring keyring.Keyring
+
+	mu     sync.Mutex
+	cache  map[string]*OAuthToken
+	loaded bool
 }
 
 func openKeyring() (keyring.Keyring, error) {
@@ -30,230 +49,192 @@ func openKeyring() (keyring.Keyring, error) {
 	})
 }
 
-// NewKeyringTokenStore creates a token store backed by the OS keychain.
-// Falls back to InMemoryTokenStore if no keyring backend is available.
-func NewKeyringTokenStore() OAuthTokenStore {
+// defaultStore returns the process-wide token store, opening the OS
+// keyring lazily on first call. Multiple MCP toolsets share its in-memory
+// cache so they don't each trigger a credential prompt on construction.
+var defaultStore = sync.OnceValue(func() OAuthTokenStore {
 	ring, err := openKeyring()
 	if err != nil {
 		slog.Warn("OS keyring not available, falling back to in-memory token store", "error", err)
 		return NewInMemoryTokenStore()
 	}
+	return newKeyringTokenStore(ring)
+})
 
-	// Validate the keyring is actually usable by attempting a get.
-	// Some backends (e.g. file) open successfully but fail on operations.
-	_, err = ring.Get("docker-agent-probe")
-	if err != nil && !errors.Is(err, keyring.ErrKeyNotFound) {
-		slog.Warn("OS keyring not usable, falling back to in-memory token store", "error", err)
-		return NewInMemoryTokenStore()
+// NewKeyringTokenStore returns the process-wide token store backed by the
+// OS keyring, falling back to InMemoryTokenStore when no backend is
+// available. It always returns the same instance.
+func NewKeyringTokenStore() OAuthTokenStore {
+	return defaultStore()
+}
+
+// newKeyringTokenStore wraps an arbitrary keyring with the bundle-and-cache
+// store. Used by tests to inject keyring.NewArrayKeyring().
+func newKeyringTokenStore(ring keyring.Keyring) *KeyringTokenStore {
+	return &KeyringTokenStore{
+		ring:  ring,
+		cache: map[string]*OAuthToken{},
 	}
-
-	return &KeyringTokenStore{ring: ring}
 }
 
-// keyringKey returns a stable key for a given resource URL.
-func keyringKey(resourceURL string) string {
-	return "oauth:" + resourceURL
-}
+// load fetches the bundled item from the keyring on first use and caches
+// it. Subsequent calls are no-ops, so methods can call load() at the top
+// of every operation without re-prompting the user. Failures are logged
+// but not propagated — an empty in-memory cache lets the OAuth flow
+// re-populate fresh tokens, and marking the cache loaded eagerly keeps a
+// denied access from snowballing into a prompt on every call.
+//
+// Caller must hold s.mu.
+func (s *KeyringTokenStore) load() {
+	if s.loaded {
+		return
+	}
+	s.loaded = true
 
-func (s *KeyringTokenStore) GetToken(resourceURL string) (*OAuthToken, error) {
-	item, err := s.ring.Get(keyringKey(resourceURL))
-	if err != nil {
-		if errors.Is(err, keyring.ErrKeyNotFound) {
-			return nil, fmt.Errorf("no token found for resource: %s", resourceURL)
+	item, err := s.ring.Get(bundleKey)
+	switch {
+	case err == nil:
+		if uerr := json.Unmarshal(item.Data, &s.cache); uerr != nil {
+			slog.Warn("OAuth token bundle is corrupt; starting fresh", "error", uerr)
+			s.cache = map[string]*OAuthToken{}
 		}
-		return nil, fmt.Errorf("keyring get failed: %w", err)
-	}
-
-	var token OAuthToken
-	if err := json.Unmarshal(item.Data, &token); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal token: %w", err)
-	}
-
-	return &token, nil
-}
-
-func (s *KeyringTokenStore) StoreToken(resourceURL string, token *OAuthToken) error {
-	data, err := json.Marshal(token)
-	if err != nil {
-		return fmt.Errorf("failed to marshal token: %w", err)
-	}
-
-	if err := s.ring.Set(keyring.Item{
-		Key:         keyringKey(resourceURL),
-		Data:        data,
-		Label:       "Docker Agent OAuth Token",
-		Description: "OAuth token for " + resourceURL,
-	}); err != nil {
-		return err
-	}
-
-	// Update the index
-	return s.addToIndex(resourceURL)
-}
-
-func (s *KeyringTokenStore) RemoveToken(resourceURL string) error {
-	err := s.ring.Remove(keyringKey(resourceURL))
-	if err != nil && !errors.Is(err, keyring.ErrKeyNotFound) {
-		return fmt.Errorf("keyring remove failed: %w", err)
-	}
-
-	// Update the index
-	return s.removeFromIndex(resourceURL)
-}
-
-// loadIndex reads the resource URL index from the keyring.
-func (s *KeyringTokenStore) loadIndex() ([]string, error) {
-	return loadIndex(s.ring)
-}
-
-func loadIndex(ring keyring.Keyring) ([]string, error) {
-	item, err := ring.Get(indexKey)
-	if err != nil {
-		if errors.Is(err, keyring.ErrKeyNotFound) {
-			return nil, nil
+	case errors.Is(err, keyring.ErrKeyNotFound):
+		// Possibly an upgrade from the old per-token layout. Best-effort
+		// migration; failures here are silent so an upgrade is never
+		// worse than a fresh install.
+		if migrated := s.migrateLegacyLocked(); migrated > 0 {
+			slog.Debug("Migrated legacy OAuth tokens", "count", migrated)
+			if perr := s.persistLocked(); perr != nil {
+				slog.Warn("Failed to persist migrated OAuth tokens", "error", perr)
+			}
 		}
-		return nil, fmt.Errorf("failed to read index: %w", err)
+	default:
+		slog.Warn("Failed to load OAuth tokens from keyring; using in-memory cache for this process", "error", err)
 	}
-
-	var urls []string
-	if err := json.Unmarshal(item.Data, &urls); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal index: %w", err)
-	}
-	return urls, nil
 }
 
-// saveIndex writes the resource URL index to the keyring.
-func (s *KeyringTokenStore) saveIndex(urls []string) error {
-	data, err := json.Marshal(urls)
+// migrateLegacyLocked folds tokens written by the old per-resource layout
+// into s.cache and deletes the legacy entries. Caller must hold s.mu.
+func (s *KeyringTokenStore) migrateLegacyLocked() int {
+	keys, err := s.ring.Keys()
 	if err != nil {
-		return fmt.Errorf("failed to marshal index: %w", err)
+		return 0
 	}
 
+	var migrated int
+	for _, key := range keys {
+		if key == legacyIndexKey {
+			_ = s.ring.Remove(key)
+			continue
+		}
+		if key == bundleKey || !strings.HasPrefix(key, legacyTokenPrefix) {
+			continue
+		}
+
+		item, err := s.ring.Get(key)
+		if err != nil {
+			continue
+		}
+		var token OAuthToken
+		if json.Unmarshal(item.Data, &token) != nil {
+			continue
+		}
+		s.cache[strings.TrimPrefix(key, legacyTokenPrefix)] = &token
+		_ = s.ring.Remove(key)
+		migrated++
+	}
+	return migrated
+}
+
+// persistLocked writes the in-memory bundle back to the keyring.
+// Caller must hold s.mu.
+func (s *KeyringTokenStore) persistLocked() error {
+	data, err := json.Marshal(s.cache)
+	if err != nil {
+		return fmt.Errorf("failed to marshal token bundle: %w", err)
+	}
 	return s.ring.Set(keyring.Item{
-		Key:         indexKey,
-		Data:        data,
-		Label:       "Docker Agent OAuth Index",
-		Description: "Index of OAuth resource URLs",
+		Key:   bundleKey,
+		Data:  data,
+		Label: "Docker Agent OAuth Tokens",
 	})
 }
 
-func (s *KeyringTokenStore) addToIndex(resourceURL string) error {
-	urls, err := s.loadIndex()
-	if err != nil {
-		return err
-	}
+func (s *KeyringTokenStore) GetToken(resourceURL string) (*OAuthToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
 
-	if slices.Contains(urls, resourceURL) {
-		return nil // already present
+	token, ok := s.cache[resourceURL]
+	if !ok {
+		return nil, fmt.Errorf("no token found for resource: %s", resourceURL)
 	}
-
-	return s.saveIndex(append(urls, resourceURL))
+	return token, nil
 }
 
-func (s *KeyringTokenStore) removeFromIndex(resourceURL string) error {
-	urls, err := s.loadIndex()
-	if err != nil {
-		return err
-	}
+func (s *KeyringTokenStore) StoreToken(resourceURL string, token *OAuthToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
 
-	filtered := urls[:0]
-	for _, u := range urls {
-		if u != resourceURL {
-			filtered = append(filtered, u)
-		}
-	}
+	s.cache[resourceURL] = token
+	return s.persistLocked()
+}
 
-	if len(filtered) == 0 {
-		// Remove the index key entirely if empty
-		err := s.ring.Remove(indexKey)
-		if err != nil && !errors.Is(err, keyring.ErrKeyNotFound) {
-			return err
-		}
+func (s *KeyringTokenStore) RemoveToken(resourceURL string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+
+	if _, ok := s.cache[resourceURL]; !ok {
 		return nil
 	}
-
-	return s.saveIndex(filtered)
+	delete(s.cache, resourceURL)
+	return s.persistLocked()
 }
 
-// OAuthTokenEntry represents a stored OAuth token along with its resource URL.
+// list returns a snapshot of all stored tokens.
+func (s *KeyringTokenStore) list() []OAuthTokenEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+
+	entries := make([]OAuthTokenEntry, 0, len(s.cache))
+	for url, token := range s.cache {
+		entries = append(entries, OAuthTokenEntry{ResourceURL: url, Token: token})
+	}
+	return entries
+}
+
+// OAuthTokenEntry pairs a stored OAuth token with its resource URL.
 type OAuthTokenEntry struct {
 	ResourceURL string
 	Token       *OAuthToken
 }
 
-// ListOAuthTokens opens the OS keyring and returns all stored OAuth tokens.
-// It reads a stored index to discover resource URLs, then fetches each token.
-// This results in only Get() calls (no Keys()), so the user is prompted for
-// keychain access at most once.
-func ListOAuthTokens() ([]OAuthTokenEntry, error) {
-	ring, err := openKeyring()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open keyring: %w", err)
+// requireKeyring returns the singleton store cast to *KeyringTokenStore,
+// or an error if the OS keyring backend is unavailable.
+func requireKeyring() (*KeyringTokenStore, error) {
+	if s, ok := defaultStore().(*KeyringTokenStore); ok {
+		return s, nil
 	}
+	return nil, errors.New("OS keyring not available")
+}
 
-	urls, err := loadIndex(ring)
+// ListOAuthTokens returns every OAuth token persisted in the keyring.
+func ListOAuthTokens() ([]OAuthTokenEntry, error) {
+	s, err := requireKeyring()
 	if err != nil {
 		return nil, err
 	}
-
-	// Fall back to Keys() for tokens stored before the index existed.
-	if len(urls) == 0 {
-		urls, err = discoverResourceURLs(ring)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var entries []OAuthTokenEntry
-	for _, resourceURL := range urls {
-		item, err := ring.Get(keyringKey(resourceURL))
-		if err != nil {
-			if errors.Is(err, keyring.ErrKeyNotFound) {
-				continue // stale index entry
-			}
-			slog.Warn("Failed to read keyring item", "resource", resourceURL, "error", err)
-			continue
-		}
-
-		var token OAuthToken
-		if err := json.Unmarshal(item.Data, &token); err != nil {
-			slog.Warn("Failed to unmarshal token", "resource", resourceURL, "error", err)
-			continue
-		}
-
-		entries = append(entries, OAuthTokenEntry{
-			ResourceURL: resourceURL,
-			Token:       &token,
-		})
-	}
-
-	return entries, nil
+	return s.list(), nil
 }
 
-// discoverResourceURLs uses Keys() to find oauth resource URLs.
-// This is used as a fallback for tokens stored before the index was introduced.
-func discoverResourceURLs(ring keyring.Keyring) ([]string, error) {
-	keys, err := ring.Keys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keyring keys: %w", err)
-	}
-
-	const prefix = "oauth:"
-	var urls []string
-	for _, key := range keys {
-		if strings.HasPrefix(key, prefix) && key != indexKey {
-			urls = append(urls, strings.TrimPrefix(key, prefix))
-		}
-	}
-	return urls, nil
-}
-
-// RemoveOAuthToken opens the OS keyring and removes the token for the given resource URL.
+// RemoveOAuthToken deletes the token stored for resourceURL.
 func RemoveOAuthToken(resourceURL string) error {
-	store := NewKeyringTokenStore()
-	krs, ok := store.(*KeyringTokenStore)
-	if !ok {
-		return errors.New("OS keyring not available")
+	s, err := requireKeyring()
+	if err != nil {
+		return err
 	}
-	return krs.RemoveToken(resourceURL)
+	return s.RemoveToken(resourceURL)
 }
