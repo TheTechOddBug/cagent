@@ -40,7 +40,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/junegunn/fzf v0.71.0
+	github.com/junegunn/fzf v0.72.0
 	github.com/k3a/html2text v1.4.0
 	github.com/kofalt/go-memoize v0.0.0-20240506050413-9e5eb99a0f2a
 	github.com/labstack/echo/v4 v4.15.1
