@@ -22,6 +22,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 )
 
 type mcpClient interface {
@@ -125,7 +126,11 @@ func NewRemoteToolset(name, urlString, transport string, headers map[string]stri
 // reached but the error is non-fatal (e.g. EOF, binary not found).
 // Start() propagates this so started remains false, and the agent runtime
 // retries via ensureToolSetsAreStarted on the next conversation turn.
-var errServerUnavailable = errors.New("MCP server unavailable")
+//
+// It aliases lifecycle.ErrServerUnavailable so that supervisor code can use
+// errors.Is(err, lifecycle.ErrServerUnavailable) without importing this
+// package.
+var errServerUnavailable = lifecycle.ErrServerUnavailable
 
 // WorkingDir returns the working directory of the underlying stdio client,
 // or an empty string if this toolset uses a remote transport.
