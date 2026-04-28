@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -340,4 +342,58 @@ func TestBundledKeyringStore_LoadFailureIsCachedOnce(t *testing.T) {
 	if _, err := store.GetToken("https://b.example/mcp"); err == nil {
 		t.Fatal("expected GetToken to report missing token after denied keyring access")
 	}
+}
+
+// TestKeyringTokenStore_ConcurrentAccess verifies that concurrent reads
+// and writes to the token store are safe and don't cause data races.
+func TestKeyringTokenStore_ConcurrentAccess(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	store := newKeyringTokenStore(ring)
+
+	const numGoroutines = 10
+	const numOperations = 100
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines * 3) // readers, writers, removers
+
+	// Concurrent readers
+	for i := range numGoroutines {
+		go func(id int) {
+			defer wg.Done()
+			url := fmt.Sprintf("https://server-%d.example/mcp", id%3)
+			for range numOperations {
+				_, _ = store.GetToken(url)
+			}
+		}(i)
+	}
+
+	// Concurrent writers
+	for i := range numGoroutines {
+		go func(id int) {
+			defer wg.Done()
+			url := fmt.Sprintf("https://server-%d.example/mcp", id%3)
+			for j := range numOperations {
+				_ = store.StoreToken(url, &OAuthToken{
+					AccessToken: fmt.Sprintf("token-%d-%d", id, j),
+				})
+			}
+		}(i)
+	}
+
+	// Concurrent removers
+	for i := range numGoroutines {
+		go func(id int) {
+			defer wg.Done()
+			url := fmt.Sprintf("https://server-%d.example/mcp", id%3)
+			for range numOperations {
+				_ = store.RemoveToken(url)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify the store is still in a consistent state
+	entries := store.list()
+	t.Logf("After concurrent access: %d tokens remain", len(entries))
 }
