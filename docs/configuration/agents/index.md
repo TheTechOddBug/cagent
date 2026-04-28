@@ -27,6 +27,7 @@ agents:
     add_environment_info: boolean # Optional: add env info to context
     add_prompt_files: [list] # Optional: include additional prompt files
     add_description_parameter: bool # Optional: add description to tool schema
+    redact_secrets: boolean # Optional: scrub detected secrets out of tool args and outgoing chat messages
     code_mode_tools: boolean # Optional: enable code mode tool format
     max_iterations: int # Optional: max tool-calling loops
     max_consecutive_tool_calls: int # Optional: max identical consecutive tool calls
@@ -76,6 +77,7 @@ agents:
 | `add_environment_info`      | boolean | ✗        | When `true`, injects working directory, OS, CPU architecture, and git info into context.                                                                                      |
 | `add_prompt_files`          | array   | ✗        | List of file paths whose contents are appended to the system prompt. Useful for including coding standards, guidelines, or additional context.                                |
 | `add_description_parameter` | boolean | ✗        | When `true`, adds agent descriptions as a parameter in tool schemas. Helps with tool selection in multi-agent scenarios.                                                      |
+| `redact_secrets`            | boolean | ✗        | When `true`, scrubs detected secrets (API keys, tokens, private keys, etc.) out of tool-call arguments and outgoing chat messages before they reach a tool or the model. See [Redacting Secrets](#redacting-secrets) below.   |
 | `code_mode_tools`           | boolean | ✗        | When `true`, formats tool responses in a code-optimized format with structured output schemas. Useful for MCP gateway and programmatic access.                                |
 | `max_iterations`            | int     | ✗        | Maximum number of tool-calling loops. Default: unlimited (0). Set this to prevent infinite loops.                                                                             |
 | `max_consecutive_tool_calls` | int     | ✗        | Maximum consecutive identical tool calls before the agent is terminated, preventing degenerate loops. Default: `5`.                                                          |
@@ -137,6 +139,49 @@ When `path` is set, every `Store` rewrites the entire cache file. Writes are **a
 Multiple processes can share the same `path:` cache file safely. Every `Store` takes an exclusive advisory lock on a sibling `<path>.lock` file (POSIX `flock(2)` on Unix, `LockFileEx` on Windows), reloads the current on-disk state under the lock, merges the new entry, and writes back atomically. Two processes that store *different* keys at the same time both see their writes preserved on disk; the lock window is short (one read + one fsync'd write).
 
 `Lookup` watches the file's modification time and reloads the in-memory map when the file has advanced since its last load, so writes from a sibling process become visible without a restart. The `<path>.lock` sentinel file is created on first write and never deleted: removing it would let two processes lock different inodes and lose mutual exclusion.
+
+## Redacting Secrets
+
+The `redact_secrets` flag is a single agent-level switch that scrubs accidentally leaked credentials, tokens, and private keys out of an agent's I/O. It wires up two complementary defenses:
+
+1. A `pre_tool_use` built-in hook that scrubs detected secrets from the **arguments of every tool call**, before the tool sees them.
+2. A `before_llm_call` message transform that scrubs the same patterns from **outgoing chat messages** — message content, multi-part text content, prior reasoning content, and the JSON-encoded arguments of any tool call still in the conversation — before they reach the model provider.
+
+```yaml
+agents:
+  root:
+    model: openai/gpt-5-mini
+    description: A helpful assistant that scrubs secrets before they leak
+    instruction: |
+      You are a helpful assistant. If the user accidentally pastes a token,
+      do your best work without echoing the secret back.
+    redact_secrets: true
+    toolsets:
+      - type: shell
+```
+
+Detection uses the docker-agent `secretsscan` ruleset, which recognises common secret patterns including:
+
+- GitHub Personal Access Tokens (`ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `ghr_*`, fine-grained `github_pat_*`)
+- AWS access keys (`AKIA*`, `ASIA*`, …) and secret access keys
+- GitLab PATs (`glpat-*`), Hugging Face tokens (`hf_*`)
+- Stripe (`sk_live_*`, `pk_test_*`, …), Slack (`xoxb-*`, …), Shopify, Twilio, Discord, Atlassian, Mailchimp, SendGrid, and many more
+- JWTs, GCP service-account JSON, Heroku keys, Docker Hub PATs (`dckr_pat_*`)
+- PEM-encoded private keys (`-----BEGIN … PRIVATE KEY-----` blocks)
+
+Each detected span is replaced with the literal string `[REDACTED]`; the surrounding text is preserved so a redacted argument still looks like a legitimate flag (e.g. `--token=[REDACTED]`). Redaction is idempotent — applying it twice yields the same result.
+
+<div class="callout callout-info" markdown="1">
+<div class="callout-title">ℹ️ False positives vs. false negatives
+</div>
+  <p>False positives are extremely rare: every rule pairs a regex with a discriminating keyword, so plain English never trips detection. <strong>False negatives are possible</strong> — only patterns the ruleset recognises are scrubbed, so this is a defense-in-depth feature, not a substitute for keeping secrets out of the conversation in the first place. Pair it with a proper <a href="{{ '/guides/secrets/' | relative_url }}">secret manager</a> for the credentials your agent actually needs.</p>
+</div>
+
+<div class="callout callout-info" markdown="1">
+<div class="callout-title">ℹ️ Equivalent hook entry
+</div>
+  <p>Setting <code>redact_secrets: true</code> on the agent is shorthand for auto-registering both halves of the feature. The tool-side scrubber is a normal built-in hook (<code>type: builtin</code>, <code>command: redact_secrets</code> on <code>pre_tool_use</code>), so you can also configure it manually — see the <a href="{{ '/configuration/hooks/#available-built-ins' | relative_url }}">Hooks reference</a>. The chat-side message transform is only enabled by the agent flag.</p>
+</div>
 
 ## Welcome Message
 

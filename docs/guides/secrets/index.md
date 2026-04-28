@@ -227,3 +227,25 @@ Once stored, docker-agent finds the secret automatically — no flags or config 
 | macOS Keychain | macOS local development | Low |
 
 You can combine methods. For example, store long-lived provider keys in macOS Keychain and pass project-specific MCP tokens via env files.
+
+## Preventing Secret Leaks
+
+Provider keys live in the secret store and are passed to docker-agent through the chain above — the agent itself never receives them as input. But the **content of a conversation** can still leak credentials: a user pasting a token, a tool returning a config file with embedded keys, a transcript dumped into a prompt.
+
+For that defense-in-depth case, set `redact_secrets: true` on an agent. It scrubs detected secrets out of:
+
+- the arguments of every outgoing tool call (before the tool sees them), and
+- every outgoing chat message (before the model provider sees them).
+
+```yaml
+agents:
+  root:
+    model: openai/gpt-5-mini
+    description: A helpful assistant
+    instruction: You are a helpful assistant.
+    redact_secrets: true
+    toolsets:
+      - type: shell
+```
+
+The ruleset covers GitHub PATs, AWS / GCP / Azure credentials, Stripe / Slack / GitLab / Hugging Face tokens, JWTs, PEM-encoded private keys, Docker Hub PATs, and many others. Each detected span is replaced with the literal `[REDACTED]`. See the [Redacting Secrets]({{ '/configuration/agents/#redacting-secrets' | relative_url }}) section in the agent configuration reference for the full picture and important caveats about false negatives.
