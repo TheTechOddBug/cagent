@@ -688,23 +688,19 @@ func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events chan Even
 	}
 }
 
-// emitAgentWarnings drains and emits any pending toolset warnings and notices
-// as persistent TUI notifications. Failures ("start failed", "list failed")
-// and recoveries ("is now available") flow through separate queues on the
-// agent so each can be framed correctly — a single mixed message saying
-// "Some toolsets failed to initialize ... is now available" reads as a
-// contradiction.
+// emitAgentWarnings drains and emits any pending toolset warnings as
+// persistent TUI notifications. Failures ("start failed", "list failed")
+// are surfaced so the user can act on them; recoveries are intentionally
+// not emitted — "X is now available" reads as a spurious warning right
+// after the user completes an OAuth dance, and adds no signal for other
+// recoveries either.
 func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, send func(Event)) {
 	warnings := a.DrainWarnings()
-	if len(warnings) > 0 {
-		slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
-		send(Warning(formatToolWarning(a, warnings), a.Name()))
+	if len(warnings) == 0 {
+		return
 	}
-	notices := a.DrainNotices()
-	if len(notices) > 0 {
-		slog.Info("Toolset status update", "agent", a.Name(), "notices", notices)
-		send(Warning(formatToolNotice(a, notices), a.Name()))
-	}
+	slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
+	send(Warning(formatToolWarning(a, warnings), a.Name()))
 }
 
 func formatToolWarning(a *agent.Agent, warnings []string) string {
@@ -712,15 +708,6 @@ func formatToolWarning(a *agent.Agent, warnings []string) string {
 	fmt.Fprintf(&builder, "Some toolsets failed to initialize for agent '%s'.\n\nDetails:\n\n", a.Name())
 	for _, warning := range warnings {
 		fmt.Fprintf(&builder, "- %s\n", warning)
-	}
-	return strings.TrimSuffix(builder.String(), "\n")
-}
-
-func formatToolNotice(a *agent.Agent, notices []string) string {
-	var builder strings.Builder
-	fmt.Fprintf(&builder, "Toolset status update for agent '%s':\n\n", a.Name())
-	for _, notice := range notices {
-		fmt.Fprintf(&builder, "- %s\n", notice)
 	}
 	return strings.TrimSuffix(builder.String(), "\n")
 }
@@ -760,9 +747,9 @@ func chanSend(ch chan Event) func(Event) {
 }
 
 // reprobe re-runs ensureToolSetsAreStarted after a batch of tool calls.
-// If new tools became available (by name-set diff), it emits recovery notices
-// and a ToolsetInfo event to update the TUI immediately. The new tools will be
-// picked up by the next iteration's getTools() call at the top of the loop.
+// If new tools became available (by name-set diff), it emits a ToolsetInfo
+// event to update the TUI immediately. The new tools will be picked up by
+// the next iteration's getTools() call at the top of the loop.
 //
 // reprobe deliberately does NOT return the new tool list: the top-of-loop
 // getTools() is the single authoritative source for agentTools each iteration.
@@ -781,7 +768,7 @@ func (r *LocalRuntime) reprobe(
 	}
 	updated = filterExcludedTools(updated, sess.ExcludedTools)
 
-	// Emit any pending warnings/notices that getTools just generated.
+	// Emit any pending warnings that getTools just generated.
 	r.emitAgentWarnings(a, chanSend(events))
 
 	// Compute added tools by comparing name-sets (not just counts), so we
