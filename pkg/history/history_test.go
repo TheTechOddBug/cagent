@@ -12,17 +12,17 @@ import (
 func TestNew(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
-	assert.Equal(t, -1, h.current)
+	assert.Equal(t, 0, h.current)
 	assert.Empty(t, h.Messages)
 }
 
 func TestHistory_AddAndSave(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	messages := []string{"first", "second", "third"}
@@ -34,7 +34,7 @@ func TestHistory_AddAndSave(t *testing.T) {
 	assert.Equal(t, messages, h.Messages)
 	assert.Len(t, messages, h.current)
 
-	h2, err := New()
+	h2, err := New("")
 	require.NoError(t, err)
 	assert.Equal(t, messages, h2.Messages)
 }
@@ -42,7 +42,7 @@ func TestHistory_AddAndSave(t *testing.T) {
 func TestHistory_Navigation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	assert.Empty(t, h.Previous())
@@ -66,7 +66,7 @@ func TestHistory_Navigation(t *testing.T) {
 func TestHistory_EdgeCases(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	assert.Empty(t, h.Previous())
@@ -82,7 +82,7 @@ func TestHistory_EdgeCases(t *testing.T) {
 func TestHistory_StayAtTheBeginning(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	require.NoError(t, h.Add("first"))
@@ -94,7 +94,7 @@ func TestHistory_StayAtTheBeginning(t *testing.T) {
 func TestHistory_NoDuplicateMessages(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	require.NoError(t, h.Add("first"))
@@ -109,7 +109,7 @@ func TestHistory_NoDuplicateMessages(t *testing.T) {
 func TestHistory_MoveDuplicateLast(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	h, err := New()
+	h, err := New("")
 	require.NoError(t, err)
 
 	require.NoError(t, h.Add("first"))
@@ -126,13 +126,13 @@ func TestHistory_MoveDuplicateLast(t *testing.T) {
 func TestHistory_MultilineMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	h, err := New(WithBaseDir(tmpDir))
+	h, err := New(tmpDir)
 	require.NoError(t, err)
 
 	multiline := "line1\nline2\nline3"
 	require.NoError(t, h.Add(multiline))
 
-	h2, err := New(WithBaseDir(tmpDir))
+	h2, err := New(tmpDir)
 	require.NoError(t, err)
 
 	require.Len(t, h2.Messages, 1)
@@ -148,7 +148,7 @@ func TestHistory_MigrateOldFormat(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(oldHistFile, []byte(`{"messages":["old1","old2","old3"]}`), 0o644))
 
-	h, err := New(WithBaseDir(tmpDir))
+	h, err := New(tmpDir)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"old1", "old2", "old3"}, h.Messages)
 
@@ -162,7 +162,7 @@ func TestHistory_MigrateOldFormat(t *testing.T) {
 func TestHistory_LatestMatch(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	h, err := New(WithBaseDir(tmpDir))
+	h, err := New(tmpDir)
 	require.NoError(t, err)
 
 	// Empty history returns empty string
@@ -194,7 +194,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("empty history", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		msg, idx, ok := h.FindPrevContains("test", len(h.Messages))
@@ -206,7 +206,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("empty query matches latest", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("first"))
@@ -222,7 +222,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("substring match", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("deploy staging"))
@@ -238,7 +238,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("case insensitive match", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("Deploy Staging"))
@@ -253,7 +253,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("cycling through matches", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("deploy v1"))
@@ -288,7 +288,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("no match", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("hello"))
@@ -303,7 +303,7 @@ func TestHistory_FindPrevContains(t *testing.T) {
 	t.Run("from out of bounds", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("hello"))
@@ -321,7 +321,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 	t.Run("basic forward search", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("deploy v1"))
@@ -337,7 +337,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 	t.Run("sequential forward search", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("echo 1"))
@@ -366,7 +366,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 	t.Run("no match", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("hello"))
@@ -380,7 +380,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 	t.Run("empty history", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		_, _, ok := h.FindNextContains("test", -1)
@@ -390,7 +390,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 	t.Run("case insensitive", func(t *testing.T) {
 		t.Parallel()
 		tmpDir := t.TempDir()
-		h, err := New(WithBaseDir(tmpDir))
+		h, err := New(tmpDir)
 		require.NoError(t, err)
 
 		require.NoError(t, h.Add("Deploy Staging"))
@@ -404,7 +404,7 @@ func TestHistory_FindNextContains(t *testing.T) {
 func TestHistory_SetCurrent(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
-	h, err := New(WithBaseDir(tmpDir))
+	h, err := New(tmpDir)
 	require.NoError(t, err)
 
 	require.NoError(t, h.Add("first"))
@@ -421,7 +421,7 @@ func TestHistory_SetCurrent(t *testing.T) {
 func TestHistory_VeryLongMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	h, err := New(WithBaseDir(tmpDir))
+	h, err := New(tmpDir)
 	require.NoError(t, err)
 
 	// Create a message longer than bufio.Scanner's default 64KB limit
@@ -435,7 +435,7 @@ func TestHistory_VeryLongMessage(t *testing.T) {
 	require.NoError(t, h.Add("short message after"))
 
 	// Reload history from disk
-	h2, err := New(WithBaseDir(tmpDir))
+	h2, err := New(tmpDir)
 	require.NoError(t, err)
 
 	require.Len(t, h2.Messages, 2)

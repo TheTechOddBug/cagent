@@ -22,7 +22,7 @@ func TestHistorySearch(t *testing.T) {
 	setupEditor := func(t *testing.T, messages []string) *editor {
 		t.Helper()
 		tmpDir := t.TempDir()
-		h, err := history.New(history.WithBaseDir(tmpDir))
+		h, err := history.New(tmpDir)
 		require.NoError(t, err)
 
 		for _, msg := range messages {

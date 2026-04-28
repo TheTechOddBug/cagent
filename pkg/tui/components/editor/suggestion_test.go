@@ -60,7 +60,7 @@ func TestApplySuggestionOverlay(t *testing.T) {
 			t.Parallel()
 
 			// Create a simple editor for testing
-			hist, _ := history.New()
+			hist, _ := history.New("")
 			e := New(hist).(*editor)
 
 			// Set up textarea with test content
@@ -94,7 +94,7 @@ func TestApplySuggestionOverlay(t *testing.T) {
 func TestApplySuggestionOverlayScrolledView(t *testing.T) {
 	t.Parallel()
 
-	hist, _ := history.New()
+	hist, _ := history.New("")
 	e := New(hist).(*editor)
 
 	// Set up a multi-line textarea that's scrolled
@@ -191,7 +191,7 @@ func TestApplySuggestionOverlayWithVariousLineCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			hist, _ := history.New()
+			hist, _ := history.New("")
 			e := New(hist).(*editor)
 
 			e.textarea.SetValue(tt.textareaText)
@@ -269,7 +269,7 @@ func TestApplySuggestionOverlayWithMultiLineSuggestion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			hist, _ := history.New()
+			hist, _ := history.New("")
 			e := New(hist).(*editor)
 
 			e.textarea.SetValue(tt.textareaText)
@@ -383,7 +383,7 @@ func TestIsCursorAtEnd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			hist, _ := history.New()
+			hist, _ := history.New("")
 			e := New(hist).(*editor)
 
 			e.textarea.SetValue(tt.value)
@@ -454,7 +454,7 @@ func TestExtractLineText(t *testing.T) {
 func TestMultiLineSuggestionWithSmallEditor(t *testing.T) {
 	t.Parallel()
 
-	hist, _ := history.New()
+	hist, _ := history.New("")
 	e := New(hist).(*editor)
 
 	// Set up editor with minimal height
@@ -488,7 +488,7 @@ func TestMultiLineSuggestionWithSmallEditor(t *testing.T) {
 func TestLongSuggestionWrapping(t *testing.T) {
 	t.Parallel()
 
-	hist, _ := history.New()
+	hist, _ := history.New("")
 	e := New(hist).(*editor)
 
 	// Set up editor with narrow width
