@@ -920,8 +920,8 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 					desc := tools.DescribeToolSet(startable.ToolSet)
 					// IsAuthorizationRequired must be checked BEFORE
 					// ShouldReportFailure: this is the first — expected —
-					// failure of a deferred-OAuth toolset, and consuming
-					// freshFailure here would suppress the *real*
+					// failure of a deferred-OAuth toolset, and consuming the
+					// failure-reported flag here would suppress the *real*
 					// failure (e.g. server 4xx on the eventual interactive
 					// retry) that the user actually needs to see.
 					if mcptools.IsAuthorizationRequired(err) {

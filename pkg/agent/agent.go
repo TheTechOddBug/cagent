@@ -313,30 +313,26 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 	return toolSets
 }
 
+// ensureToolSetsAreStarted starts every toolset, surfacing the first
+// failure of each streak as a user-visible warning and silently retrying
+// on every subsequent turn. A successful Start() automatically resets the
+// streak inside StartableToolSet, so a future failure is again reported
+// as fresh — no recovery callback is needed here, and we deliberately do
+// not surface a "now available" notice (the OAuth dialog completing or
+// the model just using the tool already makes a successful start
+// obvious; a follow-up notification just reads as a spurious warning).
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
 	for _, toolSet := range a.toolsets {
-		if err := toolSet.Start(ctx); err != nil {
-			// Only warn on the first failure in a streak; suppress duplicate
-			// warnings for subsequent retries that also fail.
-			if toolSet.ShouldReportFailure() {
-				desc := tools.DescribeToolSet(toolSet)
-				slog.Warn("Toolset start failed; will retry on next turn", "agent", a.Name(), "toolset", desc, "error", err)
-				a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, err))
-			} else {
-				desc := tools.DescribeToolSet(toolSet)
-				slog.Debug("Toolset still unavailable; retrying next turn", "agent", a.Name(), "toolset", desc, "error", err)
-			}
+		err := toolSet.Start(ctx)
+		if err == nil {
 			continue
 		}
-		// Reset the failure-streak flag when a previously-failed toolset
-		// recovers, so the next failure is again reported as a fresh one.
-		// We deliberately do not surface a user-visible "now available"
-		// notice: for OAuth-driven recoveries the user already sees the
-		// authorization dialog complete, and for other recoveries the
-		// model simply uses the tool — a follow-up notification just
-		// reads as a spurious warning.
-		if toolSet.ConsumeRecovery() {
-			slog.Info("Toolset now available", "agent", a.Name(), "toolset", tools.DescribeToolSet(toolSet))
+		desc := tools.DescribeToolSet(toolSet)
+		if toolSet.ShouldReportFailure() {
+			slog.Warn("Toolset start failed; will retry on next turn", "agent", a.Name(), "toolset", desc, "error", err)
+			a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, err))
+		} else {
+			slog.Debug("Toolset still unavailable; retrying next turn", "agent", a.Name(), "toolset", desc, "error", err)
 		}
 	}
 }

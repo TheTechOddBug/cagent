@@ -1038,21 +1038,21 @@ func TestEmitStartupInfo_AuthRequiredIsSilent(t *testing.T) {
 	}
 }
 
-// TestEmitStartupInfo_DeferredAuthPreservesFreshFailureFlag verifies that
+// TestEmitStartupInfo_DeferredAuthDoesNotConsumeFailureGate verifies that
 // when a toolset's Start fails with AuthorizationRequiredError during the
-// non-interactive startup phase, the StartableToolSet's freshFailure flag is
-// LEFT INTACT — not silently consumed by the "is this the first failure?"
-// check.
+// non-interactive startup phase, the StartableToolSet's once-per-streak
+// gate is LEFT INTACT — not silently consumed by the "is this the first
+// failure?" check.
 //
 // Why this matters: the deferred-OAuth case is an *expected*, transient
 // failure. The first user-visible failure that should produce a warning is
 // whatever happens on the eventual interactive retry (e.g. "server
 // responded 400: App is not enabled for Slack MCP server access"). If the
-// flag is consumed during startup, the StartableToolSet's once-per-streak
+// gate is consumed during startup, the StartableToolSet's once-per-streak
 // guard fires for the deferred case and silently swallows the real cause,
 // leaving the user staring at "0 tools" with nothing in the UI explaining
 // why.
-func TestEmitStartupInfo_DeferredAuthPreservesFreshFailureFlag(t *testing.T) {
+func TestEmitStartupInfo_DeferredAuthDoesNotConsumeFailureGate(t *testing.T) {
 	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
 	deferralErr := &mcptools.AuthorizationRequiredError{URL: "https://example.test/mcp"}
@@ -1086,7 +1086,7 @@ func TestEmitStartupInfo_DeferredAuthPreservesFreshFailureFlag(t *testing.T) {
 	require.NotNil(t, wrapped, "agent.ToolSets() should return a *StartableToolSet wrapper")
 
 	require.True(t, wrapped.ShouldReportFailure(),
-		"deferred-OAuth must NOT consume freshFailure during EmitStartupInfo: "+
+		"deferred-OAuth must NOT consume the failure-reported gate during EmitStartupInfo: "+
 			"otherwise the next real failure (Slack 4xx after OAuth, etc.) is silently dropped "+
 			"and the user sees zero tools with no explanation")
 }
