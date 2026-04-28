@@ -55,7 +55,11 @@ func versionFromImport(importPath string) (int, bool) {
 	if m == nil {
 		return 0, false
 	}
-	n, _ := strconv.Atoi(m[1])
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		// Should never happen since regex only captures digits.
+		return 0, false
+	}
 	return n, true
 }
 

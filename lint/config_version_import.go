@@ -67,7 +67,7 @@ func importViolation(path string, dirVersion int, isLatest bool) string {
 		if _, ok := versionFromImport(path); ok {
 			return ""
 		}
-		return "pkg/config/latest should only import config version or types packages, not " + path
+		return "pkg/config/latest must only import config version or types packages, not " + path
 	}
 
 	// Versioned package (vN).

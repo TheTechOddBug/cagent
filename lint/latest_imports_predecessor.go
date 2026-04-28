@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
 )
@@ -31,6 +32,11 @@ func (c *LatestImportsPredecessor) Check(fset *token.FileSet, file *ast.File) []
 	}
 	filename := fset.Position(file.Package).Filename
 	if configDir(filename) != "latest" {
+		return nil
+	}
+	// Black-box test files (package latest_test) are external to the package
+	// and may import what they please.
+	if strings.HasSuffix(file.Name.Name, "_test") {
 		return nil
 	}
 	highest, ok := highestSiblingVersion(filename)
