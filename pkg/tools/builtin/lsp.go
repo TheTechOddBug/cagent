@@ -334,7 +334,12 @@ type lspInlayHint struct {
 }
 
 // NewLSPTool creates a new LSP tool that connects to an LSP server.
-func NewLSPTool(command string, args, env []string, workingDir string) *LSPTool {
+//
+// The optional policy lets callers tune restart/backoff behaviour. When
+// the zero value is passed the supervisor uses its built-in defaults
+// (RestartOnFailure, 5 attempts, 1s..32s backoff). Internal callbacks
+// (OnDisconnect, Logger) are always set by the constructor.
+func NewLSPTool(command string, args, env []string, workingDir string, policy ...lifecycle.Policy) *LSPTool {
 	h := &lspHandler{
 		command:     command,
 		args:        args,
@@ -343,21 +348,19 @@ func NewLSPTool(command string, args, env []string, workingDir string) *LSPTool 
 		diagnostics: make(map[string][]lspDiagnostic),
 		openFiles:   make(map[string]int),
 	}
-	h.supervisor = lifecycle.New(
-		"lsp/"+command,
-		&lspConnector{h: h},
-		lifecycle.Policy{
-			Restart: lifecycle.RestartOnFailure,
-			Logger:  slog.With("component", "lsp.supervisor", "command", command),
-			OnDisconnect: func(error) {
-				// Reset diagnostics on disconnect: the next server may not
-				// re-emit them and stale data is worse than nothing.
-				h.diagnosticsMu.Lock()
-				h.diagnostics = make(map[string][]lspDiagnostic)
-				h.diagnosticsMu.Unlock()
-			},
-		},
-	)
+	base := lifecycle.Policy{}
+	if len(policy) > 0 {
+		base = policy[0]
+	}
+	base.Logger = slog.With("component", "lsp.supervisor", "command", command)
+	base.OnDisconnect = func(error) {
+		// Reset diagnostics on disconnect: the next server may not
+		// re-emit them and stale data is worse than nothing.
+		h.diagnosticsMu.Lock()
+		h.diagnostics = make(map[string][]lspDiagnostic)
+		h.diagnosticsMu.Unlock()
+	}
+	h.supervisor = lifecycle.New("lsp/"+command, &lspConnector{h: h}, base)
 	return &LSPTool{handler: h}
 }
 

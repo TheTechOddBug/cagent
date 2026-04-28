@@ -96,7 +96,13 @@ var (
 )
 
 // NewToolsetCommand creates a new MCP toolset from a command.
-func NewToolsetCommand(name, command string, args, env []string, cwd string) *Toolset {
+//
+// The optional policy lets callers tune restart/backoff behaviour. When
+// the zero value is passed the supervisor uses its built-in defaults
+// (RestartOnFailure, 5 attempts, 1s..32s backoff). Internal callbacks
+// (OnDisconnect, OnRestart, Logger) are always set by the constructor
+// and any values passed in for those fields are ignored.
+func NewToolsetCommand(name, command string, args, env []string, cwd string, policy ...lifecycle.Policy) *Toolset {
 	slog.Debug("Creating Stdio MCP toolset", "command", command, "args", args)
 
 	desc := buildStdioDescription(command, args)
@@ -106,12 +112,15 @@ func NewToolsetCommand(name, command string, args, env []string, cwd string) *To
 		logID:       command,
 		description: desc,
 	}
-	ts.supervisor = newSupervisor(ts)
+	ts.supervisor = newSupervisor(ts, firstOrZero(policy))
 	return ts
 }
 
 // NewRemoteToolset creates a new MCP toolset from a remote MCP Server.
-func NewRemoteToolset(name, urlString, transport string, headers map[string]string, oauthConfig *latest.RemoteOAuthConfig) *Toolset {
+//
+// The optional policy lets callers tune restart/backoff behaviour;
+// see NewToolsetCommand for the semantics.
+func NewRemoteToolset(name, urlString, transport string, headers map[string]string, oauthConfig *latest.RemoteOAuthConfig, policy ...lifecycle.Policy) *Toolset {
 	slog.Debug("Creating Remote MCP toolset", "url", urlString, "transport", transport, "headers", headers)
 
 	desc := buildRemoteDescription(urlString, transport)
@@ -121,36 +130,47 @@ func NewRemoteToolset(name, urlString, transport string, headers map[string]stri
 		logID:       urlString,
 		description: desc,
 	}
-	ts.supervisor = newSupervisor(ts)
+	ts.supervisor = newSupervisor(ts, firstOrZero(policy))
 	return ts
 }
 
+// firstOrZero returns the first element of s or the zero value of T if
+// s is empty. Used to give variadic optional arguments a clean default.
+func firstOrZero[T any](s []T) T {
+	if len(s) > 0 {
+		return s[0]
+	}
+	var zero T
+	return zero
+}
+
 // newSupervisor constructs a Supervisor wired to the toolset's mcpClient
-// with policy that matches the historical mcp.Toolset behaviour:
-// RestartOnFailure, max 5 attempts, 1s..32s exponential backoff.
+// using the provided policy as a base. Internal callbacks (OnDisconnect,
+// OnRestart, Logger) are always overridden so the supervisor can
+// invalidate caches and refresh tools/prompts on reconnect; any values
+// passed in for those fields are ignored.
 //
-// Disconnect callback invalidates the tool/prompt cache; restart callback
-// re-fetches them and notifies the runtime via toolsChangedHandler.
-func newSupervisor(ts *Toolset) *lifecycle.Supervisor {
+// When the policy is the zero value, the supervisor uses its built-in
+// defaults that match the historical mcp.Toolset behaviour:
+// RestartOnFailure, max 5 attempts, 1s..32s exponential backoff.
+func newSupervisor(ts *Toolset, base lifecycle.Policy) *lifecycle.Supervisor {
 	connector := &clientConnector{ts: ts}
-	policy := lifecycle.Policy{
-		Restart: lifecycle.RestartOnFailure,
-		Logger:  slog.With("component", "mcp.supervisor", "server", ts.logID),
-		OnDisconnect: func(error) {
-			ts.mu.Lock()
-			ts.invalidateCache()
-			ts.mu.Unlock()
-		},
-		OnRestart: func() {
-			// Refresh tool and prompt caches eagerly so subsequent
-			// Tools()/ListPrompts() calls return the up-to-date data
-			// from the new server. The new server may expose a
-			// different set of tools/prompts and notifications won't
-			// fire for tools that disappeared.
-			ctx := context.Background()
-			ts.refreshToolCache(ctx)
-			ts.refreshPromptCache(ctx)
-		},
+	policy := base
+	policy.Logger = slog.With("component", "mcp.supervisor", "server", ts.logID)
+	policy.OnDisconnect = func(error) {
+		ts.mu.Lock()
+		ts.invalidateCache()
+		ts.mu.Unlock()
+	}
+	policy.OnRestart = func() {
+		// Refresh tool and prompt caches eagerly so subsequent
+		// Tools()/ListPrompts() calls return the up-to-date data
+		// from the new server. The new server may expose a
+		// different set of tools/prompts and notifications won't
+		// fire for tools that disappeared.
+		ctx := context.Background()
+		ts.refreshToolCache(ctx)
+		ts.refreshPromptCache(ctx)
 	}
 	return lifecycle.New(ts.logID, connector, policy)
 }
