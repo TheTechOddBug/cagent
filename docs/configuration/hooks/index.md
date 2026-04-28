@@ -257,19 +257,26 @@ Hook exit codes have special meaning:
 | `2`       | Blocking error — stop the operation    |
 | Other     | Error — logged but execution continues |
 
-## Timeout
+## Per-hook options
 
-Hooks have a default timeout of 60 seconds. You can customize this per hook:
+Hooks have a default timeout of 60 seconds. You can also give hooks a name, add environment variables, choose a working directory, and control how non-security hook failures behave:
 
 ```yaml
 hooks:
-  pre_tool_use:
-    - matcher: "*"
+  post_tool_use:
+    - matcher: "shell"
       hooks:
-        - type: command
-          command: "./slow-validation.sh"
+        - name: "summarize shell output"
+          type: command
+          command: "./summarize.sh"
           timeout: 120 # 2 minutes
+          working_dir: ./hooks
+          env:
+            PROFILE: dev
+          on_error: warn # warn | ignore | block
 ```
+
+`pre_tool_use` is fail-closed for safety: a failed pre-tool hook blocks the tool call regardless of `on_error`.
 
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Performance

@@ -623,6 +623,10 @@
       "type": "object",
       "description": "Definition of a single hook command",
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional friendly hook name used in logs and runtime hook events."
+        },
         "type": {
           "type": "string",
           "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime. The docker-agent runtime ships these builtins: 'add_date' (turn_start: today's date), 'add_environment_info' (session_start: cwd, git, OS, arch), 'add_prompt_files' (turn_start: contents of named files looked up in the workdir hierarchy and the home directory), 'add_git_status' (turn_start: `git status --short --branch`), 'add_git_diff' (turn_start: `git diff --stat`, or full diff with args=['full']), 'add_directory_listing' (session_start: top-level entries of cwd), 'add_user_info' (session_start: current OS user and hostname), 'add_recent_commits' (session_start: `git log --oneline -n N`, default N=10, override via args=['<N>']), 'max_iterations' (before_llm_call: hard stop after N model calls; args=['<N>'] required).",
@@ -647,6 +651,27 @@
           "description": "Execution timeout in seconds (default: 60)",
           "minimum": 1,
           "default": 60
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables to add or override for this hook only.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "Working directory for this hook. Relative paths are resolved from the agent working directory."
+        },
+        "on_error": {
+          "type": "string",
+          "description": "How non-fail-closed hook failures are handled. 'warn' logs and continues (default), 'ignore' continues silently, and 'block' denies the event.",
+          "enum": [
+            "warn",
+            "ignore",
+            "block"
+          ],
+          "default": "warn"
         }
       },
       "required": [

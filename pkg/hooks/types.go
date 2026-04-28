@@ -67,19 +67,6 @@ const (
 	EventOnToolApprovalDecision EventType = "on_tool_approval_decision"
 )
 
-// consumesContext reports whether the runtime emit site for e routes
-// [Result.AdditionalContext] somewhere meaningful (a system message, a
-// transient turn_start prompt, ...). For observational events it is
-// silently dropped, so plain stdout from a hook is also discarded for
-// those.
-func (e EventType) consumesContext() bool {
-	switch e {
-	case EventSessionStart, EventTurnStart, EventPostToolUse, EventStop:
-		return true
-	}
-	return false
-}
-
 // Input is the JSON-serializable payload passed to hooks via stdin.
 type Input struct {
 	SessionID     string    `json:"session_id"`
@@ -92,7 +79,8 @@ type Input struct {
 	ToolInput map[string]any `json:"tool_input,omitempty"`
 
 	// PostToolUse specific.
-	ToolResponse any `json:"tool_response,omitempty"`
+	ToolResponse any  `json:"tool_response,omitempty"`
+	ToolError    bool `json:"tool_error,omitempty"`
 
 	// SessionStart specific: "startup", "resume", "clear", "compact".
 	Source string `json:"source,omitempty"`
@@ -135,7 +123,15 @@ type Input struct {
 // ToJSON serializes the input.
 func (i *Input) ToJSON() ([]byte, error) { return json.Marshal(i) }
 
-// Decision is a permission decision returned by a hook.
+// ErrorPolicy controls what happens when a non-fail-closed hook fails.
+type ErrorPolicy string
+
+const (
+	ErrorPolicyWarn   ErrorPolicy = "warn"
+	ErrorPolicyIgnore ErrorPolicy = "ignore"
+	ErrorPolicyBlock  ErrorPolicy = "block"
+)
+
 type Decision string
 
 const (

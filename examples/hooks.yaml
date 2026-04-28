@@ -110,11 +110,19 @@ agents:
       post_tool_use:
         - matcher: "shell"
           hooks:
-            - type: command
+            - name: summarize shell output
+              type: command
+              timeout: 10
+              working_dir: .
+              env:
+                HOOK_PROFILE: dev
+              on_error: warn
               command: |
                 INPUT=$(cat)
                 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
-                echo "✅ Post-hook: $TOOL completed"
+                ERROR=$(echo "$INPUT" | jq -r '.tool_error // false')
+                OUTPUT_LEN=$(echo "$INPUT" | jq -r '.tool_response // ""' | wc -c | tr -d ' ')
+                echo "✅ Post-hook: $TOOL completed (error=$ERROR, output=$OUTPUT_LEN chars, profile=$HOOK_PROFILE)"
 
       # ====================================================================
       # SESSION-START - runs ONCE when the session begins.
