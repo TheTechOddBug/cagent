@@ -45,13 +45,11 @@ type Agent struct {
 	hooks                   *latest.HooksConfig
 	cache                   *cache.Cache
 
-	// warningsMu guards pendingWarnings and pendingNotices. AddToolWarning,
-	// AddToolNotice, DrainWarnings and DrainNotices may be called
-	// concurrently from the runtime loop, the MCP server, the TUI and
-	// session manager.
+	// warningsMu guards pendingWarnings. AddToolWarning and DrainWarnings
+	// may be called concurrently from the runtime loop, the MCP server,
+	// the TUI and session manager.
 	warningsMu      sync.Mutex
 	pendingWarnings []string
-	pendingNotices  []string
 }
 
 // New creates a new agent
@@ -325,54 +323,42 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 	return toolSets
 }
 
+// ensureToolSetsAreStarted starts every toolset, surfacing the first
+// failure of each streak as a user-visible warning and silently retrying
+// on every subsequent turn. A successful Start() automatically resets the
+// streak inside StartableToolSet, so a future failure is again reported
+// as fresh — no recovery callback is needed here, and we deliberately do
+// not surface a "now available" notice (the OAuth dialog completing or
+// the model just using the tool already makes a successful start
+// obvious; a follow-up notification just reads as a spurious warning).
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
 	for _, toolSet := range a.toolsets {
-		if err := toolSet.Start(ctx); err != nil {
-			// Only warn on the first failure in a streak; suppress duplicate
-			// warnings for subsequent retries that also fail.
-			if toolSet.ShouldReportFailure() {
-				desc := tools.DescribeToolSet(toolSet)
-				slog.Warn("Toolset start failed; will retry on next turn", "agent", a.Name(), "toolset", desc, "error", err)
-				a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, err))
-			} else {
-				desc := tools.DescribeToolSet(toolSet)
-				slog.Debug("Toolset still unavailable; retrying next turn", "agent", a.Name(), "toolset", desc, "error", err)
-			}
+		err := toolSet.Start(ctx)
+		if err == nil {
 			continue
 		}
-		// Emit a one-time notice when a previously-failed toolset recovers.
-		if toolSet.ConsumeRecovery() {
-			desc := tools.DescribeToolSet(toolSet)
-			slog.Info("Toolset now available", "agent", a.Name(), "toolset", desc)
-			a.AddToolNotice(desc + " is now available")
+		desc := tools.DescribeToolSet(toolSet)
+		if toolSet.ShouldReportFailure() {
+			slog.Warn("Toolset start failed; will retry on next turn", "agent", a.Name(), "toolset", desc, "error", err)
+			a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, err))
+		} else {
+			slog.Debug("Toolset still unavailable; retrying next turn", "agent", a.Name(), "toolset", desc, "error", err)
 		}
 	}
 }
 
 // AddToolWarning records a warning generated while loading or starting toolsets.
 // Warnings represent real failures the user should know about (a remote MCP
-// server returning 4xx, an MCP binary missing, ...). For positive notices
-// (a previously-failed toolset becoming available again) use AddToolNotice
-// instead so the message isn't framed as a failure.
+// server returning 4xx, an MCP binary missing, ...). Recoveries from a
+// previous failure are intentionally not surfaced: the OAuth dialog and
+// subsequent tool use already make a successful start obvious, so emitting
+// a "now available" notification only adds noise.
 func (a *Agent) AddToolWarning(msg string) {
 	if msg == "" {
 		return
 	}
 	a.warningsMu.Lock()
 	a.pendingWarnings = append(a.pendingWarnings, msg)
-	a.warningsMu.Unlock()
-}
-
-// AddToolNotice records a positive, informational notice about a toolset
-// (typically: a previously-failed toolset is now available). Notices are
-// surfaced to the user separately from warnings so the framing doesn't
-// say "failed to initialize" for a recovery message.
-func (a *Agent) AddToolNotice(msg string) {
-	if msg == "" {
-		return
-	}
-	a.warningsMu.Lock()
-	a.pendingNotices = append(a.pendingNotices, msg)
 	a.warningsMu.Unlock()
 }
 
@@ -383,15 +369,6 @@ func (a *Agent) DrainWarnings() []string {
 	warnings := a.pendingWarnings
 	a.pendingWarnings = nil
 	return warnings
-}
-
-// DrainNotices returns pending notices and clears them.
-func (a *Agent) DrainNotices() []string {
-	a.warningsMu.Lock()
-	defer a.warningsMu.Unlock()
-	notices := a.pendingNotices
-	a.pendingNotices = nil
-	return notices
 }
 
 func (a *Agent) StopToolSets(ctx context.Context) error {

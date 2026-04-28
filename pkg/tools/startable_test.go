@@ -98,40 +98,23 @@ func TestStartableToolSet_ShouldReportFailure_OncePerStreak(t *testing.T) {
 	s := tools.NewStartable(f)
 
 	// Turn 1: first failure — should report.
-	err := s.Start(t.Context())
-	assert.Check(t, err != nil, "expected error on turn 1")
+	assert.Check(t, s.Start(t.Context()) != nil, "expected error on turn 1")
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), true), "turn 1: first failure should be reported")
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), false), "turn 1: second call must return false")
 
 	// Turn 2: second failure in same streak — must NOT report again.
-	err = s.Start(t.Context())
-	assert.Check(t, err != nil, "expected error on turn 2")
+	assert.Check(t, s.Start(t.Context()) != nil, "expected error on turn 2")
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), false), "turn 2: duplicate failure must not report")
 
-	// Turn 3: success — ConsumeRecovery fires exactly once.
-	err = s.Start(t.Context())
-	assert.Check(t, err == nil, "expected success on turn 3")
-	assert.Check(t, is.Equal(s.ConsumeRecovery(), true), "turn 3: recovery must be signalled")
-	assert.Check(t, is.Equal(s.ConsumeRecovery(), false), "turn 3: recovery must fire only once")
+	// Turn 3: success — silent recovery, no caller-visible event.
+	assert.Check(t, s.Start(t.Context()) == nil, "expected success on turn 3")
+	assert.Check(t, is.Equal(s.ShouldReportFailure(), false), "turn 3: success must not report a failure")
 }
 
-// TestStartableToolSet_NoRecoveryWithoutPriorFailure verifies that
-// ConsumeRecovery returns false when Start succeeds on the very first try.
-func TestStartableToolSet_NoRecoveryWithoutPriorFailure(t *testing.T) {
-	t.Parallel()
-
-	f := &flappyToolSet{errs: []error{nil}}
-	s := tools.NewStartable(f)
-
-	err := s.Start(t.Context())
-	assert.Check(t, err == nil)
-	assert.Check(t, is.Equal(s.ShouldReportFailure(), false), "no failure: ShouldReportFailure must be false")
-	assert.Check(t, is.Equal(s.ConsumeRecovery(), false), "no prior failure: ConsumeRecovery must be false")
-}
-
-// TestStartableToolSet_RecoveryThenFailureWarnsAgain verifies that after a full
-// fail→report→recover cycle, a subsequent new failure generates a fresh warning.
-func TestStartableToolSet_RecoveryThenFailureWarnsAgain(t *testing.T) {
+// TestStartableToolSet_RecoveryResetsStreak verifies that a successful
+// Start() implicitly resets the failure streak: after a fail → succeed
+// cycle, a fresh failure on the *next* streak is reported again.
+func TestStartableToolSet_RecoveryResetsStreak(t *testing.T) {
 	t.Parallel()
 
 	errBoom := errors.New("boom")
@@ -139,20 +122,18 @@ func TestStartableToolSet_RecoveryThenFailureWarnsAgain(t *testing.T) {
 	s := tools.NewStartable(f)
 
 	// Cycle 1: fail then recover.
-	err := s.Start(t.Context())
-	assert.Check(t, err != nil)
+	assert.Check(t, s.Start(t.Context()) != nil)
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), true))
 
-	err = s.Start(t.Context())
-	assert.Check(t, err == nil)
-	assert.Check(t, is.Equal(s.ConsumeRecovery(), true))
+	assert.Check(t, s.Start(t.Context()) == nil)
 
-	// Now stop so we can start again (resets started flag).
+	// Stop so we can attempt to start again — a successful Start() marks
+	// the toolset as started, so subsequent Start() calls short-circuit.
 	assert.Check(t, s.Stop(t.Context()) == nil)
 
-	// Cycle 2: new failure — must warn again.
-	err = s.Start(t.Context())
-	assert.Check(t, err != nil)
+	// Cycle 2: new failure must warn again, proving the recovery reset
+	// the streak even though no caller signalled it.
+	assert.Check(t, s.Start(t.Context()) != nil)
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), true), "fresh failure after recovery must warn")
 }
 
@@ -166,15 +147,13 @@ func TestStartableToolSet_StopResetsFailureState(t *testing.T) {
 	s := tools.NewStartable(f)
 
 	// First failure: consume the warning.
-	err := s.Start(t.Context())
-	assert.Check(t, err != nil)
+	assert.Check(t, s.Start(t.Context()) != nil)
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), true))
 
 	// Stop resets state.
 	assert.Check(t, s.Stop(t.Context()) == nil)
 
 	// Second failure after Stop: must warn again.
-	err = s.Start(t.Context())
-	assert.Check(t, err != nil)
+	assert.Check(t, s.Start(t.Context()) != nil)
 	assert.Check(t, is.Equal(s.ShouldReportFailure(), true), "failure after Stop must produce fresh warning")
 }

@@ -358,9 +358,12 @@ func TestModelOverride_ConcurrentAccess(t *testing.T) {
 	// If we got here without a race condition panic, the test passes
 }
 
-// TestAgentReProbeEmitsWarningThenNotice verifies the full retry lifecycle:
-// turn 1 fails → warning emitted; turn 2 succeeds → notice emitted; tools available.
-func TestAgentReProbeEmitsWarningThenNotice(t *testing.T) {
+// TestAgentReProbeRecoveryDoesNotEmitNotice verifies the full retry
+// lifecycle: turn 1 fails → warning emitted; turn 2 succeeds → tools
+// available, NO follow-up notification. Recoveries are intentionally
+// silent: "X is now available" right after the user completes an OAuth
+// dance reads as a spurious warning, not a useful signal.
+func TestAgentReProbeRecoveryDoesNotEmitNotice(t *testing.T) {
 	t.Parallel()
 
 	errBoom := errors.New("server unavailable")
@@ -370,23 +373,19 @@ func TestAgentReProbeEmitsWarningThenNotice(t *testing.T) {
 	}
 	a := New("root", "test", WithToolSets(stub))
 
-	// Turn 1: start fails → 1 warning, 0 tools, no notice yet.
+	// Turn 1: start fails → 1 warning, 0 tools.
 	got, err := a.Tools(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, got, "turn 1: no tools while toolset is unavailable")
 	warnings := a.DrainWarnings()
 	require.Len(t, warnings, 1, "turn 1: exactly one warning expected")
 	assert.Contains(t, warnings[0], "start failed")
-	assert.Empty(t, a.DrainNotices(), "turn 1: no recovery notice while still failing")
 
-	// Turn 2: start succeeds → 1 recovery NOTICE (not warning), tools available.
+	// Turn 2: start succeeds → tools available, NO recovery warning.
 	got, err = a.Tools(t.Context())
 	require.NoError(t, err)
 	assert.Len(t, got, 1, "turn 2: tool should be available after recovery")
-	assert.Empty(t, a.DrainWarnings(), "turn 2: recovery is a notice, not a failure warning")
-	notices := a.DrainNotices()
-	require.Len(t, notices, 1, "turn 2: exactly one recovery notice expected")
-	assert.Contains(t, notices[0], "now available", "turn 2: recovery notice must mention availability")
+	assert.Empty(t, a.DrainWarnings(), "turn 2: recovery must not emit any user-visible warning")
 }
 
 // TestAgentNoDuplicateStartWarnings verifies that repeated failures generate
