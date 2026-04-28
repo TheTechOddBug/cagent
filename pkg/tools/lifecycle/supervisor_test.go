@@ -57,7 +57,7 @@ type scriptedConnector struct {
 	mu        sync.Mutex
 	scripts   []scriptStep
 	idx       int
-	calls     int32
+	calls     atomic.Int32
 	delivered chan *fakeSession
 }
 
@@ -74,7 +74,7 @@ func newScriptedConnector(steps ...scriptStep) *scriptedConnector {
 }
 
 func (c *scriptedConnector) Connect(context.Context) (lifecycle.Session, error) {
-	atomic.AddInt32(&c.calls, 1)
+	c.calls.Add(1)
 	c.mu.Lock()
 	if c.idx >= len(c.scripts) {
 		c.mu.Unlock()
@@ -91,7 +91,7 @@ func (c *scriptedConnector) Connect(context.Context) (lifecycle.Session, error) 
 	return step.session, nil
 }
 
-func (c *scriptedConnector) Calls() int { return int(atomic.LoadInt32(&c.calls)) }
+func (c *scriptedConnector) Calls() int { return int(c.calls.Load()) }
 
 // fastBackoff is a minimal backoff for tests so we don't sit in time.Sleep.
 var fastBackoff = lifecycle.Backoff{
