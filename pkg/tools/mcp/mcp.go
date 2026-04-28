@@ -201,6 +201,17 @@ func (ts *Toolset) Describe() string {
 	return ts.description
 }
 
+// Kind returns a short, user-friendly classification of this toolset:
+// "Remote MCP" for HTTP/SSE/streamable-HTTP transports and "MCP" for
+// stdio-spawned servers. Used by status surfaces (e.g. the /tools
+// dialog) to label the toolset without leaking Go type names.
+func (ts *Toolset) Kind() string {
+	if _, ok := ts.mcpClient.(*remoteMCPClient); ok {
+		return "Remote MCP"
+	}
+	return "MCP"
+}
+
 // IsStarted reports whether the supervisor currently considers the toolset
 // connected and serving requests. Used by tests and TUI status surfaces.
 func (ts *Toolset) IsStarted() bool {

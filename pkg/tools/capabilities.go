@@ -16,7 +16,7 @@ type Startable interface {
 // Statable is implemented by toolsets that expose a lifecycle state
 // snapshot (Stopped/Starting/Ready/Degraded/Restarting/Failed) plus the
 // most recent error and restart count. The TUI uses this to render
-// /toolsets without polling each transport individually.
+// the /tools dialog without polling each transport individually.
 //
 // Toolsets that do not implement Statable are reported as "unknown" by
 // status surfaces.

@@ -395,7 +395,7 @@ func (t *LSPTool) Stop(ctx context.Context) error {
 }
 
 // State returns a snapshot of the underlying supervisor's lifecycle state,
-// suitable for the /toolsets dialog and lifecycle log messages.
+// suitable for the /tools dialog and lifecycle log messages.
 func (t *LSPTool) State() lifecycle.StateInfo {
 	return t.handler.supervisor.State()
 }
@@ -410,6 +410,11 @@ func (t *LSPTool) Restart(ctx context.Context) error {
 	}
 	return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
 }
+
+// Kind returns the user-facing classification of this toolset. Used by
+// status surfaces such as the /tools dialog so they can label the
+// toolset without leaking Go type names.
+func (t *LSPTool) Kind() string { return "LSP" }
 
 func (t *LSPTool) Instructions() string {
 	return `# LSP Code Intelligence Tools

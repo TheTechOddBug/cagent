@@ -22,12 +22,10 @@ type (
 	// ShowPermissionsDialogMsg shows the permissions dialog.
 	ShowPermissionsDialogMsg struct{}
 
-	// ShowToolsDialogMsg shows the tools dialog.
+	// ShowToolsDialogMsg shows the tools dialog. The dialog renders both
+	// the live toolset lifecycle (state, restart count, last error) and
+	// the tool catalogue grouped by category.
 	ShowToolsDialogMsg struct{}
-
-	// ShowToolsetsDialogMsg shows the toolset lifecycle dialog (the
-	// supervisor-aware view: state, restarts, last error per toolset).
-	ShowToolsetsDialogMsg struct{}
 
 	// RestartToolsetMsg asks the runtime to restart the named toolset by
 	// triggering its supervisor's RestartAndWait.

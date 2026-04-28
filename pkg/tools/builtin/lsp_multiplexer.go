@@ -70,6 +70,9 @@ func (m *LSPMultiplexer) Stop(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// Kind returns the user-facing classification of this toolset.
+func (m *LSPMultiplexer) Kind() string { return "LSP" }
+
 func (m *LSPMultiplexer) Instructions() string {
 	// Combine instructions from all backends, deduplicating identical ones.
 	// Typically they share the same base LSP instructions, but individual

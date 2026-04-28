@@ -120,12 +120,12 @@ If the agent hangs or times out, check that you can reach the provider's API end
 
 MCP and LSP toolsets are managed by a supervisor that auto-restarts them when they crash or drop their session. The TUI exposes that supervisor through two slash commands:
 
-- `/toolsets` — lists every toolset with its current state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error. Start here whenever a tool seems missing or stuck.
+- `/tools` — the unified tools dialog. Its top section lists every toolset with its current state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error; the bottom section lists every tool the agent can call. Start here whenever a tool seems missing or stuck.
 - `/toolset-restart <name>` — force a supervisor-driven reconnect of the named toolset. Useful after completing OAuth, when a remote MCP server has been redeployed, or when a language server like `gopls` is unresponsive.
 
 MCP tools using stdio transport must complete the initialization handshake before becoming available. If tools fail silently:
 
-1. Run `/toolsets` to see whether the toolset is `Failed` or stuck in `Restarting`, and what the last error was.
+1. Run `/tools` to see whether the toolset is `Failed` or stuck in `Restarting`, and what the last error was.
 2. Enable `--debug` and look for MCP protocol messages in the log
 3. Check that the MCP server process starts and responds to `initialize`
 4. Verify environment variables required by the tool are set (check `env` and `env_file` in the toolset config)

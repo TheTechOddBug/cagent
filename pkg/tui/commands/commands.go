@@ -244,22 +244,11 @@ func builtInSessionCommands() []Item {
 			ID:           "session.tools",
 			Label:        "Tools",
 			SlashCommand: "/tools",
-			Description:  "Show all tools available to the current agent",
+			Description:  "Show every toolset (with lifecycle state) and the tools they expose",
 			Category:     "Session",
 			Immediate:    true,
 			Execute: func(string) tea.Cmd {
 				return core.CmdHandler(messages.ShowToolsDialogMsg{})
-			},
-		},
-		{
-			ID:           "session.toolsets",
-			Label:        "Toolsets",
-			SlashCommand: "/toolsets",
-			Description:  "Show toolset lifecycle status (state, restarts, last error)",
-			Category:     "Session",
-			Immediate:    true,
-			Execute: func(string) tea.Cmd {
-				return core.CmdHandler(messages.ShowToolsetsDialogMsg{})
 			},
 		},
 		{

@@ -43,8 +43,8 @@ type Runtime interface {
 	// CurrentAgentTools returns the tools for the active agent
 	CurrentAgentTools(ctx context.Context) ([]tools.Tool, error)
 	// CurrentAgentToolsetStatuses returns lifecycle status for each toolset of
-	// the active agent (name, description, state, last error, restart count).
-	// Used by the /toolsets dialog. Best-effort: toolsets that don't expose
+	// the active agent (name, kind, state, last error, restart count).
+	// Used by the /tools dialog. Best-effort: toolsets that don't expose
 	// state appear with State == StateStopped/Ready as appropriate.
 	CurrentAgentToolsetStatuses() []tools.ToolsetStatus
 
@@ -545,7 +545,7 @@ func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 //
 // Returns an error when:
 //   - no toolset matches name (matching uses the same logic as the
-//     /toolsets dialog: the toolset's Name() if any, otherwise its
+//     /tools dialog: the toolset's Name() if any, otherwise its
 //     description),
 //   - the toolset is not supervisor-backed (no Restartable capability),
 //   - the supervisor itself returned an error (timeout, classified
@@ -573,6 +573,9 @@ func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
 func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
 	status := tools.ToolsetStatus{
 		Description: tools.DescribeToolSet(ts),
+	}
+	if kinder, ok := tools.As[tools.Kinder](ts); ok {
+		status.Kind = kinder.Kind()
 	}
 	if statable, ok := tools.As[tools.Statable](ts); ok {
 		info := statable.State()

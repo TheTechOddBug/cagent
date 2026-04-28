@@ -14,40 +14,80 @@ import (
 
 var utf8Valid = utf8.Valid
 
-func TestFormatToolsetStatus_Empty(t *testing.T) {
+func TestNewToolsDialog_EmptyShowsBothPlaceholders(t *testing.T) {
 	t.Parallel()
-	d := NewToolsetsDialog(nil).(*toolsetsDialog)
+	d := NewToolsDialog(nil, nil).(*toolsDialog)
 	out := strings.Join(d.renderLines(80, 24), "\n")
-	assert.Contains(t, out, "Toolsets (0)")
+	assert.Contains(t, out, "Tools (0 toolsets · 0 tools)")
 	assert.Contains(t, out, "No toolsets configured")
+	assert.Contains(t, out, "No tools available")
 }
 
-func TestFormatToolsetStatus_RendersFields(t *testing.T) {
+func TestNewToolsDialog_RendersToolsetSection(t *testing.T) {
 	t.Parallel()
 
 	statuses := []tools.ToolsetStatus{
 		{
-			Name:        "gopls",
-			Description: "lsp(gopls)",
-			State:       lifecycle.StateReady,
+			Name:  "gopls",
+			Kind:  "LSP",
+			State: lifecycle.StateReady,
 		},
 		{
 			Name:         "github-mcp",
-			Description:  "mcp(remote host=api.github.com)",
+			Kind:         "Remote MCP",
 			State:        lifecycle.StateRestarting,
 			LastError:    errors.New("connection reset"),
 			RestartCount: 2,
 		},
 	}
-	d := NewToolsetsDialog(statuses).(*toolsetsDialog)
+	d := NewToolsDialog(statuses, nil).(*toolsDialog)
 	out := strings.Join(d.renderLines(80, 24), "\n")
-	assert.Contains(t, out, "Toolsets (2)")
+	assert.Contains(t, out, "Tools (2 toolsets · 0 tools)")
 	assert.Contains(t, out, "gopls")
 	assert.Contains(t, out, "ready")
+	assert.Contains(t, out, "LSP")
 	assert.Contains(t, out, "github-mcp")
 	assert.Contains(t, out, "restarting")
+	assert.Contains(t, out, "Remote MCP")
 	assert.Contains(t, out, "connection reset")
 	assert.Contains(t, out, "restarts: 2")
+}
+
+// TestNewToolsDialog_NoKindRendersBuiltInLabel guards against blank Kind
+// rows leaving a hole where the label should be: built-in toolsets
+// (memory, shell, filesystem, …) don't implement tools.Kinder, but they
+// still need a visible label in the column.
+func TestNewToolsDialog_NoKindRendersBuiltInLabel(t *testing.T) {
+	t.Parallel()
+	statuses := []tools.ToolsetStatus{{
+		Name:  "memory",
+		State: lifecycle.StateReady,
+	}}
+	d := NewToolsDialog(statuses, nil).(*toolsDialog)
+	out := strings.Join(d.renderLines(80, 24), "\n")
+	assert.Contains(t, out, "Built-in")
+}
+
+// TestNewToolsDialog_RendersToolsByCategory verifies that the lower
+// "Tools" section groups items by their Category and shows the
+// per-tool description suffix. The exact rendering is theme-dependent
+// so we only assert on the substrings the user actually reads.
+func TestNewToolsDialog_RendersToolsByCategory(t *testing.T) {
+	t.Parallel()
+	toolList := []tools.Tool{
+		{Name: "fs_read", Category: "filesystem", Description: "Read a file"},
+		{Name: "fs_write", Category: "filesystem", Description: "Write a file"},
+		{Name: "shell", Category: "shell", Description: "Execute commands"},
+	}
+	d := NewToolsDialog(nil, toolList).(*toolsDialog)
+	out := strings.Join(d.renderLines(80, 24), "\n")
+	assert.Contains(t, out, "Tools (0 toolsets · 3 tools)")
+	assert.Contains(t, out, "filesystem")
+	assert.Contains(t, out, "shell")
+	assert.Contains(t, out, "fs_read")
+	assert.Contains(t, out, "Read a file")
+	// Category headings should come before their tools in the buffer.
+	assert.Less(t, strings.Index(out, "filesystem"), strings.Index(out, "fs_read"))
 }
 
 // TestFormatToolsetStatus_TruncatesLongErrors guards against blowing out the
@@ -60,7 +100,7 @@ func TestFormatToolsetStatus_TruncatesLongErrors(t *testing.T) {
 		State:     lifecycle.StateFailed,
 		LastError: errors.New(long),
 	}}
-	d := NewToolsetsDialog(statuses).(*toolsetsDialog)
+	d := NewToolsDialog(statuses, nil).(*toolsDialog)
 	out := strings.Join(d.renderLines(80, 24), "\n")
 	// The "…" marker must appear because the error is truncated.
 	assert.Contains(t, out, "…")
@@ -79,7 +119,7 @@ func TestFormatToolsetStatus_TruncatesAtRuneBoundary(t *testing.T) {
 		State:     lifecycle.StateFailed,
 		LastError: errors.New(long),
 	}}
-	d := NewToolsetsDialog(statuses).(*toolsetsDialog)
+	d := NewToolsDialog(statuses, nil).(*toolsDialog)
 	out := strings.Join(d.renderLines(80, 24), "\n")
 	// Every byte in the output must be a valid UTF-8 sequence.
 	assert.True(t, utf8ValidString(out), "truncated output must remain valid UTF-8")

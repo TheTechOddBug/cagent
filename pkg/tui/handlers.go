@@ -368,18 +368,12 @@ func (m *appModel) handleShowToolsDialog() (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m, notification.ErrorCmd(fmt.Sprintf("Failed to load tools: %v", err))
 	}
-	return m, core.CmdHandler(dialog.OpenDialogMsg{
-		Model: dialog.NewToolsDialog(agentTools),
-	})
-}
-
-// handleShowToolsetsDialog opens the toolset lifecycle dialog with a
-// snapshot of each toolset's State, last error, and restart count taken
-// at the moment the dialog is opened.
-func (m *appModel) handleShowToolsetsDialog() (tea.Model, tea.Cmd) {
+	// Read toolset statuses *after* CurrentAgentTools so the snapshot
+	// reflects the same Started state the user just observed (Tools()
+	// drives lazy startup of any not-yet-started toolset).
 	statuses := m.application.CurrentAgentToolsetStatuses()
 	return m, core.CmdHandler(dialog.OpenDialogMsg{
-		Model: dialog.NewToolsetsDialog(statuses),
+		Model: dialog.NewToolsDialog(statuses, agentTools),
 	})
 }
 

@@ -260,7 +260,7 @@ toolsets:
 
 The TUI exposes the supervisor through two slash commands:
 
-- `/toolsets` — opens a dialog listing every toolset on the current agent with its current state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error.
+- `/tools` — the unified tools dialog. Its top section lists every toolset on the current agent with its lifecycle state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error; its bottom section lists every tool the agent can call, grouped by category. Use this to answer both "what can the agent do?" and "is anything degraded?" with one command.
 - `/toolset-restart <name>` — force the supervisor to reconnect the named toolset. Useful after completing OAuth, when a remote MCP server has been redeployed, or when an LSP like `gopls` is stuck.
 
 See the [TUI reference]({{ '/features/tui/' | relative_url }}) for the full list of slash commands.
