@@ -377,13 +377,24 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 		// before_llm_call hooks fire just before the model is invoked.
 		// A terminating verdict (e.g. from the max_iterations builtin)
-		// stops the run loop here, before any tokens are spent.
-		if stop, msg := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID); stop {
+		// stops the run loop here, before any tokens are spent. Hooks
+		// may also rewrite the outgoing messages by returning
+		// HookSpecificOutput.UpdatedMessages — the redact_secrets
+		// builtin uses this to scrub secrets from chat content before
+		// the LLM ever sees it. The rewrite happens BEFORE the
+		// runtime's Go-only message transforms so a hook that drops a
+		// message (e.g. a custom "strip system reminders") doesn't get
+		// silently overridden by a transform later in the chain.
+		stop, msg, rewritten := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID, messages)
+		if stop {
 			slog.Warn("before_llm_call hook signalled run termination",
 				"agent", a.Name(), "session_id", sess.ID, "reason", msg)
 			r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
 			streamSpan.End()
 			return
+		}
+		if rewritten != nil {
+			messages = rewritten
 		}
 
 		// Apply registered before_llm_call message transforms (e.g.

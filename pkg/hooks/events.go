@@ -42,6 +42,7 @@ var eventSpecs = []EventSpec{
 	{Type: EventOnAgentSwitch},
 	{Type: EventOnSessionResume},
 	{Type: EventOnToolApprovalDecision},
+	{Type: EventToolResponseTransform, ToolScoped: true},
 }
 
 var eventSpecByType = func() map[EventType]EventSpec {

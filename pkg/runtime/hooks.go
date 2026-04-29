@@ -290,16 +290,44 @@ func (r *LocalRuntime) executeOnToolApprovalDecisionHooks(
 // resolved (after per-tool overrides and alloy-mode selection); it's
 // surfaced to hooks via [hooks.Input.ModelID] so handlers don't need
 // to recompute it from the agent.
-func (r *LocalRuntime) executeBeforeLLMCallHooks(ctx context.Context, sess *session.Session, a *agent.Agent, modelID string) (stop bool, message string) {
+//
+// messages is the conversation snapshot the runtime is about to send
+// to the model. Hooks may return a rewrite via
+// [hooks.HookSpecificOutput.UpdatedMessages] (e.g. the redact_secrets
+// builtin scrubbing outbound chat content); the rewrite is returned
+// in the third tuple value when present, nil otherwise. Callers must
+// swap the rewrite in BEFORE the model call so the LLM never sees the
+// original content. messages is passed through to hooks only when at
+// least one before_llm_call hook is configured (see [dispatchHook]),
+// so observational hook configurations don't pay the JSON-encoding
+// cost on every model call.
+func (r *LocalRuntime) executeBeforeLLMCallHooks(
+	ctx context.Context,
+	sess *session.Session,
+	a *agent.Agent,
+	modelID string,
+	messages []chat.Message,
+) (stop bool, message string, rewritten []chat.Message) {
+	exec := r.hooksExec(a)
+	if exec == nil || !exec.Has(hooks.EventBeforeLLMCall) {
+		return false, "", nil
+	}
+	// Only carry the conversation snapshot when at least one hook is
+	// actually wired — dispatchHook short-circuits before then, but the
+	// JSON-encoded copy of `messages` would still be paid here.
 	result := r.dispatchHook(ctx, a, hooks.EventBeforeLLMCall, &hooks.Input{
 		SessionID: sess.ID,
 		AgentName: a.Name(),
 		ModelID:   modelID,
+		Messages:  messages,
 	}, nil)
-	if result == nil || result.Allowed {
-		return false, ""
+	if result == nil {
+		return false, "", nil
 	}
-	return true, result.Message
+	if !result.Allowed {
+		return true, result.Message, nil
+	}
+	return false, "", result.UpdatedMessages
 }
 
 // executeAfterLLMCallHooks fires after_llm_call after a successful
