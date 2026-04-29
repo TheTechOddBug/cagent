@@ -358,3 +358,88 @@ func TestDispatcher_DenyByPermissionsEmitsErrorResponse(t *testing.T) {
 	assert.True(t, em.responses[0].IsError)
 	assert.Contains(t, em.responses[0].Output, "denied by test policy")
 }
+
+// TestDispatcher_RedactsSecretsInToolOutput exercises the dispatcher-side
+// scrub that closes the third leak vector of the redact_secrets feature:
+// a tool's output must never reach the UI, the persisted session, the
+// post_tool_use hook input, or the next LLM call with raw secret
+// material in it. The runtime's before_llm_call transform handles
+// outgoing chat content and the pre_tool_use builtin handles tool
+// arguments — this test pins the symmetric guarantee for tool RESULTS.
+func TestDispatcher_RedactsSecretsInToolOutput(t *testing.T) {
+	a := agent.New("test", "test agent", agent.WithRedactSecrets(true))
+	sess := session.New()
+	sess.ToolsApproved = true
+
+	// Split the secret across concatenation so the verbatim token never
+	// appears on a single source line (keeps repository-wide secret
+	// scanners quiet) while the test still exercises the real ruleset.
+	secret := "AKIA" + "IOSFODNN7EXAMPLE"
+	toolOutput := "creds: " + secret + " please use them"
+
+	tool := tools.Tool{
+		Name: "leaky",
+		Handler: func(context.Context, tools.ToolCall) (*tools.ToolCallResult, error) {
+			return tools.ResultSuccess(toolOutput), nil
+		},
+	}
+
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+	}
+	em := &captureEmitter{}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "r",
+		Function: tools.FunctionCall{Name: "leaky", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	// Emitted event (UI / API consumers) must already be scrubbed.
+	require.Len(t, em.responses, 1)
+	assert.NotContainsf(t, em.responses[0].Output, secret,
+		"emitted tool response must not carry the raw secret: %q", em.responses[0].Output)
+	assert.Contains(t, em.responses[0].Output, "[REDACTED]")
+
+	// Recorded chat message (persisted session, next LLM turn) must
+	// also be scrubbed — same string, same redaction.
+	require.Len(t, em.messages, 1)
+	assert.NotContainsf(t, em.messages[0].Message.Content, secret,
+		"recorded tool message must not carry the raw secret: %q", em.messages[0].Message.Content)
+	assert.Contains(t, em.messages[0].Message.Content, "[REDACTED]")
+}
+
+// TestDispatcher_RedactSecretsDisabledLeavesOutputIntact pins the
+// opt-in semantics: agents that didn't enable redact_secrets must see
+// the tool's output flow through unchanged (no surprise behaviour
+// change for users that haven't opted in).
+func TestDispatcher_RedactSecretsDisabledLeavesOutputIntact(t *testing.T) {
+	a := newAgent() // redact_secrets defaults to false
+	sess := session.New()
+	sess.ToolsApproved = true
+
+	secret := "AKIA" + "IOSFODNN7EXAMPLE"
+	toolOutput := "creds: " + secret
+
+	tool := tools.Tool{
+		Name: "leaky",
+		Handler: func(context.Context, tools.ToolCall) (*tools.ToolCallResult, error) {
+			return tools.ResultSuccess(toolOutput), nil
+		},
+	}
+
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+	}
+	em := &captureEmitter{}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "r",
+		Function: tools.FunctionCall{Name: "leaky", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	require.Len(t, em.responses, 1)
+	assert.Equal(t, toolOutput, em.responses[0].Output,
+		"output must pass through untouched when redact_secrets is off")
+	require.Len(t, em.messages, 1)
+	assert.Equal(t, toolOutput, em.messages[0].Message.Content)
+}

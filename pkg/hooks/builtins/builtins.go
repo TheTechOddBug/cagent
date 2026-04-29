@@ -20,7 +20,11 @@
 // redact_secrets from the matching agent flags. The redact_secrets
 // flag also enables the runtime-shipped before_llm_call message
 // transform that scrubs the same patterns from outgoing chat
-// content; see pkg/runtime/redact_secrets.go for the LLM side.
+// content, AND the dispatcher-side scrub that redacts tool output at
+// the source so it never reaches event consumers, the persisted
+// session, the post_tool_use hook, or the next LLM call. See
+// pkg/runtime/redact_secrets.go and pkg/runtime/toolexec for the
+// other two halves.
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
@@ -86,8 +90,9 @@ type AgentDefaults struct {
 	AddPromptFiles     []string
 	// RedactSecrets auto-injects the redact_secrets pre_tool_use
 	// builtin. It also enables the runtime's matching before_llm_call
-	// message transform, so this single flag covers both leak vectors
-	// (tool args and outgoing chat content).
+	// message transform AND the dispatcher's tool-output scrub, so this
+	// single flag covers all three leak vectors (tool args, outgoing
+	// chat content, and tool output).
 	RedactSecrets bool
 }
 

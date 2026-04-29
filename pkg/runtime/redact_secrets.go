@@ -14,10 +14,20 @@ import (
 // before_llm_call message transform that scrubs secret material from
 // outgoing chat messages.
 //
-// It pairs with the redact_secrets pre_tool_use builtin in
-// pkg/hooks/builtins; both are gated on the agent's RedactSecrets
-// flag so a single switch covers the two leak vectors (outgoing chat
-// content and outgoing tool args).
+// It pairs with two other halves of the redact_secrets feature:
+//   - the redact_secrets pre_tool_use builtin in pkg/hooks/builtins,
+//     which scrubs tool ARGUMENTS before the call leaves the runtime;
+//   - the dispatcher-side scrub in pkg/runtime/toolexec, which scrubs
+//     tool OUTPUT at the source so it never reaches event consumers,
+//     the persisted session file, the post_tool_use hook input, or
+//     the next LLM call.
+//
+// All three are gated on the agent's RedactSecrets flag so a single
+// switch covers the three leak vectors (outgoing chat content,
+// outgoing tool args, incoming tool output). This transform stays in
+// place as defence-in-depth: it also scrubs history loaded from disk
+// when redact_secrets was disabled at the time the message was
+// recorded.
 const BuiltinRedactSecrets = "redact_secrets"
 
 // redactSecretsTransform is the [MessageTransform] registered under

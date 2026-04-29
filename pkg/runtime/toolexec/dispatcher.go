@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/secretsscan"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -638,9 +639,34 @@ func (c *call) invoke(ctx context.Context, spanName string, exec func(ctx contex
 		slog.Debug("Tool call completed", "tool", c.tc.Function.Name, "output_length", len(res.Output))
 	}
 
+	// Scrub recognised secret patterns from the tool's output BEFORE it
+	// fans out to event consumers, the post_tool_use hook input, and the
+	// recorded chat message. Redacting at the source means the secret
+	// never reaches the UI, the persisted session, or the next LLM call.
+	// The runtime's before_llm_call message transform stays in place as
+	// defence-in-depth (it also covers history loaded from disk).
+	c.redactToolOutput(res)
+
 	c.em.EmitToolCallResponse(c.tc.ID, c.tool, res, res.Output, c.a.Name())
 	c.recordToolResponse(res)
 	return res
+}
+
+// redactToolOutput scrubs known secret patterns from res.Output when
+// the agent has opted into redact_secrets. Mutates res in place: every
+// downstream consumer (event emission, post_tool_use hook input, the
+// recorded chat message) reads from the same field, so scrubbing here
+// closes the leak without touching their call sites.
+//
+// res.Images / res.Audios are base64-encoded binary payloads that the
+// secretsscan ruleset cannot interpret, and res.StructuredContent is
+// not propagated to the LLM, so neither is scanned here. A nil res is
+// a no-op so callers don't need a guard.
+func (c *call) redactToolOutput(res *tools.ToolCallResult) {
+	if res == nil || !c.a.RedactSecrets() {
+		return
+	}
+	res.Output = secretsscan.Redact(res.Output)
 }
 
 // translateError converts a tool-handler error into a [tools.ToolCallResult]
@@ -720,7 +746,17 @@ func (c *call) postHook(ctx context.Context, res *tools.ToolCallResult) (stop bo
 // errorResponse appends an error tool-response to the session and emits
 // the corresponding events. Used by validation, rejection, hook-block,
 // and cancellation paths.
+//
+// errorMsg is scrubbed for secrets when the agent has opted into
+// redact_secrets: the message is mostly dispatcher-controlled boilerplate,
+// but rejection paths splice in user-supplied reasons and hook-supplied
+// messages that may quote tool input. Scrubbing here keeps the same
+// guarantee as the success path — secrets never reach the UI, the
+// session file, or the next LLM call.
 func (c *call) errorResponse(errorMsg string) {
+	if c.a.RedactSecrets() {
+		errorMsg = secretsscan.Redact(errorMsg)
+	}
 	c.em.EmitToolCallResponse(c.tc.ID, c.tool, tools.ResultError(errorMsg), errorMsg, c.a.Name())
 	c.addMessage(&chat.Message{
 		Role:       chat.MessageRoleTool,

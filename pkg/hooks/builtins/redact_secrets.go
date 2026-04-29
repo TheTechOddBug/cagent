@@ -12,11 +12,19 @@ import (
 // that scrubs secret material from a tool call's arguments before the
 // runtime hands them to the tool.
 //
-// It pairs with the runtime-shipped before_llm_call message transform
-// (see pkg/runtime/redact_secrets.go); together they bracket the two
-// places where chat content can leak secrets to a third party (the
-// LLM provider on input, and a tool process on invocation). The
-// redact_secrets agent flag enables both at once.
+// It pairs with two other halves of the redact_secrets feature:
+//   - the runtime-shipped before_llm_call message transform (see
+//     pkg/runtime/redact_secrets.go) that scrubs outgoing chat
+//     content;
+//   - the dispatcher-side scrub in pkg/runtime/toolexec that scrubs
+//     tool output at the source so it never reaches event consumers,
+//     the persisted session file, the post_tool_use hook input, or
+//     the next LLM call.
+//
+// Together they bracket every place where chat content can leak
+// secrets to a third party (the LLM provider on input, a tool process
+// on invocation, and a tool's own output on the way back). The
+// redact_secrets agent flag enables all three at once.
 const RedactSecrets = "redact_secrets"
 
 // redactSecrets is the [hooks.BuiltinFunc] registered under
