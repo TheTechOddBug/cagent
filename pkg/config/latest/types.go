@@ -780,7 +780,7 @@ type Toolset struct {
 	// model name from the models section or "provider/model" (e.g. "openai/gpt-4o-mini").
 	Model string `json:"model,omitempty"`
 
-	Defer DeferConfig `json:"defer" yaml:"defer,omitempty"`
+	Defer DeferConfig `json:"defer,omitzero" yaml:"defer,omitempty"`
 
 	// For the `mcp` tool
 	Command string   `json:"command,omitempty"`
