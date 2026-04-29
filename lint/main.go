@@ -20,6 +20,9 @@ func allCops() []cop.Cop {
 		NewConfigPackageName(),
 		NewConfigVersionConstant(),
 		NewLatestImportsPredecessor(),
+		NewConfigLatestTagConsistency(),
+		NewConfigVersionsRegistered(),
+		NewTUIViewPurity(),
 	}
 }
 

@@ -508,7 +508,11 @@ func (d *ElicitationDialog) buildBody(width int) (lines []string, fieldStarts []
 
 func (d *ElicitationDialog) View() string {
 	l := d.layout()
-	d.fieldStarts = l.fieldStarts
+	// Cache the per-field row offsets and the dialog's screen-space top row
+	// so mouse-click handling in Update() can hit-test against the geometry
+	// produced by this render. View() is the only place that knows the final
+	// layout, so we accept the mutation as a render-cache compromise.
+	d.fieldStarts = l.fieldStarts //rubocop:disable Lint/TUIViewPurity // click-zone cache consumed by Update()
 
 	// Configure the scrollview viewport, give it the body, and scroll so the
 	// focused field stays visible.
@@ -521,7 +525,7 @@ func (d *ElicitationDialog) View() string {
 	row, col := CenterPosition(d.Width(), d.Height(), l.dialogWidth, l.dialogHeight())
 	frameTop := styles.DialogStyle.GetBorderTopSize() + styles.DialogStyle.GetPaddingTop()
 	frameLeft := styles.DialogStyle.GetBorderLeftSize() + styles.DialogStyle.GetPaddingLeft()
-	d.scrollableRow = row + frameTop + elicitationHeaderLines
+	d.scrollableRow = row + frameTop + elicitationHeaderLines //rubocop:disable Lint/TUIViewPurity // click-zone cache consumed by Update()
 	d.scrollview.SetPosition(col+frameLeft, d.scrollableRow)
 
 	parts := []string{

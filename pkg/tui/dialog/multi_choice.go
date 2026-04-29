@@ -622,7 +622,9 @@ func (d *multiChoiceDialog) View() string {
 	// Help text and buttons on same row
 	helpAndButtons := d.renderHelpAndButtons(contentWidth)
 	content.AddContent(helpAndButtons)
-	d.btnRow = rowIdx
+	// Cache the button row index so click handling in Update() can hit-test
+	// against the same layout that was just rendered.
+	d.btnRow = rowIdx //rubocop:disable Lint/TUIViewPurity // click-zone cache consumed by Update()
 
 	return styles.DialogStyle.Width(dialogWidth).Render(content.Build())
 }
