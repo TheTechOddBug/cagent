@@ -6,6 +6,8 @@ package hooks
 
 import (
 	"encoding/json"
+
+	"github.com/docker/docker-agent/pkg/chat"
 )
 
 // EventType identifies a hook event.
@@ -135,6 +137,21 @@ const (
 	// in the next runtime token-usage event. AfterCompaction is purely
 	// observational; output is ignored.
 	EventAfterCompaction EventType = "after_compaction"
+	// EventToolResponseTransform fires between a tool's exec and the
+	// runtime's emission/record of the response. Hooks may rewrite the
+	// tool's textual output by setting
+	// [HookSpecificOutput.UpdatedToolResponse]; the runtime applies the
+	// rewrite before the response is emitted, recorded, fed to the
+	// post_tool_use hook, or sent to the LLM on the next turn. This is
+	// the symmetric counterpart of pre_tool_use's UpdatedInput, applied
+	// to tool RESULTS instead of tool ARGUMENTS — useful for output
+	// scrubbing (the redact_secrets builtin uses it for that), or for
+	// truncating excessively long results before they hit the next
+	// model call.
+	//
+	// Tool-scoped: matchers select which tools the hook runs against,
+	// like pre_tool_use / post_tool_use.
+	EventToolResponseTransform EventType = "tool_response_transform"
 )
 
 // Input is the JSON-serializable payload passed to hooks via stdin.
@@ -165,14 +182,28 @@ type Input struct {
 	// turn-scoped (session_start, session_end, notification, ...).
 	LastUserMessage string `json:"last_user_message,omitempty"`
 
-	// Tool-related fields (PreToolUse, PostToolUse, PermissionRequest).
+	// Tool-related fields (PreToolUse, PostToolUse, PermissionRequest,
+	// ToolResponseTransform).
 	ToolName  string         `json:"tool_name,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	ToolInput map[string]any `json:"tool_input,omitempty"`
 
-	// PostToolUse specific.
+	// PostToolUse / ToolResponseTransform: the tool's textual output.
+	// On post_tool_use it carries the (already-rewritten) response a
+	// tool_response_transform hook produced — hooks scrubbing secrets
+	// upstream are visible to downstream observers without a second
+	// pass.
 	ToolResponse any  `json:"tool_response,omitempty"`
 	ToolError    bool `json:"tool_error,omitempty"`
+
+	// Messages is the conversation snapshot the runtime is about to send
+	// to the model. Populated only for [EventBeforeLLMCall] dispatches
+	// where rewriting is meaningful; nil for every other event so the
+	// JSON wire payload doesn't carry the whole transcript on every
+	// observational hook. Hooks that want to rewrite the messages return
+	// the result in [HookSpecificOutput.UpdatedMessages]; the runtime
+	// applies the rewrite before the actual provider call.
+	Messages []chat.Message `json:"messages,omitempty"`
 
 	// SessionStart specific: "startup", "resume", "clear", "compact".
 	// PreCompact specific: "manual", "auto", "overflow", "tool_overflow".
@@ -317,6 +348,30 @@ type HookSpecificOutput struct {
 	// the compaction summary verbatim and skips the LLM-based
 	// summarization. Ignored on every other event.
 	Summary string `json:"summary,omitempty"`
+
+	// UpdatedMessages, when non-empty on a [EventBeforeLLMCall]
+	// response, replaces the chat history the runtime is about to send
+	// to the model. Use it for in-process content rewrites that have to
+	// happen on every model call — e.g. the redact_secrets builtin
+	// scrubbing outbound chat content. Hooks for other events should
+	// leave it nil; aggregate() only honours it for before_llm_call.
+	//
+	// First non-empty wins when multiple before_llm_call hooks return
+	// rewrites concurrently — see aggregate(). Compose multiple
+	// rewriters into a single hook if you need them to chain.
+	UpdatedMessages []chat.Message `json:"updated_messages,omitempty"`
+
+	// UpdatedToolResponse, when non-nil on a
+	// [EventToolResponseTransform] response, replaces the tool's
+	// textual output before the runtime emits it, records it in the
+	// session, hands it to post_tool_use, or sends it to the next LLM
+	// call. Pointer-typed so an explicit empty string ("clear the
+	// output") is distinguishable from "don't touch it" (nil).
+	//
+	// First non-nil wins when multiple tool_response_transform hooks
+	// return rewrites concurrently — see aggregate(). Compose multiple
+	// rewriters into a single hook if you need them to chain.
+	UpdatedToolResponse *string `json:"updated_tool_response,omitempty"`
 }
 
 // Result is the aggregated outcome of dispatching one event.
@@ -343,6 +398,19 @@ type Result struct {
 	// LLM-generated compaction summary. When multiple hooks return a
 	// non-empty summary, the first one wins.
 	Summary string
+
+	// UpdatedMessages is the rewritten chat history produced by an
+	// [EventBeforeLLMCall] hook. The runtime sends this slice to the
+	// model in place of the original messages. nil means "no rewrite";
+	// the runtime falls back to the original messages.
+	UpdatedMessages []chat.Message
+
+	// UpdatedToolResponse is the rewritten tool output produced by an
+	// [EventToolResponseTransform] hook. The runtime swaps it into the
+	// tool's response before emission, recording, post_tool_use, and
+	// the next LLM call. Pointer-typed so callers can distinguish
+	// "explicitly cleared" (empty string) from "no rewrite" (nil).
+	UpdatedToolResponse *string
 
 	// Decision is the most-restrictive PreToolUse verdict reported by
 	// any matching hook in the chain ("" when no hook produced one).

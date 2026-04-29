@@ -85,9 +85,12 @@ func (a *Agent) AddEnvironmentInfo() bool {
 
 // RedactSecrets reports whether the agent has opted into the
 // redact_secrets feature. When true, the runtime auto-injects the
-// redact_secrets pre_tool_use builtin (scrubs tool arguments) AND
+// redact_secrets pre_tool_use builtin (scrubs tool arguments),
 // enables the runtime's before_llm_call message transform (scrubs
-// outgoing chat content).
+// outgoing chat content), AND wires the dispatcher's tool-output
+// scrub (redacts tool output at the source so it never reaches event
+// consumers, the persisted session file, the post_tool_use hook
+// input, or the next LLM call).
 func (a *Agent) RedactSecrets() bool {
 	return a.redactSecrets
 }

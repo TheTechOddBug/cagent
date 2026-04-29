@@ -370,9 +370,15 @@ type AgentConfig struct {
 
 	AddDate            bool `json:"add_date,omitempty"`
 	AddEnvironmentInfo bool `json:"add_environment_info,omitempty"`
-	// RedactSecrets enables both halves of the redact_secrets feature:
-	// the pre_tool_use builtin (scrubs tool arguments) AND the
-	// before_llm_call message transform (scrubs outgoing chat content).
+	// RedactSecrets enables every leg of the redact_secrets feature:
+	// the pre_tool_use builtin (scrubs tool arguments), the
+	// before_llm_call hook (scrubs outgoing chat content), and the
+	// tool_response_transform hook (scrubs tool output before it
+	// reaches event consumers, the persisted session, the post_tool_use
+	// hook, or the next LLM call). Equivalent to writing all three
+	// hook entries by hand — the runtime auto-injects them when this
+	// flag is true. See pkg/hooks/builtins/redact_secrets.go for the
+	// hook-side implementation.
 	RedactSecrets           bool              `json:"redact_secrets,omitempty"`
 	CodeModeTools           bool              `json:"code_mode_tools,omitempty"`
 	AddDescriptionParameter bool              `json:"add_description_parameter,omitempty"`
@@ -1784,6 +1790,18 @@ type HooksConfig struct {
 	// was applied to the session). The Input.summary field carries the
 	// produced summary text. AfterCompaction is purely observational.
 	AfterCompaction []HookDefinition `json:"after_compaction,omitempty" yaml:"after_compaction,omitempty"`
+
+	// ToolResponseTransform hooks run between a tool's exec and the
+	// runtime's emission/record of the response. Hooks may rewrite the
+	// tool's textual output by returning a non-empty
+	// HookSpecificOutput.updated_tool_response — the runtime applies
+	// the rewrite before the response fans out to event consumers, the
+	// recorded chat message, and the post_tool_use hook input. This is
+	// the third leg of the redact_secrets feature: pre_tool_use scrubs
+	// arguments, before_llm_call scrubs outgoing chat content, and
+	// tool_response_transform scrubs tool output. Tool-matched, like
+	// pre_tool_use / post_tool_use.
+	ToolResponseTransform []HookMatcherConfig `json:"tool_response_transform,omitempty" yaml:"tool_response_transform,omitempty"`
 }
 
 // IsEmpty returns true if no hooks are configured
@@ -1811,7 +1829,8 @@ func (h *HooksConfig) IsEmpty() bool {
 		len(h.OnSessionResume) == 0 &&
 		len(h.OnToolApprovalDecision) == 0 &&
 		len(h.BeforeCompaction) == 0 &&
-		len(h.AfterCompaction) == 0
+		len(h.AfterCompaction) == 0 &&
+		len(h.ToolResponseTransform) == 0
 }
 
 // HookMatcherConfig represents a hook matcher with its hooks.
@@ -2053,6 +2072,13 @@ func (h *HooksConfig) validate() error {
 	// Validate AfterCompaction hooks
 	for i, hook := range h.AfterCompaction {
 		if err := hook.validate("after_compaction", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate ToolResponseTransform matchers
+	for i, m := range h.ToolResponseTransform {
+		if err := m.validate("tool_response_transform", i); err != nil {
 			return err
 		}
 	}

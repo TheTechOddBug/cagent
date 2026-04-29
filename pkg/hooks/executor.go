@@ -94,6 +94,7 @@ func compileEvents(c *Config) map[EventType][]matcher {
 		EventOnToolApprovalDecision: flat(c.OnToolApprovalDecision),
 		EventBeforeCompaction:       flat(c.BeforeCompaction),
 		EventAfterCompaction:        flat(c.AfterCompaction),
+		EventToolResponseTransform:  compileMatchers(c.ToolResponseTransform),
 	}
 }
 
@@ -374,6 +375,24 @@ func aggregate(results []hookResult, event EventType) *Result {
 				// defeating the point of the hook-supplied summary (which
 				// is to skip the LLM entirely).
 				final.Summary = hso.Summary
+			}
+			if event == EventBeforeLLMCall && len(hso.UpdatedMessages) > 0 && final.UpdatedMessages == nil {
+				// First non-empty rewrite in CONFIG ORDER wins, same
+				// determinism guarantee as Summary above. Concurrent
+				// hooks all see the SAME input snapshot, so chaining two
+				// independent rewrites here would silently throw one
+				// away — callers wanting composition must do it inside
+				// a single hook.
+				final.UpdatedMessages = hso.UpdatedMessages
+			}
+			if event == EventToolResponseTransform && hso.UpdatedToolResponse != nil && final.UpdatedToolResponse == nil {
+				// First non-nil rewrite in CONFIG ORDER wins (same
+				// determinism + composition trade-off as UpdatedMessages
+				// above). Pointer-typed: an explicit empty-string rewrite
+				// is honoured — the runtime applies *result =
+				// *UpdatedToolResponse verbatim, so a hook that wants to
+				// blank a leaky tool's output entirely can do so.
+				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
 			if hso.AdditionalContext != "" {
 				contexts = append(contexts, hso.AdditionalContext)

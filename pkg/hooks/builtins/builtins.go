@@ -12,15 +12,21 @@
 //   - add_user_info         (session_start)   — current OS user and host
 //   - add_recent_commits    (session_start)   — `git log --oneline -n N`
 //   - max_iterations        (before_llm_call) — hard stop after N model calls
-//   - redact_secrets        (pre_tool_use)    — scrub secrets from tool args
+//   - redact_secrets        (pre_tool_use,
+//     before_llm_call,
+//     tool_response_transform) — scrub secrets
+//     from tool args, outgoing chat content, and
+//     tool output. Same builtin, dispatches on
+//     event so a single name covers all three
+//     legs of the feature.
 //
 // Reference any of them from a hook YAML entry as
 // `{type: builtin, command: "<name>"}`. The runtime additionally
 // auto-injects add_date / add_environment_info / add_prompt_files /
-// redact_secrets from the matching agent flags. The redact_secrets
-// flag also enables the runtime-shipped before_llm_call message
-// transform that scrubs the same patterns from outgoing chat
-// content; see pkg/runtime/redact_secrets.go for the LLM side.
+// redact_secrets from the matching agent flags. Setting
+// redact_secrets at the agent level is exactly equivalent to writing
+// the three matching hook entries by hand —
+// [ApplyAgentDefaults] performs the auto-injection.
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
@@ -84,10 +90,12 @@ type AgentDefaults struct {
 	AddDate            bool
 	AddEnvironmentInfo bool
 	AddPromptFiles     []string
-	// RedactSecrets auto-injects the redact_secrets pre_tool_use
-	// builtin. It also enables the runtime's matching before_llm_call
-	// message transform, so this single flag covers both leak vectors
-	// (tool args and outgoing chat content).
+	// RedactSecrets auto-injects the redact_secrets builtin under
+	// pre_tool_use, before_llm_call, and tool_response_transform — the
+	// three legs of the feature. Equivalent to writing those three
+	// hook entries by hand; the dedup in [hooks.Executor.hooksFor]
+	// makes the auto-injection idempotent against an explicit YAML
+	// entry that already names the same builtin.
 	RedactSecrets bool
 }
 
@@ -108,7 +116,19 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 		cfg.SessionStart = append(cfg.SessionStart, builtinHook(AddEnvironmentInfo))
 	}
 	if d.RedactSecrets {
+		// Wire all three legs at once. The same builtin handles each
+		// event — it dispatches on input.HookEventName — so a single
+		// `command: redact_secrets` entry would already work, but we
+		// inject explicit entries here so the resulting effective
+		// config is self-describing (a user inspecting it sees that
+		// args, messages, and tool output are all covered, without
+		// having to read the dispatch table).
 		cfg.PreToolUse = append(cfg.PreToolUse, hooks.MatcherConfig{
+			Matcher: "*",
+			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
+		})
+		cfg.BeforeLLMCall = append(cfg.BeforeLLMCall, builtinHook(RedactSecrets))
+		cfg.ToolResponseTransform = append(cfg.ToolResponseTransform, hooks.MatcherConfig{
 			Matcher: "*",
 			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
 		})

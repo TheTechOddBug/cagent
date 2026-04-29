@@ -359,10 +359,11 @@ func TestWithMessageTransform_RejectsEmptyAndNil(t *testing.T) {
 	)
 	require.NoError(t, err, "WithMessageTransform must not surface a constructor error")
 
-	// Only the two runtime-shipped transforms (strip_unsupported_modalities
-	// and redact_secrets) should remain — invalid user transforms are
-	// dropped silently.
-	require.Len(t, r.transforms, 2, "invalid transforms must be silently ignored")
+	// Only the runtime-shipped strip_unsupported_modalities transform
+	// remains — invalid user transforms are dropped silently. The
+	// redact_secrets transform that used to ride alongside has migrated
+	// to the hook protocol (pkg/hooks/builtins/redact_secrets.go) so it
+	// no longer appears in the message-transform chain.
+	require.Len(t, r.transforms, 1, "invalid transforms must be silently ignored")
 	assert.Equal(t, BuiltinStripUnsupportedModalities, r.transforms[0].name)
-	assert.Equal(t, BuiltinRedactSecrets, r.transforms[1].name)
 }

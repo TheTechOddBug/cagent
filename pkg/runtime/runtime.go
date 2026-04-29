@@ -411,22 +411,22 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
 
-	// Both message transforms below capture the runtime closure to
-	// resolve the agent from Input.AgentName, so they live here rather
-	// than as stateless builtins in pkg/hooks/builtins.
+	// stripUnsupportedModalitiesTransform captures the runtime closure to
+	// resolve the agent from Input.AgentName, so it lives here rather
+	// than as a stateless builtin in pkg/hooks/builtins. It drops image
+	// content for text-only models on every model call.
 	//
-	// strip_unsupported_modalities drops image content for text-only
-	// models. redact_secrets is the LLM-side peer of the redact_secrets
-	// pre_tool_use builtin (gated on the agent's RedactSecrets flag,
-	// see pkg/hooks/builtins/redact_secrets.go).
+	// redact_secrets used to live here as a sibling [MessageTransform];
+	// it now ships entirely as a [hooks.BuiltinFunc] in
+	// pkg/hooks/builtins/redact_secrets.go and is wired into all three
+	// of pre_tool_use, before_llm_call, and tool_response_transform via
+	// [builtins.ApplyAgentDefaults] (or a user's hooks YAML directly),
+	// so the rewrite path is the same for every leak vector and there
+	// is no flag-only code path to keep in sync.
 	r.transforms = append(r.transforms,
 		registeredTransform{
 			name: BuiltinStripUnsupportedModalities,
 			fn:   r.stripUnsupportedModalitiesTransform,
-		},
-		registeredTransform{
-			name: BuiltinRedactSecrets,
-			fn:   r.redactSecretsTransform,
 		},
 	)
 

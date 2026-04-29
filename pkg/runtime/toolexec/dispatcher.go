@@ -181,7 +181,7 @@ func (d *Dispatcher) Process(ctx context.Context, sess *session.Session, calls [
 	synthesizeRemaining := func(remaining []tools.ToolCall, reason string) {
 		for _, rc := range remaining {
 			c := d.newCall(sess, em, a, rc, toolByName)
-			c.errorResponse(reason)
+			c.errorResponse(ctx, reason)
 		}
 	}
 
@@ -261,7 +261,7 @@ func (c *call) run(ctx context.Context) CallOutcome {
 	// can self-correct.
 	if !c.available {
 		slog.Warn("Tool call for unavailable tool", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
-		c.errorResponse(fmt.Sprintf("Tool '%s' is not available. You can only use the tools provided to you.", c.tc.Function.Name))
+		c.errorResponse(ctx, fmt.Sprintf("Tool '%s' is not available. You can only use the tools provided to you.", c.tc.Function.Name))
 		span.SetStatus(codes.Error, "tool not available")
 		return CallOutcome{}
 	}
@@ -335,7 +335,7 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 	case OutcomeDeny:
 		slog.Debug("Tool denied by permissions", "tool", c.tc.Function.Name, "source", decision.Source, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionDeny, denySourceForChecker(decision.Source))
-		c.errorResponse(fmt.Sprintf("Tool '%s' is denied by %s.", c.tc.Function.Name, decision.Source))
+		c.errorResponse(ctx, fmt.Sprintf("Tool '%s' is denied by %s.", c.tc.Function.Name, decision.Source))
 		return CallOutcome{}
 	case OutcomeAsk:
 		if decision.Reason == ReasonChecker {
@@ -389,7 +389,7 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 		slog.Debug("Pre-tool hook blocked tool call", "tool", c.tc.Function.Name, "message", result.Message)
 		c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourcePreToolUseHookDeny)
 		c.em.EmitHookBlocked(c.tc, c.tool, result.Message, c.a.Name())
-		c.errorResponse("Tool call blocked by hook: " + result.Message)
+		c.errorResponse(ctx, "Tool call blocked by hook: "+result.Message)
 		return CallOutcome{}, true
 	}
 
@@ -500,7 +500,7 @@ func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutc
 	case <-ctx.Done():
 		slog.Debug("Context cancelled while waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionCanceled, ApprovalSourceContextCanceled)
-		c.errorResponse("The tool call was canceled by the user.")
+		c.errorResponse(ctx, "The tool call was canceled by the user.")
 		return CallOutcome{Canceled: true}
 	}
 }
@@ -533,7 +533,7 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 		if reason := strings.TrimSpace(result.Message); reason != "" {
 			rejectMsg += " Reason: " + reason
 		}
-		c.errorResponse(rejectMsg)
+		c.errorResponse(ctx, rejectMsg)
 		return CallOutcome{}, true
 	}
 
@@ -580,7 +580,7 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		if reason := strings.TrimSpace(req.Reason); reason != "" {
 			msg += " Reason: " + reason
 		}
-		c.errorResponse(msg)
+		c.errorResponse(ctx, msg)
 	}
 	return CallOutcome{}
 }
@@ -638,9 +638,43 @@ func (c *call) invoke(ctx context.Context, spanName string, exec func(ctx contex
 		slog.Debug("Tool call completed", "tool", c.tc.Function.Name, "output_length", len(res.Output))
 	}
 
+	// tool_response_transform fires here — BEFORE event emission, the
+	// chat-message record, and the post_tool_use hook input — so any
+	// rewrite (e.g. the redact_secrets builtin scrubbing tool output)
+	// reaches every downstream consumer in one shot. The dispatch is
+	// only paid when at least one hook is configured for the event, so
+	// agents that haven't opted into output rewriting take the cheap
+	// path through Dispatch's `exec.Has(event)` short-circuit.
+	res.Output = c.applyToolResponseTransform(ctx, res.Output, false)
+
 	c.em.EmitToolCallResponse(c.tc.ID, c.tool, res, res.Output, c.a.Name())
 	c.recordToolResponse(res)
 	return res
+}
+
+// applyToolResponseTransform fires [hooks.EventToolResponseTransform]
+// for the supplied tool response payload and returns either the
+// hook-supplied rewrite or payload unchanged.
+//
+// isError is forwarded as [hooks.Input.ToolError] so handlers can tell
+// a real result apart from a synthesised dispatcher error response
+// (validation failure, user rejection, post_tool_use block) without
+// having to look at the tool name.
+//
+// The dispatch happens before any state-mutating step — emission,
+// record, post_tool_use — so a single rewrite covers the UI feed,
+// the persisted session file, the input the post_tool_use hook sees,
+// and the messages going to the next LLM call.
+func (c *call) applyToolResponseTransform(ctx context.Context, payload string, isError bool) string {
+	if c.d.Hooks == nil {
+		return payload
+	}
+	in := NewPostToolHooksInput(c.sess, c.tc, &tools.ToolCallResult{Output: payload, IsError: isError})
+	result := c.d.Hooks.Dispatch(ctx, c.a, hooks.EventToolResponseTransform, in)
+	if result == nil || result.UpdatedToolResponse == nil {
+		return payload
+	}
+	return *result.UpdatedToolResponse
 }
 
 // translateError converts a tool-handler error into a [tools.ToolCallResult]
@@ -720,7 +754,14 @@ func (c *call) postHook(ctx context.Context, res *tools.ToolCallResult) (stop bo
 // errorResponse appends an error tool-response to the session and emits
 // the corresponding events. Used by validation, rejection, hook-block,
 // and cancellation paths.
-func (c *call) errorResponse(errorMsg string) {
+//
+// The synthesised message is run through tool_response_transform like
+// every other tool response so a configured rewriter (e.g. redact_secrets
+// scrubbing user-supplied rejection reasons or hook-supplied block
+// messages that quote tool input) sees the same payload the runtime
+// would otherwise emit and persist.
+func (c *call) errorResponse(ctx context.Context, errorMsg string) {
+	errorMsg = c.applyToolResponseTransform(ctx, errorMsg, true)
 	c.em.EmitToolCallResponse(c.tc.ID, c.tool, tools.ResultError(errorMsg), errorMsg, c.a.Name())
 	c.addMessage(&chat.Message{
 		Role:       chat.MessageRoleTool,
