@@ -27,7 +27,7 @@ agents:
     add_environment_info: boolean # Optional: add env info to context
     add_prompt_files: [list] # Optional: include additional prompt files
     add_description_parameter: bool # Optional: add description to tool schema
-    redact_secrets: boolean # Optional: scrub detected secrets out of tool args and outgoing chat messages
+    redact_secrets: boolean # Optional: scrub detected secrets out of tool args, outgoing chat messages, and tool output
     code_mode_tools: boolean # Optional: enable code mode tool format
     max_iterations: int # Optional: max tool-calling loops
     max_consecutive_tool_calls: int # Optional: max identical consecutive tool calls
@@ -40,6 +40,7 @@ agents:
     handoffs: [list] # Optional: agent names this agent can hand off to
     hooks: # Optional: lifecycle hooks
       pre_tool_use: [list]
+      tool_response_transform: [list]
       post_tool_use: [list]
       session_start: [list]
       session_end: [list]
@@ -77,7 +78,7 @@ agents:
 | `add_environment_info`      | boolean | ✗        | When `true`, injects working directory, OS, CPU architecture, and git info into context.                                                                                      |
 | `add_prompt_files`          | array   | ✗        | List of file paths whose contents are appended to the system prompt. Useful for including coding standards, guidelines, or additional context.                                |
 | `add_description_parameter` | boolean | ✗        | When `true`, adds agent descriptions as a parameter in tool schemas. Helps with tool selection in multi-agent scenarios.                                                      |
-| `redact_secrets`            | boolean | ✗        | When `true`, scrubs detected secrets (API keys, tokens, private keys, etc.) out of tool-call arguments and outgoing chat messages before they reach a tool or the model. See [Redacting Secrets](#redacting-secrets) below.   |
+| `redact_secrets`            | boolean | ✗        | When `true`, scrubs detected secrets (API keys, tokens, private keys, etc.) out of tool-call arguments, outgoing chat messages, and tool output before they reach a tool, the model, or downstream consumers. See [Redacting Secrets](#redacting-secrets) below.   |
 | `code_mode_tools`           | boolean | ✗        | When `true`, formats tool responses in a code-optimized format with structured output schemas. Useful for MCP gateway and programmatic access.                                |
 | `max_iterations`            | int     | ✗        | Maximum number of tool-calling loops. Default: unlimited (0). Set this to prevent infinite loops.                                                                             |
 | `max_consecutive_tool_calls` | int     | ✗        | Maximum consecutive identical tool calls before the agent is terminated, preventing degenerate loops. Default: `5`.                                                          |
@@ -142,10 +143,11 @@ Multiple processes can share the same `path:` cache file safely. Every `Store` t
 
 ## Redacting Secrets
 
-The `redact_secrets` flag is a single agent-level switch that scrubs accidentally leaked credentials, tokens, and private keys out of an agent's I/O. It wires up two complementary defenses:
+The `redact_secrets` flag is a single agent-level switch that scrubs accidentally leaked credentials, tokens, and private keys out of an agent's I/O. It wires up three complementary defenses:
 
 1. A `pre_tool_use` built-in hook that scrubs detected secrets from the **arguments of every tool call**, before the tool sees them.
-2. A `before_llm_call` message transform that scrubs the same patterns from **outgoing chat messages** — message content, multi-part text content, prior reasoning content, and the JSON-encoded arguments of any tool call still in the conversation — before they reach the model provider.
+2. A `before_llm_call` built-in hook that scrubs the same patterns from **outgoing chat messages** — message content, multi-part text content, prior reasoning content, and the JSON-encoded arguments of any tool call still in the conversation — before they reach the model provider.
+3. A `tool_response_transform` built-in hook that scrubs **tool output at the source**, so the secret never reaches event consumers, the persisted session file, the `post_tool_use` hook input, or the next LLM call.
 
 ```yaml
 agents:
@@ -180,7 +182,7 @@ Each detected span is replaced with the literal string `[REDACTED]`; the surroun
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Equivalent hook entry
 </div>
-  <p>Setting <code>redact_secrets: true</code> on the agent is shorthand for auto-registering both halves of the feature. The tool-side scrubber is a normal built-in hook (<code>type: builtin</code>, <code>command: redact_secrets</code> on <code>pre_tool_use</code>), so you can also configure it manually — see the <a href="{{ '/configuration/hooks/#available-built-ins' | relative_url }}">Hooks reference</a>. The chat-side message transform is only enabled by the agent flag.</p>
+  <p>Setting <code>redact_secrets: true</code> on the agent is shorthand for auto-registering all three legs of the feature as hook entries. They share the <em>same</em> built-in name (<code>type: builtin</code>, <code>command: redact_secrets</code>) on <code>pre_tool_use</code>, <code>before_llm_call</code>, and <code>tool_response_transform</code> respectively — the implementation dispatches on the hook event. You can spell them out by hand to scope a leg to a subset of tools (set <code>matcher:</code> to a regex), stack them with other rewriters in a specific order, or enable just one or two legs. See <a href="https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml"><code>examples/redact_secrets_hooks.yaml</code></a> for a complete manual wiring and the <a href="{{ '/configuration/hooks/#available-built-ins' | relative_url }}">Hooks reference</a> for the builtin's event coverage.</p>
 </div>
 
 ## Welcome Message

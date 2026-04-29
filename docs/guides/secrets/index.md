@@ -234,8 +234,9 @@ Provider keys live in the secret store and are passed to docker-agent through th
 
 For that defense-in-depth case, set `redact_secrets: true` on an agent. It scrubs detected secrets out of:
 
-- the arguments of every outgoing tool call (before the tool sees them), and
-- every outgoing chat message (before the model provider sees them).
+- the arguments of every outgoing tool call (before the tool sees them),
+- every outgoing chat message (before the model provider sees them), and
+- every tool's output (before it reaches event consumers, the persisted session file, the `post_tool_use` hook input, or the next LLM call).
 
 ```yaml
 agents:

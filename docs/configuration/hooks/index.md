@@ -37,6 +37,7 @@ docker-agent dispatches the following hook events:
 | Event                       | When it fires                                                                       | Can block? |
 | --------------------------- | ----------------------------------------------------------------------------------- | ---------- |
 | `pre_tool_use`              | Before a tool call executes                                                         | Yes        |
+| `tool_response_transform`   | Between a tool's execution and the runtime's emission/record of the response        | No         |
 | `post_tool_use`             | After a tool completes — fires for both success and failure                         | Yes        |
 | `permission_request`        | Just before the runtime would prompt the user to approve a tool                     | Yes        |
 | `session_start`             | When a session begins or resumes                                                    | No         |
@@ -152,7 +153,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 | `add_user_info`         | `session_start`   | _none_                 | Adds the current OS user (username and full name) and the hostname.                                                   |
 | `add_recent_commits`    | `session_start`   | _none_, or `["<N>"]`   | Adds `git log --oneline -n N`. `N` defaults to 10; pass a positive integer to override.                               |
 | `max_iterations`        | `before_llm_call` | `["<N>"]` (required)   | Hard-stops the agent after `N` model calls. State is per-session and reset at `session_end`.                          |
-| `redact_secrets`        | `pre_tool_use`    | _none_                 | Scrubs detected secrets (API keys, tokens, private keys, …) out of every tool call's arguments. Auto-registered by `redact_secrets: true` on the agent. |
+| `redact_secrets`        | `pre_tool_use`, `before_llm_call`, `tool_response_transform` | _none_ | Scrubs detected secrets (API keys, tokens, private keys, …) out of tool call arguments, outgoing chat content, and tool output. The same builtin handles all three events and dispatches on the event name. Auto-registered on all three events by `redact_secrets: true` on the agent — see [`examples/redact_secrets_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml) for the manual wiring. |
 
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Per-turn vs. per-session
@@ -163,7 +164,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Auto-injected built-ins
 </div>
-  <p>The agent flags <code>add_date: true</code>, <code>add_environment_info: true</code>, <code>add_prompt_files: [...]</code>, and <code>redact_secrets: true</code> are shorthands that auto-register the matching built-in hook. You don't need to repeat them under <code>hooks:</code> — set the flag <em>or</em> the hook entry, not both. <code>redact_secrets</code> is a special case: the agent flag <em>also</em> enables a runtime <code>before_llm_call</code> message transform that scrubs outgoing chat content; the hook entry on its own only covers tool arguments.</p>
+  <p>The agent flags <code>add_date: true</code>, <code>add_environment_info: true</code>, <code>add_prompt_files: [...]</code>, and <code>redact_secrets: true</code> are shorthands that auto-register the matching built-in hook. You don't need to repeat them under <code>hooks:</code> — set the flag <em>or</em> the hook entry(ies), not both. <code>redact_secrets: true</code> auto-registers the same builtin on all three of <code>pre_tool_use</code>, <code>before_llm_call</code>, and <code>tool_response_transform</code>; you can also wire any subset of them by hand for finer-grained control (per-tool matchers, ordering with other rewriters, …).</p>
 </div>
 
 <div class="callout callout-warning" markdown="1">
@@ -218,6 +219,7 @@ In addition to the common fields, each event ships its own payload:
 | Event                       | Extra fields                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `pre_tool_use`              | `tool_name`, `tool_use_id`, `tool_input`                                                                      |
+| `tool_response_transform`   | `tool_name`, `tool_use_id`, `tool_input`, `tool_response`                                                     |
 | `post_tool_use`             | `tool_name`, `tool_use_id`, `tool_input`, `tool_response`, `tool_error`                                       |
 | `permission_request`        | `tool_name`, `tool_use_id`, `tool_input`                                                                      |
 | `session_start`             | `source` — one of `startup`, `resume`, `clear`, `compact`                                                     |
@@ -290,6 +292,16 @@ The `hook_specific_output` for `pre_tool_use` (and `permission_request`) support
 | `permission_decision`        | string | `allow`, `deny`, or `ask`               |
 | `permission_decision_reason` | string | Explanation for the decision            |
 | `updated_input`              | object | Modified tool input (replaces original) |
+
+### Tool-Response-Transform Specific Output
+
+The `hook_specific_output` for `tool_response_transform` supports:
+
+| Field                    | Type   | Description                                       |
+| ------------------------ | ------ | ------------------------------------------------- |
+| `updated_tool_response`  | string | Rewritten tool output (replaces the original)     |
+
+This is the symmetric counterpart of `pre_tool_use`'s `updated_input`, applied to tool **results** instead of tool **arguments**. The rewrite reaches every downstream consumer — event subscribers, the persisted session file, the `post_tool_use` hook input, and the next LLM call. Use it to truncate excessive output, scrub PII, or normalise tool dialects. The built-in `redact_secrets` registers itself on this event as the third leg of the redact_secrets feature.
 
 ### Context-Contributing Events
 
