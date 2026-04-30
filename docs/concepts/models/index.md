@@ -57,9 +57,9 @@ Named models let you configure temperature, token limits, thinking budgets, and 
 | Nebius              | `nebius`         | Open-source and specialised models   | `NEBIUS_API_KEY`                    |
 | MiniMax             | `minimax`        | MiniMax models                       | `MINIMAX_API_KEY`                   |
 | Requesty            | `requesty`       | Multi-provider gateway               | `REQUESTY_API_KEY`                  |
-| Azure OpenAI        | `azure`          | gpt-4o, gpt-5 on Azure               | `AZURE_OPENAI_API_KEY` + `base_url` |
+| Azure OpenAI        | `azure`          | gpt-4o, gpt-5 on Azure               | `AZURE_API_KEY` + `base_url`        |
 | Ollama              | `ollama`         | Any local Ollama model               | None (local; optional `base_url`)   |
-| GitHub Copilot      | `github-copilot` | Copilot-hosted OpenAI/Anthropic      | GitHub CLI auth (`gh auth login`)   |
+| GitHub Copilot      | `github-copilot` | Copilot-hosted OpenAI/Anthropic      | `GITHUB_TOKEN` (PAT with `copilot`) |
 
 See the [Model Providers]({{ '/providers/overview/' | relative_url }}) section for detailed configuration guides.
 

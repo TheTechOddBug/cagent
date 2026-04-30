@@ -64,9 +64,9 @@ docker-agent also includes built-in aliases for these providers:
 | Nebius         | `nebius`         | `NEBIUS_API_KEY`                    |
 | MiniMax        | `minimax`        | `MINIMAX_API_KEY`                   |
 | Requesty       | `requesty`       | `REQUESTY_API_KEY`                  |
-| Azure OpenAI   | `azure`          | `AZURE_OPENAI_API_KEY` + `base_url` |
+| Azure OpenAI   | `azure`          | `AZURE_API_KEY` + `base_url`        |
 | Ollama         | `ollama`         | None (local; optional `base_url`)   |
-| GitHub Copilot | `github-copilot` | GitHub CLI auth (`gh auth login`)   |
+| GitHub Copilot | `github-copilot` | `GITHUB_TOKEN` (PAT with `copilot` scope) |
 
 ```bash
 # Use built-in providers inline
