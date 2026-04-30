@@ -35,6 +35,7 @@ $ docker agent run [config] [message...] [flags]
 | `--prompt-file <path>`                  | Include file contents as additional system context (repeatable)                                                                           |
 | `--attach <path>`                       | Attach an image file to the initial message                                                                                               |
 | `--dry-run`                             | Initialize the agent without executing anything (useful for validating a config)                                                          |
+| `--remote <addr>`                       | Use a remote runtime at the given address instead of running the agent locally                                                            |
 | `--lean`                                | Use a simplified TUI with minimal chrome                                                                                                  |
 | `--json`                                | Output results as newline-delimited JSON (use with `--exec`)                                                                              |
 | `--hide-tool-calls`                     | Hide tool calls in the output                                                                                                             |
@@ -42,11 +43,17 @@ $ docker agent run [config] [message...] [flags]
 | `--sandbox`                             | Run the agent inside a Docker sandbox (see [Sandbox]({{ '/configuration/sandbox/' | relative_url }}))                                     |
 | `--template <image>`                    | Template image for the sandbox (default: `docker/sandbox-templates:docker-agent`)                                                         |
 | `--sbx`                                 | Prefer the `sbx` CLI backend when available (default `true`; set `--sbx=false` to force `docker sandbox`)                                 |
+| `--working-dir <path>`                  | Set the working directory for the session (applies to tools and relative paths)                                                           |
+| `--env-from-file <path>`                | Load environment variables from file (repeatable)                                                                                         |
+| `--code-mode-tools`                     | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally)                                                |
+| `--models-gateway <addr>`               | Route model traffic through a gateway. Also reads `DOCKER_AGENT_MODELS_GATEWAY` env var.                                                  |
 | `--hook-pre-tool-use <cmd>`             | Add a pre-tool-use hook command (repeatable). See [Hooks]({{ '/configuration/hooks/' | relative_url }}).                                  |
 | `--hook-post-tool-use <cmd>`            | Add a post-tool-use hook command (repeatable)                                                                                             |
 | `--hook-session-start <cmd>`            | Add a session-start hook command (repeatable)                                                                                             |
 | `--hook-session-end <cmd>`              | Add a session-end hook command (repeatable)                                                                                               |
 | `--hook-on-user-input <cmd>`            | Add an on-user-input hook command (repeatable)                                                                                            |
+| `--fake <path>`                         | Replay AI responses from a cassette file (for testing). Mutually exclusive with `--record`.                                               |
+| `--record [path]`                       | Record AI API interactions to a cassette file (auto-generates filename if no path given)                                                  |
 | `-d, --debug`                           | Enable debug logging                                                                                                                      |
 | `--log-file <path>`                     | Custom debug log location                                                                                                                 |
 | `-o, --otel`                            | Enable OpenTelemetry tracing                                                                                                              |
@@ -176,6 +183,40 @@ $ docker agent serve acp agent.yaml
 
 See [ACP]({{ '/features/acp/' | relative_url }}) for details on the Agent Client Protocol.
 
+### `docker agent serve chat`
+
+Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a docker-agent agent without any custom integration.
+
+```bash
+$ docker agent serve chat [config] [flags]
+```
+
+| Flag                          | Default            | Description                                                                                                       |
+| ----------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `-a, --agent <name>`          | (all agents)       | Name of the agent to expose. If omitted, every agent in the config is exposed as a separate model.                |
+| `-l, --listen <addr>`         | `127.0.0.1:8083`   | Address to listen on.                                                                                             |
+| `--cors-origin <origin>`      | (none)             | Allowed CORS origin (e.g. `https://example.com`). Empty disables CORS.                                            |
+| `--api-key <token>`           | (none)             | Required Bearer token clients must present (`Authorization: Bearer <token>`). Empty disables auth.                |
+| `--api-key-env <name>`        | (none)             | Read the API key from this environment variable instead of the command line.                                      |
+| `--max-request-size <bytes>`  | `1048576` (1 MiB)  | Maximum request body size.                                                                                        |
+| `--request-timeout <dur>`     | `5m`               | Per-request timeout (covers model + tool calls + streaming).                                                      |
+| `--conversations-max <n>`     | `0`                | Cache up to N conversations server-side, keyed by `X-Conversation-Id`. `0` disables — clients must resend history. |
+| `--conversation-ttl <dur>`    | `30m`              | Idle TTL after which a cached conversation is evicted.                                                            |
+| `--max-idle-runtimes <n>`     | `4`                | Maximum number of idle runtimes pooled per agent. `0` disables pooling.                                           |
+
+```bash
+# Examples
+$ docker agent serve chat agent.yaml
+$ docker agent serve chat ./team.yaml --agent reviewer
+$ docker agent serve chat agentcatalog/pirate --listen 127.0.0.1:9090
+$ docker agent serve chat agent.yaml --api-key-env CHAT_BEARER_TOKEN
+
+# Drive it from any OpenAI-compatible client
+$ curl http://127.0.0.1:8083/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -d '{"model": "root", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
 ### `docker agent share push` / `docker agent share pull`
 
 Share agents via OCI registries.
@@ -202,6 +243,16 @@ $ docker agent eval agent.yaml ./evals -c 8              # 8 concurrent evaluati
 $ docker agent eval agent.yaml --keep-containers         # Keep containers for debugging
 $ docker agent eval agent.yaml --only "auth*"            # Only run matching evals
 $ docker agent eval agent.yaml --repeat 5                # Repeat each eval 5 times
+```
+
+### `docker agent version`
+
+Print the version and commit hash for your `docker-agent` install.
+
+```bash
+$ docker agent version
+docker agent version v1.54.0
+Commit: 1737035c
 ```
 
 ### `docker agent alias`
@@ -262,12 +313,17 @@ Run an alias with: docker agent run <alias>
 
 ## Global Flags
 
-| Flag                      | Description                                                  |
-| ------------------------- | ------------------------------------------------------------ |
-| `-d, --debug`             | Enable debug logging (default: `~/.cagent/cagent.debug.log`) |
-| `--log-file &lt;path&gt;` | Custom debug log location                                    |
-| `-o, --otel`              | Enable OpenTelemetry tracing                                 |
-| `--help`                  | Show help for any command                                    |
+These flags are available on every `docker agent` command:
+
+| Flag                      | Description                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `-d, --debug`             | Enable debug logging (default location: `~/.cagent/cagent.debug.log`)                  |
+| `--log-file <path>`       | Custom debug log location (only used with `--debug`)                                   |
+| `-o, --otel`              | Enable OpenTelemetry tracing                                                           |
+| `--cache-dir <path>`      | Override the cache directory (default: `~/Library/Caches/cagent` on macOS)             |
+| `--config-dir <path>`     | Override the config directory (default: `~/.config/cagent`)                            |
+| `--data-dir <path>`       | Override the data directory (default: `~/.cagent`)                                     |
+| `--help`                  | Show help for any command                                                              |
 
 ## Agent References
 

@@ -53,6 +53,8 @@
       url: /tools/todo/
     - title: Memory
       url: /tools/memory/
+    - title: Tasks
+      url: /tools/tasks/
     - title: Fetch
       url: /tools/fetch/
     - title: Script
@@ -69,6 +71,8 @@
       url: /tools/background-agents/
     - title: Handoff
       url: /tools/handoff/
+    - title: Model Picker
+      url: /tools/model-picker/
     - title: OpenAPI
       url: /tools/openapi/
     - title: A2A

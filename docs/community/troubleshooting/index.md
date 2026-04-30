@@ -79,9 +79,14 @@ Each model provider requires its own API key as an environment variable:
 | ------------- | --------------------------------------------------- |
 | OpenAI        | `OPENAI_API_KEY`                                    |
 | Anthropic     | `ANTHROPIC_API_KEY`                                 |
-| Google Gemini | `GOOGLE_API_KEY`                                    |
+| Google Gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY`                |
 | Mistral       | `MISTRAL_API_KEY`                                   |
 | xAI           | `XAI_API_KEY`                                       |
+| Nebius        | `NEBIUS_API_KEY`                                    |
+| MiniMax       | `MINIMAX_API_KEY`                                   |
+| Requesty      | `REQUESTY_API_KEY`                                  |
+| GitHub Copilot | `GITHUB_TOKEN` (PAT with `copilot` scope)          |
+| Azure OpenAI  | `AZURE_API_KEY` (override with `token_key`)         |
 | AWS Bedrock   | `AWS_BEARER_TOKEN_BEDROCK` or AWS credentials chain |
 
 ```bash
@@ -165,7 +170,7 @@ docker-agent validates config at startup and reports errors with line numbers. C
 
 ### Port conflicts
 
-When docker-agent as an API server or MCP server, ensure the port is not already in use:
+When running docker-agent as an API server or MCP server, ensure the port is not already in use:
 
 ```bash
 # Check if port 8080 is in use
@@ -231,16 +236,16 @@ $ docker agent share pull docker.io/username/agent:latest
 
 When reviewing debug logs, search for these key patterns:
 
-| Log Pattern                 | What It Indicates                                                              |
-| --------------------------- | ------------------------------------------------------------------------------ | ---------------- |
-| `"Starting runtime stream"` | Agent execution beginning                                                      |
-| `"Tool call"`               | A tool is being executed                                                       |
-| `"Tool call result"`        | Tool execution completed                                                       |
-| `"Stream stopped"`          | Agent finished processing                                                      |
+| Log Pattern                 | What It Indicates                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `"Starting runtime stream"` | Agent execution beginning                                                                        |
+| `"Tool call"`               | A tool is being executed                                                                         |
+| `"Tool call result"`        | Tool execution completed                                                                         |
+| `"Stream stopped"`          | Agent finished processing                                                                        |
 | `HTTP 429`                  | Rate limiting — consider adding a [fallback model]({{ '/configuration/agents/' | relative_url }}) |
-| `context canceled`          | Operation was interrupted (timeout or user cancel)                             |
-| `[RAG Manager]`             | RAG retrieval operations                                                       |
-| `[Reranker]`                | Reranking operations                                                           |
+| `context canceled`          | Operation was interrupted (timeout or user cancel)                                               |
+| `[RAG Manager]`             | RAG retrieval operations                                                                         |
+| `[Reranker]`                | Reranking operations                                                                             |
 
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Still stuck?
