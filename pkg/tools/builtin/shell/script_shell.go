@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -11,10 +12,26 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
 )
+
+// CreateScriptToolSet is used by the tools registry.
+func CreateScriptToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+	if len(toolset.Shell) == 0 {
+		return nil, errors.New("shell is required for script toolset")
+	}
+
+	env, err := environment.ExpandAll(ctx, environment.ToValues(toolset.Env), runConfig.EnvProvider())
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand the tool's environment variables: %w", err)
+	}
+	env = append(env, os.Environ()...)
+	return NewScriptShellTool(toolset.Shell, env)
+}
 
 type ScriptShellTool struct {
 	shellTools map[string]latest.ScriptShellToolConfig
