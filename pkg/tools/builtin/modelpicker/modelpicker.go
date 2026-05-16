@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -17,7 +16,7 @@ const (
 )
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(_ context.Context, toolset latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(toolset latest.Toolset) (tools.ToolSet, error) {
 	if len(toolset.Models) == 0 {
 		return nil, errors.New("model_picker toolset requires at least one model")
 	}

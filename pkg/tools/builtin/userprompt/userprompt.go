@@ -7,15 +7,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 const ToolNameUserPrompt = "user_prompt"
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(context.Context, latest.Toolset, string, *config.RuntimeConfig, string) (tools.ToolSet, error) {
+func CreateToolSet() (tools.ToolSet, error) {
 	return newTool(), nil
 }
 

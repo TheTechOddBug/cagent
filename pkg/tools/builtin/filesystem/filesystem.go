@@ -127,7 +127,7 @@ func WithDenyList(roots []string) Opt {
 }
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(_ context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	wd := runConfig.WorkingDir
 	if wd == "" {
 		var err error

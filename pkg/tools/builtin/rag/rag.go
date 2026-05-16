@@ -17,7 +17,7 @@ import (
 )
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	if toolset.RAGConfig == nil {
 		return nil, errors.New("rag toolset requires rag_config (should have been resolved from ref)")
 	}

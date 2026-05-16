@@ -30,7 +30,7 @@ import (
 const httpTimeout = 30 * time.Second
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(ctx context.Context, toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	expander := js.NewJsExpander(runConfig.EnvProvider())
 
 	specURL := expander.Expand(ctx, toolset.URL, nil)

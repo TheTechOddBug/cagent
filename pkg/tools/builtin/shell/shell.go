@@ -453,7 +453,7 @@ func reapSpawnedChild(cmd *exec.Cmd, pg *processGroup) {
 }
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(ctx context.Context, toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	env, err := environment.ExpandAll(ctx, environment.ToValues(toolset.Env), runConfig.EnvProvider())
 	if err != nil {
 		return nil, fmt.Errorf("failed to expand the tool's environment variables: %w", err)

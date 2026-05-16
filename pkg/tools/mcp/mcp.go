@@ -30,7 +30,7 @@ import (
 )
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(ctx context.Context, toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	envProvider := runConfig.EnvProvider()
 	cwd := workingdir.Resolve(toolset.WorkingDir, runConfig.WorkingDir)
 

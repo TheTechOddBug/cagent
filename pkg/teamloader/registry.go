@@ -48,20 +48,48 @@ func NewDefaultToolsetRegistry() ToolsetRegistry {
 			"memory": func(_ context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, configName string) (tools.ToolSet, error) {
 				return memory.CreateToolSet(toolset, parentDir, runConfig, configName)
 			},
-			"think":             think.CreateToolSet,
-			"shell":             shell.CreateToolSet,
-			"script":            shell.CreateScriptToolSet,
-			"filesystem":        filesystem.CreateToolSet,
-			"fetch":             fetch.CreateToolSet,
-			"mcp":               mcp.CreateToolSet,
-			"api":               api.CreateToolSet,
-			"a2a":               a2a.CreateToolSet,
-			"lsp":               lsp.CreateToolSet,
-			"user_prompt":       userprompt.CreateToolSet,
-			"openapi":           openapi.CreateToolSet,
-			"model_picker":      modelpicker.CreateToolSet,
-			"background_agents": agenttool.CreateToolSet,
-			"rag":               builtinrag.CreateToolSet,
+			"think": func(_ context.Context, _ latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return think.CreateToolSet()
+			},
+			"shell": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return shell.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"script": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return shell.CreateScriptToolSet(ctx, toolset, runConfig)
+			},
+			"filesystem": func(_ context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return filesystem.CreateToolSet(toolset, runConfig)
+			},
+			"fetch": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return fetch.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"mcp": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return mcp.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"api": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return api.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"a2a": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return a2a.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"lsp": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return lsp.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"user_prompt": func(_ context.Context, _ latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return userprompt.CreateToolSet()
+			},
+			"openapi": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return openapi.CreateToolSet(ctx, toolset, runConfig)
+			},
+			"model_picker": func(_ context.Context, toolset latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return modelpicker.CreateToolSet(toolset)
+			},
+			"background_agents": func(_ context.Context, _ latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return agenttool.CreateToolSet()
+			},
+			"rag": func(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return builtinrag.CreateToolSet(ctx, toolset, parentDir, runConfig)
+			},
 		},
 	}
 }

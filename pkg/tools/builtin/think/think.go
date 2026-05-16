@@ -4,15 +4,13 @@ import (
 	"context"
 	"strings"
 
-	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 const ToolNameThink = "think"
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(context.Context, latest.Toolset, string, *config.RuntimeConfig, string) (tools.ToolSet, error) {
+func CreateToolSet() (tools.ToolSet, error) {
 	return newTool(), nil
 }
 

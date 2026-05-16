@@ -91,7 +91,7 @@ func (t *Tool) callTool(ctx context.Context, toolCall tools.ToolCall) (*tools.To
 }
 
 // CreateToolSet is used by the tools registry.
-func CreateToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateToolSet(ctx context.Context, toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	if toolset.APIConfig.Endpoint == "" {
 		return nil, errors.New("api tool requires an endpoint in api_config")
 	}

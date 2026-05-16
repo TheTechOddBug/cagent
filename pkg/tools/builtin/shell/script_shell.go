@@ -20,7 +20,7 @@ import (
 )
 
 // CreateScriptToolSet is used by the tools registry.
-func CreateScriptToolSet(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func CreateScriptToolSet(ctx context.Context, toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
 	if len(toolset.Shell) == 0 {
 		return nil, errors.New("shell is required for script toolset")
 	}
