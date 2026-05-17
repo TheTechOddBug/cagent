@@ -1,6 +1,9 @@
 package concurrent
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 type Map[K comparable, V any] struct {
 	mu     sync.RWMutex
@@ -25,6 +28,9 @@ func (m *Map[K, V]) Store(key K, value V) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.values == nil {
+		m.values = make(map[K]V)
+	}
 	m.values[key] = value
 }
 
@@ -42,11 +48,20 @@ func (m *Map[K, V]) Length() int {
 	return len(m.values)
 }
 
+// Range calls f for every key/value pair in the map. Iteration stops early if
+// f returns false.
+//
+// Range iterates over a snapshot of the map taken under a read lock; f is
+// invoked without holding any lock, which means callbacks may safely call
+// other methods on the same Map (including Store and Delete) without
+// deadlocking. As a consequence, mutations performed during iteration are not
+// reflected in the values seen by f.
 func (m *Map[K, V]) Range(f func(key K, value V) bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	snapshot := maps.Clone(m.values)
+	m.mu.RUnlock()
 
-	for k, v := range m.values {
+	for k, v := range snapshot {
 		if !f(k, v) {
 			break
 		}

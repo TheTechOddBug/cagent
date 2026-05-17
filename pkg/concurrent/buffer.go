@@ -2,6 +2,7 @@ package concurrent
 
 import (
 	"bytes"
+	"slices"
 	"sync"
 )
 
@@ -25,6 +26,21 @@ func (b *Buffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// Bytes returns a copy of the buffered content as a byte slice.
+// The returned slice is safe to retain and modify.
+func (b *Buffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.buf.Bytes())
+}
+
+// Len returns the number of bytes currently buffered.
+func (b *Buffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
 }
 
 // Reset clears the buffer.

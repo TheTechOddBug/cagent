@@ -71,6 +71,13 @@ func TestSlice_All(t *testing.T) {
 	assert.Equal(t, 1, val)
 }
 
+func TestSlice_AllEmpty(t *testing.T) {
+	s := NewSlice[int]()
+	all := s.All()
+	assert.NotNil(t, all)
+	assert.Empty(t, all)
+}
+
 func TestSlice_Range(t *testing.T) {
 	s := NewSlice[int]()
 	s.Append(10)

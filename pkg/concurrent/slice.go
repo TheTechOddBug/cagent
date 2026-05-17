@@ -11,7 +11,9 @@ type Slice[V any] struct {
 }
 
 func NewSlice[V any]() *Slice[V] {
-	return &Slice[V]{}
+	return &Slice[V]{
+		values: []V{},
+	}
 }
 
 func (s *Slice[V]) Append(value V) {
@@ -57,6 +59,12 @@ func (s *Slice[V]) All() []V {
 	return slices.Clone(s.values)
 }
 
+// Range calls f for every element in the slice. Iteration stops early if f
+// returns false.
+//
+// f is invoked while a read lock is held on the slice. Callbacks must not
+// call methods that acquire the write lock (Append, Set, Update, Clear) on
+// the same Slice, or a deadlock will occur.
 func (s *Slice[V]) Range(f func(index int, value V) bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -68,6 +76,12 @@ func (s *Slice[V]) Range(f func(index int, value V) bool) {
 	}
 }
 
+// Find returns the first element for which predicate returns true, along with
+// its index, or the zero value and -1 if no element matches.
+//
+// predicate is invoked while a read lock is held on the slice. It must not
+// call methods that acquire the write lock (Append, Set, Update, Clear) on
+// the same Slice, or a deadlock will occur.
 func (s *Slice[V]) Find(predicate func(V) bool) (V, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -81,6 +95,12 @@ func (s *Slice[V]) Find(predicate func(V) bool) (V, int) {
 	return zero, -1
 }
 
+// Update replaces the element at index with the result of f applied to the
+// current value, returning true on success. If index is out of range, Update
+// returns false and f is not called.
+//
+// f is invoked while the write lock is held on the slice. It must not call
+// any other method on the same Slice, or a deadlock will occur.
 func (s *Slice[V]) Update(index int, f func(V) V) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
