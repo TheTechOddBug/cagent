@@ -103,8 +103,19 @@ func (c *diskCache) Get(baseURL, skillName, filePath string) (string, bool) {
 }
 
 // FetchAndStore downloads a file from the given URL and stores it in the cache.
-// It respects Cache-Control headers to determine expiry, and skips the disk
-// write entirely when the response is marked no-store (RFC 9111 §5.2.2.5).
+// It respects Cache-Control headers to determine expiry: no-cache forces
+// immediate expiry, max-age=N sets a TTL of N seconds, and unknown headers
+// fall back to defaultCacheTTL.
+//
+// no-store is treated as "do not retain across Load() cycles": the entry is
+// written to disk but with an immediate-expiry marker so the next prefetch
+// refetches it. We do not skip the disk write entirely because callers
+// (notably the read_skill tool, see pkg/tools/builtin/skills) consume the
+// content by re-reading skill.FilePath, not by going through diskCache.Get.
+// Skipping the write would render the skill unreadable for the rest of the
+// current process. A future improvement is to keep no-store content in an
+// in-memory map shared with the reader; until then we trade strict RFC
+// 9111 §5.2.2.5 compliance for a working tool.
 func (c *diskCache) FetchAndStore(ctx context.Context, baseURL, skillName, filePath, fileURL string) (string, error) {
 	slog.DebugContext(ctx, "Fetching remote skill file", "url", fileURL)
 
@@ -124,16 +135,6 @@ func (c *diskCache) FetchAndStore(ctx context.Context, baseURL, skillName, fileP
 	}
 
 	directive := parseCacheControl(resp.Header.Get("Cache-Control"))
-
-	// Honour no-store: never persist the response. This matters because the
-	// fetched content is fed to the LLM as instructions, so persisting an
-	// upstream-marked-private response on disk under ~/.cagent is both a
-	// privacy hazard (lingering sensitive content) and a correctness bug
-	// per RFC 9111 §5.2.2.5.
-	if directive.noStore {
-		slog.DebugContext(ctx, "Cache-Control no-store: skipping disk write", "url", fileURL)
-		return string(body), nil
-	}
 
 	dir := c.cacheDir(baseURL, skillName)
 	contentPath := filepath.Join(dir, filePath)
@@ -185,12 +186,16 @@ type cacheDirective struct {
 }
 
 // expiresAt returns the absolute time after which the cached entry must
-// not be served. no-cache forces immediate expiry — the response may be
-// stored, but every read must re-validate (we currently approximate this
-// as a refetch since conditional-GET support isn't implemented yet).
+// not be reused. no-store and no-cache both force immediate expiry: the
+// response may be on disk for the duration of the current process (so the
+// in-process reader can consume it), but the next Load() cycle will
+// refetch instead of reusing the stored copy. We currently approximate
+// no-cache without conditional-GET support; the practical effect is the
+// same as no-store with respect to whether the next read sees fresh
+// content.
 func (d cacheDirective) expiresAt() time.Time {
 	now := time.Now()
-	if d.noCache {
+	if d.noStore || d.noCache {
 		return now
 	}
 	if d.hasMaxAge {

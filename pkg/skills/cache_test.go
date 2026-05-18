@@ -129,9 +129,10 @@ func TestParseCacheControl(t *testing.T) {
 		assert.WithinDuration(t, now, d.expiresAt(), 2*time.Second)
 	})
 
-	t.Run("no-store", func(t *testing.T) {
+	t.Run("no-store forces immediate expiry", func(t *testing.T) {
 		d := parseCacheControl("no-store")
 		assert.True(t, d.noStore)
+		assert.WithinDuration(t, now, d.expiresAt(), 2*time.Second)
 	})
 
 	t.Run("no-cache forces immediate expiry", func(t *testing.T) {
@@ -168,12 +169,19 @@ func TestDiskCache_HTTPError(t *testing.T) {
 	assert.Contains(t, err.Error(), "HTTP 404")
 }
 
-// TestDiskCache_NoStoreSkipsDiskWrite verifies that a Cache-Control: no-store
-// response is returned in-memory but never persisted, per RFC 9111 §5.2.2.5.
-// The skills cache feeds fetched content to the LLM as instructions, so
-// persisting an upstream-marked-private response under ~/.cagent would be
-// both a privacy hazard and a spec violation.
-func TestDiskCache_NoStoreSkipsDiskWrite(t *testing.T) {
+// TestDiskCache_NoStoreStoresButExpiresImmediately verifies that a
+// Cache-Control: no-store response is still written to disk (so the
+// in-process reader at pkg/tools/builtin/skills can consume it via
+// readFileContent(skill.FilePath)) but is marked expired so the next
+// Load() refetches instead of reusing the stored copy.
+//
+// We deliberately diverge from RFC 9111 §5.2.2.5 ("the cache MUST NOT
+// store any part of either the immediate request or response") because
+// the consumer reads files directly, not through diskCache.Get. Skipping
+// the write entirely would render no-store skills unreadable for the
+// rest of the process. A future refactor (in-memory cache shared with
+// the reader) can make this strictly RFC-compliant.
+func TestDiskCache_NoStoreStoresButExpiresImmediately(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		fmt.Fprint(w, "private content")
@@ -186,17 +194,16 @@ func TestDiskCache_NoStoreSkipsDiskWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "private content", content)
 
-	// Nothing must have been persisted under the cache directory.
+	// The reader reads skill.FilePath directly, so the file must exist.
 	filePath := filepath.Join(cache.cacheDir("https://example.com", "skill"), "SKILL.md")
-	_, err = os.Stat(filePath)
-	require.ErrorIs(t, err, os.ErrNotExist, "no-store response must not be written to disk")
+	data, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	assert.Equal(t, "private content", string(data))
 
-	_, err = os.Stat(filePath + ".meta")
-	require.ErrorIs(t, err, os.ErrNotExist, "no-store response must not have metadata persisted")
-
-	// And subsequent Get() must report a miss.
+	// But Get() must report a miss so prefetchFiles will refetch on the
+	// next Load() cycle rather than reusing a stale entry.
 	_, ok := cache.Get("https://example.com", "skill", "SKILL.md")
-	assert.False(t, ok)
+	assert.False(t, ok, "no-store must force a refetch on the next read")
 }
 
 // TestDiskCache_NoCacheStoresButExpiresImmediately verifies that no-cache
