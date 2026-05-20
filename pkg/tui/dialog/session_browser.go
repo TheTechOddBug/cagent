@@ -253,6 +253,9 @@ func (d *sessionBrowserDialog) filterSessions() {
 	if d.selected >= len(d.filtered) {
 		d.selected = max(0, len(d.filtered)-1)
 	}
+	// Keep the scrollview's totalHeight in sync so EnsureLineVisible and the
+	// scrollbar clamp correctly even before View() runs.
+	d.scrollview.SetContent(nil, len(d.filtered))
 	d.scrollview.SetScrollOffset(0)
 }
 
@@ -285,13 +288,6 @@ func (d *sessionBrowserDialog) View() string {
 	dialogWidth, _, contentWidth := d.dialogSize()
 	d.textInput.SetWidth(contentWidth)
 
-	// Build all session lines
-	var allLines []string
-	for i, sess := range d.filtered {
-		allLines = append(allLines, d.renderSession(sess, i == d.selected, contentWidth))
-	}
-
-	// Configure scrollview and let it handle slicing + rendering
 	regionWidth := contentWidth + d.scrollview.ReservedCols()
 	visibleLines := d.scrollview.VisibleHeight()
 
@@ -299,10 +295,16 @@ func (d *sessionBrowserDialog) View() string {
 	dialogRow, dialogCol := d.Position()
 	d.scrollview.SetPosition(dialogCol+3, dialogRow+sessionBrowserListStartY)
 
-	d.scrollview.SetContent(allLines, len(allLines))
+	// Tell the scrollview the total content height and re-clamp the offset
+	// against it. Pass nil for lines because we render only the visible
+	// window below — rendering every row on every keystroke is the dominant
+	// cost when there are many sessions.
+	total := len(d.filtered)
+	d.scrollview.SetContent(nil, total)
+	d.scrollview.SetScrollOffset(d.scrollview.ScrollOffset())
 
 	var scrollableContent string
-	if len(d.filtered) == 0 {
+	if total == 0 {
 		// Empty state: render manually so "No sessions found" is centered
 		emptyLines := []string{"", styles.DialogContentStyle.
 			Italic(true).Align(lipgloss.Center).Width(contentWidth).
@@ -312,7 +314,13 @@ func (d *sessionBrowserDialog) View() string {
 		}
 		scrollableContent = d.scrollview.ViewWithLines(emptyLines)
 	} else {
-		scrollableContent = d.scrollview.View()
+		offset := d.scrollview.ScrollOffset()
+		end := min(offset+visibleLines, total)
+		windowLines := make([]string, 0, end-offset)
+		for i := offset; i < end; i++ {
+			windowLines = append(windowLines, d.renderSession(d.filtered[i], i == d.selected, contentWidth))
+		}
+		scrollableContent = d.scrollview.ViewWithLines(windowLines)
 	}
 
 	// Build title with session count and optional star-filter indicator.
