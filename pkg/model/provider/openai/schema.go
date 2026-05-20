@@ -30,7 +30,11 @@ func ConvertParametersToSchema(params any) (shared.FunctionParameters, bool, err
 // isStrictCompatible reports whether the schema can use OpenAI strict mode.
 // Strict mode requires every object node to have additionalProperties: false.
 // Schema-form additionalProperties (a map) and additionalProperties: true are
-// both incompatible. The walk stops at the first incompatible node.
+// both incompatible.
+//
+// The decision is per-tool and all-or-nothing: a single non-compliant node
+// anywhere in the schema disables strict mode for the whole tool. The walk
+// stops at the first incompatible node.
 func isStrictCompatible(schema map[string]any) bool {
 	return !hasIncompatibleNode(schema)
 }

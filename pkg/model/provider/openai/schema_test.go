@@ -213,7 +213,7 @@ func TestMakeAllRequired_AdditionalProperties(t *testing.T) {
 	assert.Equal(t, "string", bulletedListItem["type"])
 }
 
-func TestMakeAllRequired_JiraEditIssueFields(t *testing.T) {
+func TestConvertParametersToSchema_JiraEditIssueFields(t *testing.T) {
 	// Regression for the Atlassian remote MCP `editJiraIssue` tool, whose
 	// `fields` property declared additionalProperties as an object schema.
 	schema := shared.FunctionParameters{
