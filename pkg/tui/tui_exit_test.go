@@ -147,16 +147,10 @@ func newTestModel() (*appModel, *mockEditor) {
 	return m, ed
 }
 
-// neutralizeExitFunc replaces the package-level exitFunc with a no-op for
-// the duration of the test so that the safety-net goroutine spawned by
-// cleanupAll doesn't call os.Exit. It also shrinks shutdownTimeout so the
-// safety-net goroutine fires quickly, and waits for it to fire (or for a
-// short timeout) before restoring the originals so that subsequent tests
-// don't race against a pending background goroutine.
-//
-// Tests that call this helper must NOT use t.Parallel(): exitFunc and
-// shutdownTimeout are package-level variables, and concurrent mutation
-// from sibling tests would race with the cleanup that restores them.
+// neutralizeExitFunc replaces exitFunc with a no-op for the duration of the
+// test and waits for the safety-net goroutine to fire (or time out) before
+// restoring the originals. Tests using this helper must NOT use t.Parallel()
+// because exitFunc and shutdownTimeout are package globals.
 func neutralizeExitFunc(t *testing.T) {
 	t.Helper()
 
@@ -171,9 +165,6 @@ func neutralizeExitFunc(t *testing.T) {
 	shutdownTimeout = 10 * time.Millisecond
 
 	t.Cleanup(func() {
-		// Wait for any pending safety-net goroutine to observe our no-op
-		// exitFunc, but with a deadline so tests that never trigger
-		// cleanupAll don't block.
 		select {
 		case <-fired:
 		case <-time.After(200 * time.Millisecond):
@@ -255,9 +246,8 @@ func (w *blockingWriter) unblock() {
 	w.mu.Unlock()
 }
 
-// quitModel is a minimal bubbletea model that requests alt-screen output
-// and quits in response to a trigger message. An optional onQuit callback
-// runs inside Update before tea.Quit is returned.
+// quitModel is a minimal bubbletea model that requests alt-screen and quits
+// on triggerQuitMsg. onQuit, if set, runs before tea.Quit.
 type quitModel struct {
 	onQuit func()
 }
@@ -282,9 +272,9 @@ func (m *quitModel) View() tea.View {
 	return v
 }
 
-// initBlockingBubbletea creates a bubbletea program whose output writer
-// blocks. It lets the initial render complete (so the event loop is ready)
-// then re-blocks the writer. Returns the program and the writer.
+// initBlockingBubbletea starts a bubbletea program whose stdout will block
+// the renderer on its next flush. Used to reproduce the wedged-renderer
+// shutdown deadlock.
 func initBlockingBubbletea(t *testing.T, model tea.Model) (*tea.Program, *blockingWriter, <-chan struct{}) {
 	t.Helper()
 
@@ -303,26 +293,24 @@ func initBlockingBubbletea(t *testing.T, model tea.Model) (*tea.Program, *blocki
 		_, _ = p.Run()
 	}()
 
-	// Wait for the initial render to hit the blocking writer.
 	select {
 	case <-w.blocked:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for initial write to block")
 	}
 
-	// Let the initial writes through so the event loop starts.
+	// Let the initial writes through so the event loop starts, then re-block
+	// so the next flush stalls.
 	w.unblock()
 	time.Sleep(200 * time.Millisecond)
-
-	// Re-block so the next renderer flush will stall.
 	w.reblock()
 
 	return p, w, runDone
 }
 
-// TestCleanupAll_SpawnsSafetyNet verifies that cleanupAll spawns a goroutine
-// that calls exitFunc after shutdownTimeout. Without the safety net, the
-// process would hang when bubbletea's renderer deadlocks on exit.
+// TestCleanupAll_SpawnsSafetyNet: an unstarted Program has a nil finished
+// channel, so Wait() blocks forever — same shape as a real renderer
+// deadlock. exitFunc must fire after shutdownTimeout.
 func TestCleanupAll_SpawnsSafetyNet(t *testing.T) {
 	origTimeout := shutdownTimeout
 	origExitFunc := exitFunc
@@ -338,6 +326,7 @@ func TestCleanupAll_SpawnsSafetyNet(t *testing.T) {
 	}
 
 	m, _ := newTestModel()
+	m.program = tea.NewProgram(&quitModel{})
 	m.cleanupAll()
 
 	select {
@@ -348,38 +337,166 @@ func TestCleanupAll_SpawnsSafetyNet(t *testing.T) {
 	}
 }
 
-// TestExitDeadlock_BlockedStdout proves that bubbletea's p.Run() hangs when
-// stdout blocks during the final render after tea.Quit. This is the underlying
-// bug that the safety net in cleanupAll works around.
+// TestCleanupAll_GracefulShutdownSkipsExit: when Wait() returns promptly,
+// the safety net must not call exitFunc.
+func TestCleanupAll_GracefulShutdownSkipsExit(t *testing.T) {
+	origTimeout := shutdownTimeout
+	origExitFunc := exitFunc
+	t.Cleanup(func() {
+		shutdownTimeout = origTimeout
+		exitFunc = origExitFunc
+	})
+	shutdownTimeout = 2 * time.Second
+
+	var exitCalled atomic.Bool
+	exitFunc = func(int) { exitCalled.Store(true) }
+
+	var in, out bytes.Buffer
+	p := tea.NewProgram(&quitModel{},
+		tea.WithContext(t.Context()),
+		tea.WithInput(&in),
+		tea.WithOutput(&out),
+	)
+
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_, _ = p.Run()
+	}()
+
+	// Send blocks until the program is running, which guarantees Run() has
+	// initialized p.finished — otherwise Wait() races the assignment.
+	p.Send(syncMsg{})
+
+	m, _ := newTestModel()
+	m.program = p
+	m.cleanupAll()
+
+	p.Send(triggerQuitMsg{})
+
+	select {
+	case <-runDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("p.Run() did not return within deadline")
+	}
+
+	// Let the safety-net goroutine observe Wait() returning.
+	time.Sleep(100 * time.Millisecond)
+	assert.False(t, exitCalled.Load(),
+		"exitFunc must not fire on prompt shutdown")
+}
+
+// syncMsg pings the program's event loop to confirm Run() has started.
+type syncMsg struct{}
+
+// TestCleanupAll_NilProgramIsSafe: with no program wired, cleanupAll is a
+// no-op and exitFunc is never called.
+func TestCleanupAll_NilProgramIsSafe(t *testing.T) {
+	origTimeout := shutdownTimeout
+	origExitFunc := exitFunc
+	t.Cleanup(func() {
+		shutdownTimeout = origTimeout
+		exitFunc = origExitFunc
+	})
+	shutdownTimeout = 20 * time.Millisecond
+
+	var exitCalled atomic.Bool
+	exitFunc = func(int) { exitCalled.Store(true) }
+
+	m, _ := newTestModel()
+	m.program = nil
+	assert.NotPanics(t, func() { m.cleanupAll() })
+
+	time.Sleep(shutdownTimeout + 50*time.Millisecond)
+	assert.False(t, exitCalled.Load(), "exitFunc must not fire without a program")
+}
+
+// TestCleanupAll_WedgedStdoutFiresExit: the realistic case. The renderer is
+// stuck on a wedged stdout write, and once tea.Quit fires the final flush
+// would itself re-acquire the same mutex — a hard deadlock. Wait() never
+// returns and ReleaseTerminal would block too; exitFunc must still fire.
+func TestCleanupAll_WedgedStdoutFiresExit(t *testing.T) {
+	origTimeout := shutdownTimeout
+	origExitFunc := exitFunc
+	t.Cleanup(func() {
+		shutdownTimeout = origTimeout
+		exitFunc = origExitFunc
+	})
+	shutdownTimeout = 300 * time.Millisecond
+
+	exitDone := make(chan struct{})
+	exitFunc = func(int) { close(exitDone) }
+
+	p, w, _ := initBlockingBubbletea(t, &quitModel{})
+	defer w.unblock()
+
+	m, _ := newTestModel()
+	m.program = p
+	m.cleanupAll()
+
+	// Drive the program into the deadlock path: tea.Quit triggers the final
+	// render flush against the wedged writer, which is the actual upstream
+	// bug the safety net guards against.
+	p.Send(triggerQuitMsg{})
+
+	select {
+	case <-exitDone:
+	case <-time.After(shutdownTimeout + 2*time.Second):
+		t.Fatal("exitFunc was not called — safety net is blocked by ReleaseTerminal")
+	}
+}
+
+// TestCleanupAll_MultipleCallsFireExitOnce: cleanupAll is invoked from
+// several message handlers (ExitSessionMsg, ExitConfirmedMsg, …) and may
+// run more than once on the same model. Each safety-net goroutine snapshots
+// exitFunc, so without a guard each one would call exit(0) on timeout —
+// fine in production where exit is os.Exit, fatal in tests where it's a
+// channel close.
+func TestCleanupAll_MultipleCallsFireExitOnce(t *testing.T) {
+	origTimeout := shutdownTimeout
+	origExitFunc := exitFunc
+	t.Cleanup(func() {
+		shutdownTimeout = origTimeout
+		exitFunc = origExitFunc
+	})
+	shutdownTimeout = 100 * time.Millisecond
+
+	var exitCount atomic.Int32
+	exitFunc = func(int) { exitCount.Add(1) }
+
+	m, _ := newTestModel()
+	m.program = tea.NewProgram(&quitModel{})
+
+	m.cleanupAll()
+	m.cleanupAll()
+	m.cleanupAll()
+
+	time.Sleep(shutdownTimeout + 200*time.Millisecond)
+	assert.Equal(t, int32(1), exitCount.Load(),
+		"only the first cleanupAll should arm a safety net")
+}
+
+// TestExitDeadlock_BlockedStdout proves the underlying bubbletea bug: Run()
+// hangs when stdout blocks during the final render after tea.Quit.
 func TestExitDeadlock_BlockedStdout(t *testing.T) {
 	t.Parallel()
 
 	model := &quitModel{}
 	p, w, runDone := initBlockingBubbletea(t, model)
 
-	// Trigger quit — the event loop will deadlock trying to render.
 	p.Send(triggerQuitMsg{})
 
-	// Verify that p.Run() does NOT return within a reasonable window.
 	select {
 	case <-runDone:
 		t.Skip("bubbletea returned without deadlocking; upstream fix may have landed")
 	case <-time.After(2 * time.Second):
-		// Expected: p.Run() is stuck.
 	}
 
-	// Unblock everything to let goroutines drain.
 	w.unblock()
 }
 
-// TestExitSafetyNet_BlockedStdout verifies that when bubbletea's renderer
-// is stuck writing to stdout (terminal buffer full), the shutdown safety net
-// forces the process to exit.
-//
-// Background: bubbletea's cursed renderer holds a mutex during io.Copy to
-// stdout. If stdout blocks (e.g. full PTY buffer), the event loop's final
-// render call after tea.Quit deadlocks on the same mutex. Without the safety
-// net the process hangs forever.
+// TestExitSafetyNet_BlockedStdout: with a wedged renderer, an external
+// safety-net (simulated here in onQuit) must force the process to exit.
 func TestExitSafetyNet_BlockedStdout(t *testing.T) {
 	t.Parallel()
 
@@ -402,7 +519,6 @@ func TestExitSafetyNet_BlockedStdout(t *testing.T) {
 	p, w, runDone := initBlockingBubbletea(t, model)
 	defer w.unblock()
 
-	// Trigger quit — the model's onQuit starts the safety net.
 	p.Send(triggerQuitMsg{})
 
 	select {
@@ -410,14 +526,14 @@ func TestExitSafetyNet_BlockedStdout(t *testing.T) {
 		assert.True(t, exitCalled.Load())
 		assert.Equal(t, 0, code)
 	case <-runDone:
-		// p.Run() returned on its own — also acceptable.
+		// Run() returned on its own — also acceptable.
 	case <-time.After(safetyNetTimeout + 2*time.Second):
-		t.Fatal("neither p.Run() returned nor safety-net exitFunc fired within the deadline")
+		t.Fatal("neither Run() returned nor safety-net exitFunc fired")
 	}
 }
 
-// TestExitSafetyNet_GracefulShutdown verifies that when bubbletea shuts down
-// normally (no blocked stdout), p.Run() returns before the safety net fires.
+// TestExitSafetyNet_GracefulShutdown: on a clean shutdown, Run() must return
+// before the safety net fires.
 func TestExitSafetyNet_GracefulShutdown(t *testing.T) {
 	t.Parallel()
 
@@ -456,7 +572,6 @@ func TestExitSafetyNet_GracefulShutdown(t *testing.T) {
 		runDone <- err
 	}()
 
-	// Give bubbletea time to initialise.
 	time.Sleep(200 * time.Millisecond)
 
 	p.Send(triggerQuitMsg{})
@@ -465,11 +580,11 @@ func TestExitSafetyNet_GracefulShutdown(t *testing.T) {
 	case err := <-runDone:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("p.Run() did not return within deadline for graceful shutdown")
+		t.Fatal("p.Run() did not return")
 	}
 
 	mu.Lock()
-	assert.True(t, cleanupCalled, "cleanup should have been called")
+	assert.True(t, cleanupCalled)
 	mu.Unlock()
-	assert.False(t, exitCalled.Load(), "exitFunc should NOT fire during graceful shutdown")
+	assert.False(t, exitCalled.Load(), "exitFunc must not fire on graceful shutdown")
 }
