@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/desktop"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/sandbox"
@@ -99,51 +98,38 @@ func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runCon
 	// ...) but blocks every *.docker.com host as well as every
 	// package-registry / source-host the auto-installer reaches for.
 	// Open the minimum: the configured Docker AI gateway when set, and
-	// the package-host set only when the kit-build determined the
-	// agent has at least one MCP / LSP toolset that may auto-install.
-	needsToolInstall := kitResult != nil && kitResult.NeedsToolInstall
-	allowSandboxHosts(ctx, backend, name, runConfig.ModelsGateway, needsToolInstall)
+	// the per-toolset package hosts the kit-build resolved against the
+	// aqua registry. The kit narrows by package type (Go module proxy
+	// for go_install, GitHub releases for github_release) so we don't
+	// open holes for hosts the agent doesn't actually need.
+	var toolHosts []string
+	if kitResult != nil {
+		toolHosts = kitResult.ToolInstallHosts
+	}
+	allowSandboxHosts(ctx, backend, name, runConfig.ModelsGateway, toolHosts)
 
 	// Resolve env vars the agent needs and forward them into the sandbox.
 	// Docker Desktop proxies well-known API keys automatically; this handles
 	// any additional vars (e.g. MCP tool secrets).
 	envFlags, envVars := sandbox.EnvForAgent(ctx, agentRef, envProvider)
 
-	// Forward the gateway via the docker-agent process env (not as an
-	// inline `-e KEY=VALUE` argument) so a gateway URL that happens to
-	// carry credentials never leaks into the slog'd `docker sandbox
-	// exec` argv.
+	// Forward the gateway by name so a URL with credentials never
+	// shows up in the slog'd `docker sandbox exec` argv. We do not
+	// forward DOCKER_TOKEN: inside the sandbox it must come only from
+	// sandbox-tokens.json (kept fresh by StartTokenWriterIfNeeded).
 	if gateway := runConfig.ModelsGateway; gateway != "" {
 		envFlags = append(envFlags, "-e", envModelsGateway)
 		envVars = append(envVars, envModelsGateway+"="+gateway)
-
-		// Forward a *fresh* Docker Desktop token. We deliberately bypass
-		// envProvider here: that chain consults the OS environment first,
-		// where any pre-existing DOCKER_TOKEN value is by definition stale
-		// (the gateway issues short-lived JWTs that expire roughly
-		// hourly). Going straight to the Docker Desktop backend gives us
-		// the same fresh token that [sandbox.StartTokenWriterIfNeeded]
-		// will keep refreshing in the background; seeding it as an env
-		// var lets the inner agent's startup check
-		// ([config.CheckRequiredEnvVars]) succeed even on existing sandbox
-		// images that read sandbox-tokens.json from the wrong path because
-		// of the persistent-pre-run bug fixed in pkg/cli/flags.go.
-		//
-		// Like the gateway above, the token is forwarded by name only —
-		// it would otherwise show up in the slog'd argv as plaintext.
-		if token := desktop.GetToken(ctx); token != "" {
-			envFlags = append(envFlags, "-e", environment.DockerDesktopTokenEnv)
-			envVars = append(envVars, environment.DockerDesktopTokenEnv+"="+token)
-		}
 	}
 
-	// Point the in-sandbox resolvers at the staged kit. We use the
-	// `-e KEY=VALUE` form so the value is set directly inside the
-	// container; we deliberately do not append it to envVars (which
-	// would set it on the host docker CLI process too — a path that
-	// only makes sense inside the sandbox).
+	// Point the in-sandbox resolvers at the staged kit. The sandbox CLI
+	// exposes extra workspaces at the same path as on the host, so we
+	// forward HostDir verbatim. We use the `-e KEY=VALUE` form so the
+	// value is set directly inside the container; we deliberately do not
+	// append it to envVars (which would set it on the host docker CLI
+	// process too — a path that only makes sense inside the sandbox).
 	if kitResult != nil {
-		envFlags = append(envFlags, "-e", skills.KitDirEnv+"="+kit.MountPath)
+		envFlags = append(envFlags, "-e", skills.KitDirEnv+"="+kitResult.HostDir)
 	}
 
 	dockerCmd := backend.BuildExecCmd(ctx, name, wd, dockerAgentArgs, envFlags, envVars)
@@ -194,55 +180,31 @@ func dockerAgentArgs(cmd *cobra.Command, args []string, configDir string) []stri
 	return dockerAgentArgs
 }
 
-// autoInstallHosts is the set of hostnames the toolinstall package
-// reaches for when fetching tools at runtime: the aqua registry data
-// (raw.githubusercontent.com), the GitHub API (latest release
-// resolution), GitHub releases themselves, the redirected release
-// asset host (objects.githubusercontent.com), and the Go module
-// proxy + checksum DB used by `go install`. We allowlist this whole
-// set whenever a sandbox is launched with the kit pipeline so that
-// auto-install — which is on by default for every lsp / mcp toolset
-// — can actually fetch what it needs. Without this, missing tools
-// (gopls, golangci-lint, ...) report a misleading "403 blocked by
-// network policy" from go install / curl instead of installing.
-var autoInstallHosts = []string{
-	"github.com",
-	"api.github.com",
-	"raw.githubusercontent.com",
-	"objects.githubusercontent.com",
-	"codeload.github.com",
-	"proxy.golang.org",
-	"sum.golang.org",
-	// `go install` downloads the Go toolchain from Google's blob
-	// storage when a module's go.mod pins a newer Go than the one
-	// already in the sandbox image.
-	"storage.googleapis.com",
-}
-
 // allowSandboxHosts adds per-sandbox allow-network rules for every
 // host the in-sandbox runtime is known to need: the configured
 // models gateway (when set) and the package hosts the auto-installer
-// reaches for (when needsToolInstall is true). The default sandbox
-// proxy denies all of them; without this, the inner agent's first
-// request returns a misleading "403 Blocked by network policy".
+// reaches for (when the kit build identified at least one
+// auto-installable toolset). The default sandbox proxy denies all of
+// them; without this, the inner agent's first request returns a
+// misleading "403 Blocked by network policy".
 //
 // Holes are punched only when the corresponding feature is in play:
 //   - the gateway host is added only when gatewayURL is non-empty;
-//   - the autoInstallHosts set is added only when needsToolInstall
-//     is true (i.e. the kit build saw at least one MCP / LSP
-//     toolset that might auto-install). Sandboxes that don't run
-//     auto-install keep the strict default-deny.
+//   - the per-agent install hosts come from the kit build, which
+//     looks each toolset up against the aqua registry and contributes
+//     only the hosts that toolset's install path actually uses (Go
+//     module proxy + toolchain bootstrap for go_install packages,
+//     GitHub release hosts for github_release packages). When a
+//     lookup failed, the kit folds in [toolinstall.FallbackHosts]
+//     so the run can still succeed.
 //
 // Best-effort: a malformed gateway URL or a backend that doesn't
 // support per-sandbox policies is logged at debug level and the run
 // proceeds. The user will then see a network-policy 403 from the
 // inner and we surface that diagnostic verbatim.
-func allowSandboxHosts(ctx context.Context, backend *sandbox.Backend, name, gatewayURL string, needsToolInstall bool) {
+func allowSandboxHosts(ctx context.Context, backend *sandbox.Backend, name, gatewayURL string, toolInstallHosts []string) {
 	var hosts []string
-
-	if needsToolInstall {
-		hosts = append(hosts, autoInstallHosts...)
-	}
+	hosts = append(hosts, toolInstallHosts...)
 
 	if gatewayURL != "" {
 		if h := gatewayHostPort(gatewayURL); h != "" {
@@ -420,15 +382,27 @@ func printModelsGateway(w io.Writer, gateway string) {
 	fmt.Fprintf(w, "Models gateway: %s (allowlisting %s in the sandbox proxy)\n", display, host)
 }
 
-// printToolInstallAllowance prints a single line announcing whether
-// the package-host allowlist was opened for this sandbox, and why.
-// We surface this so the user sees what holes were punched in the
-// default-deny network policy. Silent when the kit isn't built or
-// when no auto-installable toolset was detected.
+// printToolInstallAllowance prints a multi-line description of the
+// package-host allowlist opened for this sandbox: a one-liner
+// summary followed by every host on its own indented line so the
+// user can see exactly what holes the run punched in the default-
+// deny network policy. Silent when the kit isn't built or when no
+// auto-installable toolset was detected.
+//
+// When per-toolset registry resolution failed for at least one
+// toolset, a best-effort fallback union was used instead and a
+// warning line names each unresolved toolset so the user can spot
+// why the allowlist is wider than expected.
 func printToolInstallAllowance(w io.Writer, kitResult *kit.Result) {
 	if kitResult == nil || !kitResult.NeedsToolInstall {
 		return
 	}
-	fmt.Fprintf(w, "Tool install: agent has at least one MCP/LSP toolset, allowlisting %d package hosts in the sandbox proxy\n",
-		len(autoInstallHosts))
+	fmt.Fprintf(w, "Tool install: agent has at least one MCP/LSP toolset, allowlisting %d package host(s) in the sandbox proxy:\n",
+		len(kitResult.ToolInstallHosts))
+	for _, h := range kitResult.ToolInstallHosts {
+		fmt.Fprintf(w, "  - %s\n", h)
+	}
+	for _, e := range kitResult.ToolInstallHostsResolutionErr {
+		fmt.Fprintf(w, "  ! %s (using fallback host set)\n", e.Error())
+	}
 }

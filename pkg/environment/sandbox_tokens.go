@@ -152,13 +152,19 @@ func (w *SandboxTokenWriter) writeOnce(ctx context.Context) {
 		return
 	}
 
-	// Ensure the parent directory exists.
+	// Ensure the parent directory exists. Keep it 0o700: the directory's
+	// mode is the actual confidentiality boundary on the host (no other
+	// host user can traverse into it).
 	if err := os.MkdirAll(filepath.Dir(w.path), 0o700); err != nil {
 		slog.DebugContext(ctx, "Failed to create sandbox tokens directory", "path", w.path, "error", err)
 		return
 	}
 
-	if err := atomicfile.Write(w.path, bytes.NewReader(data), 0o600); err != nil {
+	// The file is bind-mounted into a sandbox whose user is not the host
+	// user that wrote it; 0o600 would make it unreadable inside the
+	// sandbox and break DOCKER_TOKEN forwarding. The 0o700 parent dir
+	// already prevents other host users from reaching this file.
+	if err := atomicfile.Write(w.path, bytes.NewReader(data), 0o644); err != nil {
 		slog.DebugContext(ctx, "Failed to write sandbox tokens file", "path", w.path, "error", err)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -106,6 +107,30 @@ func TestSandboxTokenWriter_WritesFileOnStart(t *testing.T) {
 	var tokens sandboxTokens
 	require.NoError(t, json.Unmarshal(data, &tokens))
 	assert.Equal(t, "fresh-token", tokens.DockerToken)
+}
+
+// The token file is bind-mounted into a sandbox whose UID does not
+// match the host user that wrote it. The mode must therefore include
+// other-read; the 0o700 parent dir is what keeps other host users out.
+func TestSandboxTokenWriter_FileIsReadableByOther(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes are not enforced on Windows")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, SandboxTokensFileName)
+
+	provider := NewEnvListProvider([]string{"DOCKER_TOKEN=fresh-token"})
+	w := NewSandboxTokenWriter(path, provider, time.Hour)
+	w.Start(t.Context())
+	defer w.Stop()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode().Perm()&0o004,
+		"sandbox-tokens.json must be readable by other so the sandbox UID can read it; got mode %#o",
+		info.Mode().Perm())
 }
 
 func TestSandboxTokenWriter_RefreshesToken(t *testing.T) {
