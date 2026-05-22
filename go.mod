@@ -48,7 +48,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mattn/go-runewidth v0.0.23
-	github.com/modelcontextprotocol/go-sdk v1.6.0
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/natefinch/atomic v1.0.1
 	github.com/openai/openai-go/v3 v3.36.0
 	github.com/pb33f/libopenapi v0.36.5
