@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1010,32 +1011,39 @@ func TestCatalogOAuthDiscoveryLive(t *testing.T) {
 			}
 
 			// 3. Authorization-server metadata + DCR + PKCE S256.
-			asURL := strings.TrimSuffix(r.authServer, "/") +
-				"/.well-known/oauth-authorization-server"
-			asReq, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, asURL, http.NoBody)
-			asResp, err := client.Do(asReq)
-			if err != nil || asResp.StatusCode != http.StatusOK {
-				if asResp != nil {
-					asResp.Body.Close()
+			// Walk the same set of candidate metadata URLs that
+			// pkg/tools/mcp/oauth.go now tries: spec-compliant RFC 8414 §3.1
+			// path-aware variant first, then the legacy "append to issuer"
+			// form, then OIDC fallbacks. Accepting any 200 mirrors what the
+			// runtime would do; the live probe must not be more strict than
+			// the discovery code itself.
+			candidates := authServerMetadataCandidates(r.authServer)
+			var (
+				asResp     *http.Response
+				lastStatus int
+				lastURL    string
+			)
+			for _, u := range candidates {
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, u, http.NoBody)
+				resp, err := client.Do(req)
+				if err != nil {
+					r.notes = append(r.notes, "auth-server metadata error at "+u+": "+err.Error())
+					continue
 				}
-				// Try OpenID configuration as a fallback (oauth.go does the same).
-				oidcURL := strings.TrimSuffix(r.authServer, "/") + "/.well-known/openid-configuration"
-				oidcReq, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, oidcURL, http.NoBody)
-				asResp, err = client.Do(oidcReq)
+				lastStatus, lastURL = resp.StatusCode, u
+				if resp.StatusCode == http.StatusOK {
+					asResp = resp
+					break
+				}
+				resp.Body.Close()
 			}
-			if err != nil {
-				r.notes = append(r.notes, "auth-server metadata error: "+err.Error())
+			if asResp == nil {
+				r.notes = append(r.notes, fmt.Sprintf("no candidate returned 200 (last %d at %s)", lastStatus, lastURL))
 				results = append(results, r)
 				t.Errorf("auth-server metadata unreachable")
 				return
 			}
 			defer asResp.Body.Close()
-			if asResp.StatusCode != http.StatusOK {
-				r.notes = append(r.notes, "auth-server metadata status: "+asResp.Status)
-				results = append(results, r)
-				t.Errorf("auth-server metadata returned %s", asResp.Status)
-				return
-			}
 			var asm struct {
 				RegistrationEndpoint          string   `json:"registration_endpoint"`
 				CodeChallengeMethodsSupported []string `json:"code_challenge_methods_supported"`
@@ -1068,4 +1076,33 @@ func TestCatalogOAuthDiscoveryLive(t *testing.T) {
 				strings.Join(r.notes, "; "))
 		}
 	})
+}
+
+// authServerMetadataCandidates mirrors the candidate URL list built by
+// pkg/tools/mcp/oauth.go's metadataDiscoveryURLs for use by the live
+// probe. Kept duplicated here on purpose: the probe is a black-box
+// audit, and copying the small piece of URL math keeps it independent
+// of any future refactor in the discovery code path.
+func authServerMetadataCandidates(authServerURL string) []string {
+	if strings.Contains(authServerURL, "/.well-known/") {
+		return []string{authServerURL}
+	}
+	parsed, err := url.Parse(authServerURL)
+	if err != nil {
+		return []string{authServerURL}
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	path := strings.TrimSuffix(parsed.Path, "/")
+	if path == "" {
+		return []string{
+			origin + "/.well-known/oauth-authorization-server",
+			origin + "/.well-known/openid-configuration",
+		}
+	}
+	return []string{
+		origin + "/.well-known/oauth-authorization-server" + path,
+		origin + path + "/.well-known/oauth-authorization-server",
+		origin + "/.well-known/openid-configuration" + path,
+		origin + path + "/.well-known/openid-configuration",
+	}
 }

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/httpclient"
@@ -1043,4 +1045,130 @@ func TestExchangeCodeForTokenWithResourceSendsResource(t *testing.T) {
 	if gotResource != "https://mcp.example.com" {
 		t.Fatalf("resource = %q, want https://mcp.example.com", gotResource)
 	}
+}
+
+// TestMetadataDiscoveryURLs covers the candidate-URL builder for the four
+// shapes of issuer URL we see in the wild:
+//
+//   - origin only (no path): one OAuth + one OIDC fallback,
+//   - issuer with a path: RFC 8414 §3.1 path-aware variant first, then the
+//     widely-deployed "append" form, then the OIDC equivalents,
+//   - URL already pointing at a /.well-known/ endpoint: pass through.
+func TestMetadataDiscoveryURLs(t *testing.T) {
+	t.Run("origin only", func(t *testing.T) {
+		got, err := metadataDiscoveryURLs("https://auth.example.com")
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"https://auth.example.com/.well-known/oauth-authorization-server",
+			"https://auth.example.com/.well-known/openid-configuration",
+		}, got)
+	})
+
+	t.Run("issuer with path (Stripe-style)", func(t *testing.T) {
+		// access.stripe.com/mcp serves metadata at
+		//   /.well-known/oauth-authorization-server/mcp
+		// (RFC 8414 §3.1) — the "append" form 404s. Both must be tried.
+		got, err := metadataDiscoveryURLs("https://access.stripe.com/mcp")
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"https://access.stripe.com/.well-known/oauth-authorization-server/mcp",
+			"https://access.stripe.com/mcp/.well-known/oauth-authorization-server",
+			"https://access.stripe.com/.well-known/openid-configuration/mcp",
+			"https://access.stripe.com/mcp/.well-known/openid-configuration",
+		}, got)
+	})
+
+	t.Run("trailing slash on path is normalized", func(t *testing.T) {
+		got, err := metadataDiscoveryURLs("https://auth.example.com/tenant/")
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+			"https://auth.example.com/tenant/.well-known/oauth-authorization-server",
+			"https://auth.example.com/.well-known/openid-configuration/tenant",
+			"https://auth.example.com/tenant/.well-known/openid-configuration",
+		}, got)
+	})
+
+	t.Run("explicit well-known URL passes through", func(t *testing.T) {
+		in := "https://auth.example.com/.well-known/oauth-authorization-server"
+		got, err := metadataDiscoveryURLs(in)
+		require.NoError(t, err)
+		assert.Equal(t, []string{in}, got)
+	})
+
+	t.Run("query string is rejected", func(t *testing.T) {
+		// RFC 8414 §2 forbids query components on issuer URLs.
+		// Multi-tenant Keycloak installations sometimes advertise
+		// query-bearing URLs anyway; surface the misconfiguration
+		// instead of silently building wrong discovery URLs.
+		_, err := metadataDiscoveryURLs("https://auth.example.com/realms/r?x=1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "query")
+	})
+
+	t.Run("fragment is rejected", func(t *testing.T) {
+		_, err := metadataDiscoveryURLs("https://auth.example.com/realms/r#x")
+		require.Error(t, err)
+	})
+}
+
+// TestGetAuthorizationServerMetadata_RFC8414PathAware reproduces the
+// Stripe-remote failure surfaced by TestCatalogOAuthDiscoveryLive: the
+// authorization server's metadata is published at the spec-compliant
+// "well-known between origin and path" URL, while the legacy "append to
+// the issuer URL" variant 404s. The discovery code must fall through and
+// pick the spec-compliant one before giving up and returning default
+// (i.e. broken) metadata.
+func TestGetAuthorizationServerMetadata_RFC8414PathAware(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// The legacy "append" URL must NOT be hit successfully — return 404.
+	mux.HandleFunc("/mcp/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	})
+	// RFC 8414 §3.1 spec-compliant variant: well-known between origin and path.
+	mux.HandleFunc("/.well-known/oauth-authorization-server/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 srv.URL + "/mcp",
+			"authorization_endpoint": srv.URL + "/oauth/authorize",
+			"token_endpoint":         srv.URL + "/oauth/token",
+			"registration_endpoint":  srv.URL + "/oauth/register",
+		})
+	})
+
+	o := &oauth{metadataClient: srv.Client()}
+	md, err := o.getAuthorizationServerMetadata(t.Context(), srv.URL+"/mcp")
+	require.NoError(t, err)
+	assert.Equal(t, srv.URL+"/oauth/authorize", md.AuthorizationEndpoint)
+	assert.Equal(t, srv.URL+"/oauth/token", md.TokenEndpoint)
+	assert.Equal(t, srv.URL+"/oauth/register", md.RegistrationEndpoint,
+		"the registration endpoint must come from the RFC 8414 path-aware metadata, "+
+			"not from createDefaultMetadata's empty fallback")
+}
+
+// TestGetAuthorizationServerMetadata_AppendFormStillWorks asserts the
+// fallback path: many widely-deployed auth servers serve metadata at the
+// "append" URL only, so that variant must still be tried and accepted.
+func TestGetAuthorizationServerMetadata_AppendFormStillWorks(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/tenant/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 srv.URL + "/tenant",
+			"authorization_endpoint": srv.URL + "/tenant/authorize",
+			"token_endpoint":         srv.URL + "/tenant/token",
+		})
+	})
+
+	o := &oauth{metadataClient: srv.Client()}
+	md, err := o.getAuthorizationServerMetadata(t.Context(), srv.URL+"/tenant")
+	require.NoError(t, err)
+	assert.Equal(t, srv.URL+"/tenant/authorize", md.AuthorizationEndpoint)
+	assert.Equal(t, srv.URL+"/tenant/token", md.TokenEndpoint)
 }

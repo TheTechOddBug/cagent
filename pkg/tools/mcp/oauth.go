@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -59,60 +60,116 @@ type AuthorizationServerMetadata struct {
 }
 
 func (o *oauth) getAuthorizationServerMetadata(ctx context.Context, authServerURL string) (*AuthorizationServerMetadata, error) {
-	// Build well-known metadata URL
-	metadataURL := authServerURL
-	if !strings.HasSuffix(authServerURL, "/.well-known/oauth-authorization-server") {
-		metadataURL = strings.TrimSuffix(authServerURL, "/") + "/.well-known/oauth-authorization-server"
-	}
-
-	// Attempt OAuth authorization server discovery
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, http.NoBody)
+	candidates, err := metadataDiscoveryURLs(authServerURL)
 	if err != nil {
 		return nil, err
+	}
+
+	// Walk the candidate list in order. Spec-compliant URLs (RFC 8414 §3.1)
+	// come first; the legacy "append the well-known suffix to the full
+	// issuer URL" forms come after for compatibility with the many auth
+	// servers that ship that way. A 200 wins; 404s flow through to the next
+	// candidate; anything else is a hard error so we don't paper over a
+	// misconfigured auth server.
+	var lastStatus int
+	var lastURL string
+	for _, u := range candidates {
+		metadata, status, err := o.fetchAuthorizationServerMetadata(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		if metadata != nil {
+			return validateAndFillDefaults(metadata, authServerURL), nil
+		}
+		lastStatus, lastURL = status, u
+		if status != http.StatusNotFound {
+			return nil, fmt.Errorf("unexpected status %d from %s", status, u)
+		}
+	}
+
+	slog.DebugContext(ctx, "All metadata discovery URLs returned 404, returning default metadata",
+		"authServerURL", authServerURL, "lastURL", lastURL, "lastStatus", lastStatus)
+	return createDefaultMetadata(authServerURL), nil
+}
+
+// fetchAuthorizationServerMetadata GETs a single discovery URL. Returns
+// (metadata, 200, nil) on success, (nil, status, nil) on a non-OK status
+// the caller should consider for fallback, or (nil, 0, err) on transport
+// or decode failure.
+func (o *oauth) fetchAuthorizationServerMetadata(ctx context.Context, metadataURL string) (*AuthorizationServerMetadata, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, http.NoBody)
+	if err != nil {
+		return nil, 0, err
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := o.metadataClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		// Try OpenID Connect discovery as fallback
-		openIDURL := strings.Replace(metadataURL, "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration", 1)
-		oidcReq, err := http.NewRequestWithContext(ctx, http.MethodGet, openIDURL, http.NoBody)
-		if err != nil {
-			return nil, err
-		}
-		oidcReq.Header.Set("Accept", "application/json")
-
-		oidcResp, err := o.metadataClient.Do(oidcReq)
-		if err != nil {
-			return nil, err
-		}
-		defer oidcResp.Body.Close()
-
-		if oidcResp.StatusCode != http.StatusOK {
-			// Return default metadata if all discovery fails
-			return createDefaultMetadata(authServerURL), nil
-		}
-
-		var metadata AuthorizationServerMetadata
-		if err := json.NewDecoder(oidcResp.Body).Decode(&metadata); err != nil {
-			return nil, fmt.Errorf("failed to decode metadata from %s: %w", openIDURL, err)
-		}
-		return validateAndFillDefaults(&metadata, authServerURL), nil
-	} else if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d from %s", resp.StatusCode, metadataURL)
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, nil
 	}
 
 	var metadata AuthorizationServerMetadata
 	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return nil, fmt.Errorf("failed to decode metadata from %s: %w", metadataURL, err)
+		return nil, 0, fmt.Errorf("failed to decode metadata from %s: %w", metadataURL, err)
+	}
+	return &metadata, resp.StatusCode, nil
+}
+
+// metadataDiscoveryURLs returns the ordered list of well-known URLs to try
+// when discovering authorization-server metadata for authServerURL.
+//
+// For an issuer with a path component (e.g. https://access.stripe.com/mcp)
+// RFC 8414 §3.1 requires inserting the well-known suffix between origin
+// and path:
+//
+//	https://access.stripe.com/.well-known/oauth-authorization-server/mcp
+//
+// Many widely-deployed auth servers (Auth0, Okta, …) however append the
+// suffix to the full issuer URL instead, so we try both. OIDC Discovery
+// 1.0 §4 unconditionally appends openid-configuration, which we keep as
+// the last fallback.
+//
+// If authServerURL already contains /.well-known/, we trust the caller and
+// return it as a single candidate.
+func metadataDiscoveryURLs(authServerURL string) ([]string, error) {
+	if strings.Contains(authServerURL, "/.well-known/") {
+		return []string{authServerURL}, nil
 	}
 
-	return validateAndFillDefaults(&metadata, authServerURL), nil
+	parsed, err := url.Parse(authServerURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorization server URL %q: %w", authServerURL, err)
+	}
+	// RFC 8414 §2 forbids query and fragment components on issuer URLs.
+	// Reject them rather than silently dropping the query string and
+	// generating discovery URLs that would point at the wrong tenant —
+	// some multi-tenant Keycloak deployments are known to advertise
+	// query-bearing URLs in violation of the spec.
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("authorization server URL %q must not contain a query or fragment", authServerURL)
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	path := strings.TrimSuffix(parsed.Path, "/")
+
+	// No path: spec-compliant and append forms are identical.
+	if path == "" {
+		return []string{
+			origin + "/.well-known/oauth-authorization-server",
+			origin + "/.well-known/openid-configuration",
+		}, nil
+	}
+
+	return []string{
+		origin + "/.well-known/oauth-authorization-server" + path,
+		origin + path + "/.well-known/oauth-authorization-server",
+		origin + "/.well-known/openid-configuration" + path,
+		origin + path + "/.well-known/openid-configuration",
+	}, nil
 }
 
 // validateAndFillDefaults validates required fields and fills in defaults
