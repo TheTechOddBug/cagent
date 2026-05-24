@@ -409,7 +409,11 @@ type AgentConfig struct {
 	// hook entries by hand — the runtime auto-injects them when this
 	// flag is true. See pkg/hooks/builtins/redact_secrets.go for the
 	// hook-side implementation.
-	RedactSecrets           bool              `json:"redact_secrets,omitempty"`
+	//
+	// Pointer (tri-state) so we can distinguish "unset" (nil → default
+	// on) from "explicitly disabled" (false). Use
+	// [AgentConfig.RedactSecretsEnabled] to read the effective value.
+	RedactSecrets           *bool             `json:"redact_secrets,omitempty"`
 	CodeModeTools           bool              `json:"code_mode_tools,omitempty"`
 	AddDescriptionParameter bool              `json:"add_description_parameter,omitempty"`
 	MaxIterations           int               `json:"max_iterations,omitempty"`
@@ -598,6 +602,17 @@ func (a *AgentConfig) GetFallbackModels() []string {
 		return a.Fallback.Models
 	}
 	return nil
+}
+
+// RedactSecretsEnabled reports the effective value of the agent's
+// redact_secrets flag. The feature is on by default: a nil pointer
+// (the field omitted from YAML) means enabled, an explicit
+// `redact_secrets: false` is the only way to disable it.
+func (a *AgentConfig) RedactSecretsEnabled() bool {
+	if a == nil || a.RedactSecrets == nil {
+		return true
+	}
+	return *a.RedactSecrets
 }
 
 // GetFallbackRetries returns the fallback retries from the config.
