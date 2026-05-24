@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config"
+	latestcfg "github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	pathx "github.com/docker/docker-agent/pkg/path"
@@ -173,12 +174,17 @@ func (f *runExecFlags) runRunCommand(cmd *cobra.Command, args []string) (command
 	// Resolve alias / runtime-declared sandbox opt-in before dispatch.
 	// An explicit --sandbox=<bool> on the CLI always wins, so we only
 	// consult the lower-priority sources when the flag wasn't set.
+	var agentCfg *latestcfg.Config
 	if !cmd.Flags().Changed("sandbox") {
-		f.sandbox = resolveSandboxDefault(ctx, args, f.sandbox)
+		var agentRef string
+		if len(args) > 0 {
+			agentRef = args[0]
+		}
+		f.sandbox, agentCfg = resolveSandboxDefault(ctx, agentRef, f.sandbox)
 	}
 
 	if f.sandbox {
-		return runInSandbox(ctx, cmd, args, &f.runConfig, f.sandboxTemplate, f.sbx, f.noKit)
+		return runInSandbox(ctx, cmd, args, &f.runConfig, f.sandboxTemplate, f.sbx, f.noKit, agentCfg)
 	}
 
 	out := cli.NewPrinter(cmd.OutOrStdout())
@@ -236,9 +242,9 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 			f.hideToolResults = true
 		}
 		// alias.Sandbox is consumed earlier in runRunCommand before
-		// dispatch; by the time we reach runOrExec the sandbox path
-		// has already been taken (or the user opted out via
-		// --sandbox=false), so flipping it here would be a no-op.
+		// dispatch; reaching runOrExec means the sandbox decision
+		// resolved to false (or the user opted out via --sandbox=false),
+		// so flipping it here would be a no-op.
 	}
 
 	// Build global permissions checker from user config settings.

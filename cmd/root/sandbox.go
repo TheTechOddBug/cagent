@@ -27,16 +27,6 @@ import (
 	"github.com/docker/docker-agent/pkg/userconfig"
 )
 
-// peekAgentSandbox returns true when the agent referenced by
-// agentRef declares runtime.sandbox: true in its config. It is
-// best-effort: any failure to resolve, load, or parse the config
-// returns false so the caller falls through to the normal path,
-// which will surface a proper error from the eventual load.
-func peekAgentSandbox(ctx context.Context, agentRef string) bool {
-	cfg := loadAgentConfig(ctx, agentRef)
-	return cfg != nil && cfg.Runtime != nil && cfg.Runtime.Sandbox
-}
-
 // resolveSandboxDefault decides whether the sandbox path should be
 // taken when the user did not pass --sandbox on the CLI. The first
 // source that declares sandbox: true wins; in priority order:
@@ -46,31 +36,49 @@ func peekAgentSandbox(ctx context.Context, agentRef string) bool {
 //
 // Callers must only invoke this when the CLI flag was not set; an
 // explicit --sandbox=<bool> always wins and bypasses this logic.
-func resolveSandboxDefault(ctx context.Context, args []string, current bool) bool {
-	if current || len(args) == 0 {
-		return current
+//
+// The agent config (if any) loaded along the way is returned so
+// runInSandbox can reuse it without paying the resolve+load cost a
+// second time. cfg is nil when agentRef is empty or fails to load.
+func resolveSandboxDefault(ctx context.Context, agentRef string, current bool) (bool, *latestcfg.Config) {
+	if agentRef == "" {
+		return current, nil
 	}
-	if alias := config.ResolveAlias(args[0]); alias != nil && alias.Sandbox {
-		return true
+	cfg := loadAgentConfig(ctx, agentRef)
+	if current {
+		return current, cfg
 	}
-	return peekAgentSandbox(ctx, args[0])
+	if alias := config.ResolveAlias(agentRef); alias != nil && alias.Sandbox {
+		return true, cfg
+	}
+	return cfg != nil && cfg.Runtime != nil && cfg.Runtime.Sandbox, cfg
 }
 
 // agentNetworkAllowlist returns the hostnames the agent declared in
-// runtime.network_allowlist. Same best-effort contract as
-// peekAgentSandbox: any failure to load the config returns nil so
-// the run continues with the inferred host set only.
-func agentNetworkAllowlist(ctx context.Context, agentRef string) []string {
-	cfg := loadAgentConfig(ctx, agentRef)
+// runtime.network_allowlist. Entries with embedded commas or
+// whitespace are dropped with a warning so a single malformed value
+// can't smuggle several rules into the proxy policy. Returns nil
+// when cfg is nil, has no Runtime block, or has no allowlist.
+func agentNetworkAllowlist(ctx context.Context, cfg *latestcfg.Config) []string {
 	if cfg == nil || cfg.Runtime == nil {
 		return nil
 	}
-	return cfg.Runtime.NetworkAllowlist
+	var valid []string
+	for _, h := range cfg.Runtime.NetworkAllowlist {
+		if strings.ContainsAny(h, ", \t") {
+			slog.WarnContext(ctx, "Ignoring invalid network_allowlist entry; contains comma or whitespace",
+				"host", h)
+			continue
+		}
+		valid = append(valid, h)
+	}
+	return valid
 }
 
-// loadAgentConfig is the shared best-effort loader behind
-// peekAgentSandbox / agentNetworkAllowlist. Returns nil on any
-// resolve or load failure.
+// loadAgentConfig is the shared best-effort loader: it resolves
+// agentRef and loads the YAML, returning nil on any failure so
+// callers fall through to the normal path that will surface a
+// proper error from the eventual load.
 func loadAgentConfig(ctx context.Context, agentRef string) *latestcfg.Config {
 	if agentRef == "" {
 		return nil
@@ -102,7 +110,11 @@ func userSandboxAllowlist(ctx context.Context) []string {
 // runInSandbox delegates the current command to a Docker sandbox.
 // It ensures a sandbox exists (creating or recreating as needed), then
 // executes docker agent inside it via the sandbox exec command.
-func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runConfig *config.RuntimeConfig, template string, preferSbx, noKit bool) error {
+//
+// agentCfg, when non-nil, is the parsed agent config already loaded by
+// resolveSandboxDefault and is used to read runtime.network_allowlist
+// without re-resolving the ref.
+func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runConfig *config.RuntimeConfig, template string, preferSbx, noKit bool, agentCfg *latestcfg.Config) error {
 	if environment.InSandbox() {
 		return fmt.Errorf("already running inside a Docker sandbox (VM %s)", os.Getenv("SANDBOX_VM_ID"))
 	}
@@ -159,7 +171,7 @@ func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runCon
 		}
 	}
 
-	agentHosts := agentNetworkAllowlist(ctx, agentRef)
+	agentHosts := agentNetworkAllowlist(ctx, agentCfg)
 	userHosts := userSandboxAllowlist(ctx)
 
 	printModelsGateway(cmd.OutOrStdout(), runConfig.ModelsGateway)

@@ -267,22 +267,25 @@ func TestResolveSandboxDefault(t *testing.T) {
 		0o600))
 
 	tests := []struct {
-		name    string
-		args    []string
-		current bool
-		want    bool
+		name     string
+		agentRef string
+		current  bool
+		want     bool
+		wantCfg  bool
 	}{
-		{"no args, flag false", nil, false, false},
-		{"no args, flag already true", nil, true, true},
-		{"runtime.sandbox: true picked up", []string{sbxPath}, false, true},
-		{"plain agent stays false", []string{plainPath}, false, false},
-		{"current=true short-circuits the load", []string{plainPath}, true, true},
-		{"unresolvable ref stays false", []string{filepath.Join(dir, "missing.yaml")}, false, false},
+		{"empty ref, flag false", "", false, false, false},
+		{"empty ref, flag already true", "", true, true, false},
+		{"runtime.sandbox: true picked up", sbxPath, false, true, true},
+		{"plain agent stays false", plainPath, false, false, true},
+		{"current=true short-circuits the decision", plainPath, true, true, true},
+		{"unresolvable ref stays false", filepath.Join(dir, "missing.yaml"), false, false, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, resolveSandboxDefault(t.Context(), tt.args, tt.current))
+			got, cfg := resolveSandboxDefault(t.Context(), tt.agentRef, tt.current)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantCfg, cfg != nil)
 		})
 	}
 }
@@ -316,16 +319,18 @@ func TestPeekAgentSandbox(t *testing.T) {
 			path := filepath.Join(dir, "agent.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(tt.yaml), 0o600))
 
-			assert.Equal(t, tt.want, peekAgentSandbox(t.Context(), path))
+			cfg := loadAgentConfig(t.Context(), path)
+			got := cfg != nil && cfg.Runtime != nil && cfg.Runtime.Sandbox
+			assert.Equal(t, tt.want, got)
 		})
 	}
 
 	t.Run("empty ref", func(t *testing.T) {
-		assert.False(t, peekAgentSandbox(t.Context(), ""))
+		assert.Nil(t, loadAgentConfig(t.Context(), ""))
 	})
 
 	t.Run("unresolvable ref", func(t *testing.T) {
-		assert.False(t, peekAgentSandbox(t.Context(), "/nonexistent/agent.yaml"))
+		assert.Nil(t, loadAgentConfig(t.Context(), "/nonexistent/agent.yaml"))
 	})
 }
 
@@ -339,7 +344,34 @@ func TestAgentNetworkAllowlist(t *testing.T) {
 		"agents:\n  root:\n    model: openai/gpt-4o\n    description: t\n    instruction: t\n"
 	require.NoError(t, os.WriteFile(path, []byte(yamlBody), 0o600))
 
-	assert.Equal(t, []string{"api.example.com", "registry.npmjs.org:443"}, agentNetworkAllowlist(t.Context(), path))
+	cfg := loadAgentConfig(t.Context(), path)
+	require.NotNil(t, cfg)
+	assert.Equal(t, []string{"api.example.com", "registry.npmjs.org:443"},
+		agentNetworkAllowlist(t.Context(), cfg))
+}
+
+func TestAgentNetworkAllowlist_FiltersMalformed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	// A YAML where two hosts were typed as one comma-separated string
+	// must not feed a single bogus rule into the proxy policy.
+	yamlBody := "runtime:\n" +
+		"  network_allowlist:\n" +
+		"    - api.example.com\n" +
+		"    - \"bad.example.com, also.bad.com\"\n" +
+		"    - \"has space.example.com\"\n" +
+		"    - registry.npmjs.org:443\n" +
+		"agents:\n  root:\n    model: openai/gpt-4o\n    description: t\n    instruction: t\n"
+	require.NoError(t, os.WriteFile(path, []byte(yamlBody), 0o600))
+
+	cfg := loadAgentConfig(t.Context(), path)
+	require.NotNil(t, cfg)
+	assert.Equal(t, []string{"api.example.com", "registry.npmjs.org:443"},
+		agentNetworkAllowlist(t.Context(), cfg))
+}
+
+func TestAgentNetworkAllowlist_NilCfg(t *testing.T) {
+	assert.Nil(t, agentNetworkAllowlist(t.Context(), nil))
 }
 
 func TestPrintAgentNetworkAllowlist(t *testing.T) {
