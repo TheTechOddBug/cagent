@@ -60,8 +60,8 @@ func NewDefaultToolsetRegistry() ToolsetRegistry {
 			"filesystem": func(_ context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
 				return filesystem.CreateToolSet(toolset, runConfig)
 			},
-			"fetch": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
-				return fetch.CreateToolSet(ctx, toolset, runConfig)
+			"fetch": func(_ context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+				return fetch.CreateToolSet(toolset, runConfig)
 			},
 			"mcp": func(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
 				return mcp.CreateToolSet(ctx, toolset, runConfig)
