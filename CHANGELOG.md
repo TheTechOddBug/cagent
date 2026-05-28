@@ -3,6 +3,39 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.69.0] - 2026-05-28
+
+This release adds new TUI customization options and improves OAuth authentication handling.
+
+## What's New
+- Adds `--app-name` flag to override TUI title display
+- Adds `--disable-commands` flag to hide and disable slash commands in TUI
+- Adds `--sidebar` flag to control sidebar visibility
+- Adds out-of-band callback route for unmanaged OAuth drive-flow
+
+## Improvements
+- Extends unmanaged OAuth flow to drive code exchange in-process
+- Propagates user-initiated cancellation across the WithoutCancel boundary
+
+## Technical Changes
+- Renames OAuth elicitation meta keys from cagent/ to docker-agent/
+- Trims aijson re-tests while keeping docker-agent integration tests
+- Fixes lint issues in OAuth tests and helpers
+- Canonicalizes bootstrapRepo temp dir for macOS in snapshot tests
+- Simplifies AllBindings by removing redundant leanMode guard
+
+### Pull Requests
+
+- [#2896](https://github.com/docker/docker-agent/pull/2896) - Extend unmanaged OAuth flow to drive code exchange in-process
+- [#2905](https://github.com/docker/docker-agent/pull/2905) - test(tools): trim aijson re-tests, keep docker-agent integration
+- [#2909](https://github.com/docker/docker-agent/pull/2909) - docs: update CHANGELOG.md for v1.68.0
+- [#2910](https://github.com/docker/docker-agent/pull/2910) - docs: update CHANGELOG.md for v1.68.0 and document cancelled v1.66/v1.67
+- [#2913](https://github.com/docker/docker-agent/pull/2913) - feat: add --disable-commands flag to hide and disable slash commands in TUI
+- [#2914](https://github.com/docker/docker-agent/pull/2914) - feat: add --app-name flag and fix macOS test symlink issue
+- [#2915](https://github.com/docker/docker-agent/pull/2915) - Rename OAuth elicitation meta keys from cagent/ to docker-agent/
+- [#2917](https://github.com/docker/docker-agent/pull/2917) - feat: add --sidebar flag to control sidebar visibility
+
+
 ## [v1.68.0] - 2026-05-27
 
 This release adds new features for skills visibility, MCP improvements, sandbox enhancements, TUI improvements, and includes numerous bug fixes and dependency updates.
@@ -3020,3 +3053,5 @@ This release improves the terminal user interface with better error handling and
 [v1.67.0]: https://github.com/docker/docker-agent/releases/tag/v1.67.0
 
 [v1.68.0]: https://github.com/docker/docker-agent/releases/tag/v1.68.0
+
+[v1.69.0]: https://github.com/docker/docker-agent/releases/tag/v1.69.0
