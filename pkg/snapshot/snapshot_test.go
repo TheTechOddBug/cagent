@@ -210,7 +210,10 @@ func bootstrapRepo(t *testing.T) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	dir := t.TempDir()
+	// Canonicalize so paths match git rev-parse --show-toplevel, which
+	// resolves symlinks (e.g. /var/folders -> /private/var/folders on macOS).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	runGit(t, dir, "init")
 	runGit(t, dir, "config", "user.email", "test@example.com")
 	runGit(t, dir, "config", "user.name", "Test User")
