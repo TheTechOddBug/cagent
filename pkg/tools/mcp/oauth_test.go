@@ -1355,7 +1355,7 @@ func TestUnmanagedOAuthFlow_DriveFlow_ExchangesCodeForToken(t *testing.T) {
 	capture.replyFn = func(req *gomcp.ElicitParams) tools.ElicitationResult {
 		// Echo the state docker-agent sent us, simulating a real OAuth
 		// callback round-trip.
-		state, _ := req.Meta["cagent/state"].(string)
+		state, _ := req.Meta["docker-agent/state"].(string)
 		return tools.ElicitationResult{
 			Action: tools.ElicitationActionAccept,
 			Content: map[string]any{
@@ -1377,13 +1377,13 @@ func TestUnmanagedOAuthFlow_DriveFlow_ExchangesCodeForToken(t *testing.T) {
 
 	// Verify the elicitation carried the new fields.
 	require.NotNil(t, capture.req)
-	assert.Equal(t, "oauth_flow", capture.req.Meta["cagent/type"])
-	assert.Equal(t, srv.URL, capture.req.Meta["cagent/server_url"])
-	authorizeURL, _ := capture.req.Meta["cagent/authorize_url"].(string)
-	assert.NotEmpty(t, authorizeURL, "drive-flow elicitation must include cagent/authorize_url")
+	assert.Equal(t, "oauth_flow", capture.req.Meta["docker-agent/type"])
+	assert.Equal(t, srv.URL, capture.req.Meta["docker-agent/server_url"])
+	authorizeURL, _ := capture.req.Meta["docker-agent/authorize_url"].(string)
+	assert.NotEmpty(t, authorizeURL, "drive-flow elicitation must include docker-agent/authorize_url")
 	assert.Contains(t, authorizeURL, "redirect_uri="+url.QueryEscape(redirectURI))
-	state, _ := capture.req.Meta["cagent/state"].(string)
-	assert.NotEmpty(t, state, "drive-flow elicitation must include cagent/state")
+	state, _ := capture.req.Meta["docker-agent/state"].(string)
+	assert.NotEmpty(t, state, "drive-flow elicitation must include docker-agent/state")
 
 	// Verify docker-agent exchanged the code (not the client).
 	require.Equal(t, int32(1), srv.tokenCalls.Load(), "token endpoint must be hit exactly once")
@@ -1505,10 +1505,10 @@ func TestUnmanagedOAuthFlow_LegacyMode_NoAuthorizeURLInElicitation(t *testing.T)
 	resp.Body.Close()
 
 	require.NotNil(t, capture.req)
-	_, hasAuthorizeURL := capture.req.Meta["cagent/authorize_url"]
-	assert.False(t, hasAuthorizeURL, "legacy unmanaged flow must not include cagent/authorize_url")
-	_, hasState := capture.req.Meta["cagent/state"]
-	assert.False(t, hasState, "legacy unmanaged flow must not include cagent/state")
+	_, hasAuthorizeURL := capture.req.Meta["docker-agent/authorize_url"]
+	assert.False(t, hasAuthorizeURL, "legacy unmanaged flow must not include docker-agent/authorize_url")
+	_, hasState := capture.req.Meta["docker-agent/state"]
+	assert.False(t, hasState, "legacy unmanaged flow must not include docker-agent/state")
 	// resource_metadata is still surfaced so the client can do its own DCR
 	// if desired.
 	assert.NotNil(t, capture.req.Meta["resource_metadata"])
@@ -1565,7 +1565,7 @@ func TestUnmanagedOAuthFlow_DriveFlow_AcceptsDirectCallback(t *testing.T) {
 	capture := &elicitCaptured{}
 	stateSent := make(chan string, 1)
 	capture.replyFn = func(req *gomcp.ElicitParams) tools.ElicitationResult {
-		state, _ := req.Meta["cagent/state"].(string)
+		state, _ := req.Meta["docker-agent/state"].(string)
 		stateSent <- state
 		<-elicitationCanReturn
 		// This return value should be unreachable because the direct
@@ -1643,7 +1643,7 @@ func TestUnmanagedOAuthFlow_DriveFlow_DirectCallbackError(t *testing.T) {
 	capture := &elicitCaptured{}
 	stateSent := make(chan string, 1)
 	capture.replyFn = func(req *gomcp.ElicitParams) tools.ElicitationResult {
-		state, _ := req.Meta["cagent/state"].(string)
+		state, _ := req.Meta["docker-agent/state"].(string)
 		stateSent <- state
 		<-elicitationCanReturn
 		return tools.ElicitationResult{Action: tools.ElicitationActionDecline}
