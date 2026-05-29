@@ -595,6 +595,129 @@ agents:
 	}
 }
 
+func TestToolset_Validate_MCPCatalog_ServerLists(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "mcp_catalog with allowed_servers",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp_catalog
+        allowed_servers:
+          - docker-docs
+          - microsoft-learn
+`,
+			wantErr: "",
+		},
+		{
+			name: "mcp_catalog with blocked_servers",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp_catalog
+        blocked_servers:
+          - gitmcp
+`,
+			wantErr: "",
+		},
+		{
+			name: "mcp_catalog with both lists is accepted",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp_catalog
+        allowed_servers:
+          - docker-docs
+          - gitmcp
+        blocked_servers:
+          - gitmcp
+`,
+			wantErr: "",
+		},
+		{
+			name: "allowed_servers on non-mcp_catalog toolset is rejected",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        allowed_servers:
+          - docker-docs
+`,
+			wantErr: "allowed_servers can only be used with type 'mcp_catalog'",
+		},
+		{
+			name: "blocked_servers on non-mcp_catalog toolset is rejected",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        blocked_servers:
+          - docker-docs
+`,
+			wantErr: "blocked_servers can only be used with type 'mcp_catalog'",
+		},
+		{
+			name: "empty allowed_servers entry is rejected",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp_catalog
+        allowed_servers:
+          - ""
+          - docker-docs
+`,
+			wantErr: "allowed_servers[0] must not be empty",
+		},
+		{
+			name: "whitespace-only blocked_servers entry is rejected",
+			config: `
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp_catalog
+        blocked_servers:
+          - "   "
+`,
+			wantErr: "blocked_servers[0] must not be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg latest.Config
+			err := yaml.Unmarshal([]byte(tt.config), &cfg)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestToolset_Validate_MCP_RemoteOAuth_CallbackRedirectURL(t *testing.T) {
 	t.Parallel()
 

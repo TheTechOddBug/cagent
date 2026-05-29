@@ -139,6 +139,18 @@ func (t *Toolset) validate() error {
 	if len(t.FileTypes) > 0 && t.Type != "lsp" {
 		return errors.New("file_types can only be used with type 'lsp'")
 	}
+	if len(t.AllowedServers) > 0 && t.Type != "mcp_catalog" {
+		return errors.New("allowed_servers can only be used with type 'mcp_catalog'")
+	}
+	if len(t.BlockedServers) > 0 && t.Type != "mcp_catalog" {
+		return errors.New("blocked_servers can only be used with type 'mcp_catalog'")
+	}
+	if err := validateNonEmptyEntries("allowed_servers", t.AllowedServers); err != nil {
+		return err
+	}
+	if err := validateNonEmptyEntries("blocked_servers", t.BlockedServers); err != nil {
+		return err
+	}
 	if len(t.AllowedDomains) > 0 && t.Type != "fetch" {
 		return errors.New("allowed_domains can only be used with type 'fetch'")
 	}
@@ -278,6 +290,18 @@ func (t *Toolset) validate() error {
 		// no additional validation needed
 	}
 
+	return nil
+}
+
+// validateNonEmptyEntries rejects empty / whitespace-only entries in a
+// generic string list (e.g. the mcp_catalog allow/block server lists). An
+// empty id would never match a catalog server but signals a config typo.
+func validateNonEmptyEntries(field string, entries []string) error {
+	for i, e := range entries {
+		if strings.TrimSpace(e) == "" {
+			return fmt.Errorf("%s[%d] must not be empty", field, i)
+		}
+	}
 	return nil
 }
 
