@@ -3,6 +3,51 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.70.0] - 2026-05-29
+
+This release focuses on text handling improvements, OAuth flow enhancements for MCP catalog servers, and server filtering capabilities.
+
+## What's New
+
+- Adds `--app-name` flag to override the default "docker agent" label in the TUI status bar and window title
+- Adds allow-list and block-list filtering for MCP catalog servers via `allowed_servers` and `blocked_servers` configuration options
+
+## Improvements
+
+- Tells the model to proceed automatically after enabling an OAuth server in MCP catalog instead of requiring user to repeat their request
+- Restores dynamic progress bar width in evaluation mode (was previously fixed at width 10)
+
+## Bug Fixes
+
+- Fixes rune-safe truncation across multiple UI components: file names in file picker, session titles in session browser, directory names in working-dir picker, tab titles, search query preview, and tool output preview
+- Fixes rune-safe truncation of operation descriptions in OpenAPI handling
+- Fixes rune-safe search-result preview in filesystem operations
+- Prevents sending split UTF-8 runes to embedding models in RAG operations
+- Populates ModelID field correctly in after_llm_call hook payload
+
+## Technical Changes
+
+- Removes dead code in WASM agent loop selection
+- Adds validation for allowed_servers and blocked_servers in MCP catalog configuration
+- Adds warning for unknown server IDs in MCP catalog allow/block lists
+- Updates documentation for CLI flags, hook payloads, and OAuth endpoints
+
+### Pull Requests
+
+- [#2896](https://github.com/docker/docker-agent/pull/2896) - Extend unmanaged OAuth flow to drive code exchange in-process
+- [#2911](https://github.com/docker/docker-agent/pull/2911) - fix(runtime): populate ModelID in after_llm_call hook payload
+- [#2914](https://github.com/docker/docker-agent/pull/2914) - feat: add --app-name flag and fix macOS test symlink issue
+- [#2918](https://github.com/docker/docker-agent/pull/2918) - chore: bump direct Go dependencies
+- [#2919](https://github.com/docker/docker-agent/pull/2919) - docs: update CHANGELOG.md for v1.69.0
+- [#2920](https://github.com/docker/docker-agent/pull/2920) - fix: rune-safe truncation and dead-code cleanup
+- [#2921](https://github.com/docker/docker-agent/pull/2921) - Address review feedback on #2896
+- [#2925](https://github.com/docker/docker-agent/pull/2925) - fix(mcpcatalog): tell the model to proceed after enabling an OAuth server
+- [#2926](https://github.com/docker/docker-agent/pull/2926) - chore: bump direct Go dependencies
+- [#2927](https://github.com/docker/docker-agent/pull/2927) - docs: sync CLI flags and hook payload docs with recent changes
+- [#2928](https://github.com/docker/docker-agent/pull/2928) - feat: add allow/block-list of servers to the mcp_catalog tool
+- [#2929](https://github.com/docker/docker-agent/pull/2929) - docs: sync /docs with changes merged 2026-05-28 – 2026-05-29
+
+
 ## [v1.69.0] - 2026-05-28
 
 This release adds new TUI customization options and improves OAuth authentication handling.
@@ -3055,3 +3100,5 @@ This release improves the terminal user interface with better error handling and
 [v1.68.0]: https://github.com/docker/docker-agent/releases/tag/v1.68.0
 
 [v1.69.0]: https://github.com/docker/docker-agent/releases/tag/v1.69.0
+
+[v1.70.0]: https://github.com/docker/docker-agent/releases/tag/v1.70.0
