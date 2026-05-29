@@ -321,6 +321,52 @@ func TestCompleteRunExec(t *testing.T) {
 	}
 }
 
+func TestCompleteTheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		toComplete string
+		wantSome   []string
+		wantNone   []string
+	}{
+		{
+			name:       "empty prefix lists default and built-ins",
+			toComplete: "",
+			wantSome:   []string{"default", "nord", "dracula"},
+		},
+		{
+			name:       "prefix filters to matching themes",
+			toComplete: "gruvbox",
+			wantSome:   []string{"gruvbox-dark", "gruvbox-light"},
+			wantNone:   []string{"default", "nord"},
+		},
+		{
+			name:       "non-matching prefix yields no themes",
+			toComplete: "this-theme-does-not-exist",
+			wantNone:   []string{"default", "nord"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			completions, directive := completeTheme(nil, nil, tt.toComplete)
+
+			for _, want := range tt.wantSome {
+				assert.Contains(t, completions, want)
+			}
+			for _, notWant := range tt.wantNone {
+				assert.NotContains(t, completions, notWant)
+			}
+
+			assert.NotEqual(t, cobra.ShellCompDirective(0), directive&cobra.ShellCompDirectiveNoFileComp,
+				"expected NoFileComp directive to be set")
+		})
+	}
+}
+
 func writeFile(t *testing.T, dir, name string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o644))
