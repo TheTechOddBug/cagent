@@ -68,6 +68,7 @@ type runExecFlags struct {
 	agentPickerSpec   string
 	worktree          bool
 	worktreeName      string
+	worktreePR        string
 
 	// Exec only
 	exec          bool
@@ -168,6 +169,7 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	cmd.PersistentFlags().Lookup("agent-picker").NoOptDefVal = strings.Join(defaultAgentPickerRefs, ",")
 	cmd.PersistentFlags().StringVarP(&flags.worktreeName, "worktree", "w", "", "Run the agent in a fresh git worktree of the working directory (isolates changes from your checkout). Optionally name it: --worktree=my-name")
 	cmd.PersistentFlags().Lookup("worktree").NoOptDefVal = worktreeAutoName
+	cmd.PersistentFlags().StringVar(&flags.worktreePR, "worktree-pr", "", "Run the agent in a git worktree checked out on an existing GitHub pull request (number or URL). Continues the PR's branch; requires the GitHub CLI (gh).")
 	cmd.MarkFlagsMutuallyExclusive("fake", "record")
 	cmd.MarkFlagsMutuallyExclusive("remote", "sandbox")
 	cmd.MarkFlagsMutuallyExclusive("remote", "session-db")
@@ -178,6 +180,9 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	// and is not wired through the sandbox boundary.
 	cmd.MarkFlagsMutuallyExclusive("remote", "worktree")
 	cmd.MarkFlagsMutuallyExclusive("sandbox", "worktree")
+	cmd.MarkFlagsMutuallyExclusive("remote", "worktree-pr")
+	cmd.MarkFlagsMutuallyExclusive("sandbox", "worktree-pr")
+	cmd.MarkFlagsMutuallyExclusive("worktree", "worktree-pr")
 
 	// --exec only
 	cmd.PersistentFlags().BoolVar(&flags.exec, "exec", false, "Execute without a TUI")
@@ -249,8 +254,8 @@ func (f *runExecFlags) runRunCommand(cmd *cobra.Command, args []string) (command
 	}
 
 	if f.sandbox {
-		if cmd.Flags().Changed("worktree") {
-			return errors.New("--worktree cannot be combined with a sandboxed run")
+		if cmd.Flags().Changed("worktree") || cmd.Flags().Changed("worktree-pr") {
+			return errors.New("--worktree/--worktree-pr cannot be combined with a sandboxed run")
 		}
 		return runInSandbox(ctx, cmd, args, &f.runConfig, f.sandboxTemplate, f.sbx, f.noKit, agentCfg)
 	}
@@ -373,32 +378,22 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	}
 
 	wd, _ := os.Getwd()
-	var createdWorktree *worktree.Worktree
-	if f.worktree {
-		name := f.worktreeName
-		if name == worktreeAutoName {
-			name = ""
+	createdWorktree, err := f.setupWorktree(ctx, wd)
+	if err != nil {
+		if loadResult != nil {
+			stopToolSets(loadResult.Team)
 		}
-		wt, err := worktree.Create(ctx, wd, name)
-		if err != nil {
-			switch {
-			case errors.Is(err, worktree.ErrNotGitRepository):
-				return fmt.Errorf("--worktree requires %s to be inside a git repository", wd)
-			case errors.Is(err, worktree.ErrInvalidName):
-				return fmt.Errorf("invalid --worktree name: %w", err)
-			default:
-				return err
-			}
-		}
-		createdWorktree = wt
-		wd = wt.Dir
-		f.runConfig.WorkingDir = wt.Dir
-		out.Println("Using git worktree: " + wt.Dir + " (branch " + wt.Branch + ")")
-		// loadResult is nil for the remote backend; --worktree is mutually
+		return err
+	}
+	if createdWorktree != nil {
+		wd = createdWorktree.Dir
+		f.runConfig.WorkingDir = createdWorktree.Dir
+		out.Println("Using git worktree: " + createdWorktree.Dir + " (branch " + createdWorktree.Branch + ")")
+		// loadResult is nil for the remote backend; worktrees are mutually
 		// exclusive with --remote so this is belt-and-suspenders, matching
 		// the nil-guard used for cleanup throughout this function.
 		if loadResult != nil {
-			if err := f.dispatchWorktreeCreate(ctx, out, loadResult.Team, wt); err != nil {
+			if err := f.dispatchWorktreeCreate(ctx, out, loadResult.Team, createdWorktree); err != nil {
 				stopToolSets(loadResult.Team)
 				return err
 			}
@@ -459,6 +454,51 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		f.cleanupWorktree(context.WithoutCancel(ctx), out, createdWorktree)
 	}
 	return nil
+}
+
+// setupWorktree creates the git worktree requested by --worktree or
+// --worktree-pr, returning nil when neither was given. The returned worktree
+// (when non-nil) becomes the session's working directory and is cleaned up
+// when an interactive run ends.
+func (f *runExecFlags) setupWorktree(ctx context.Context, wd string) (*worktree.Worktree, error) {
+	switch {
+	case f.worktreePR != "":
+		wt, err := worktree.CreatePR(ctx, wd, f.worktreePR)
+		if err != nil {
+			switch {
+			case errors.Is(err, worktree.ErrNotGitRepository):
+				return nil, fmt.Errorf("--worktree-pr requires %s to be inside a git repository", wd)
+			case errors.Is(err, worktree.ErrInvalidPRRef):
+				return nil, fmt.Errorf("invalid --worktree-pr value: %w", err)
+			case errors.Is(err, worktree.ErrGHNotFound):
+				return nil, fmt.Errorf("--worktree-pr requires the GitHub CLI: %w", err)
+			default:
+				return nil, err
+			}
+		}
+		return wt, nil
+
+	case f.worktree:
+		name := f.worktreeName
+		if name == worktreeAutoName {
+			name = ""
+		}
+		wt, err := worktree.Create(ctx, wd, name)
+		if err != nil {
+			switch {
+			case errors.Is(err, worktree.ErrNotGitRepository):
+				return nil, fmt.Errorf("--worktree requires %s to be inside a git repository", wd)
+			case errors.Is(err, worktree.ErrInvalidName):
+				return nil, fmt.Errorf("invalid --worktree name: %w", err)
+			default:
+				return nil, err
+			}
+		}
+		return wt, nil
+
+	default:
+		return nil, nil
+	}
 }
 
 // cleanupWorktree removes a worktree created for an interactive run once it

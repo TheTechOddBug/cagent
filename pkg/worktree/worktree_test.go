@@ -245,3 +245,44 @@ func trimNL(b []byte) []byte {
 	}
 	return b
 }
+
+func TestParsePRRef(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{in: "123", want: 123},
+		{in: "#123", want: 123},
+		{in: "  42 ", want: 42},
+		{in: "https://github.com/owner/repo/pull/123", want: 123},
+		{in: "https://github.com/owner/repo/pull/123/files", want: 123},
+		{in: "https://github.com/owner/repo/pull/123#issuecomment-1", want: 123},
+		{in: "https://github.com/owner/repo/pull/7?w=1", want: 7},
+		{in: "", wantErr: true},
+		{in: "abc", wantErr: true},
+		{in: "0", wantErr: true},
+		{in: "-3", wantErr: true},
+		{in: "https://github.com/owner/repo/issues/123", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			got, err := parsePRRef(tt.in)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidPRRef)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestCreatePRValidatesRefBeforeGit checks a malformed ref fails fast with
+// ErrInvalidPRRef, before touching git or gh, even outside a repository.
+func TestCreatePRValidatesRefBeforeGit(t *testing.T) {
+	_, err := CreatePR(t.Context(), t.TempDir(), "not-a-pr")
+	assert.ErrorIs(t, err, ErrInvalidPRRef)
+}

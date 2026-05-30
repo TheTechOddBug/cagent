@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/paths"
@@ -24,6 +25,12 @@ var ErrNotGitRepository = errors.New("not a git repository")
 // ErrInvalidName means the requested worktree name cannot be safely used as a
 // directory and branch component.
 var ErrInvalidName = errors.New("invalid worktree name")
+
+// ErrInvalidPRRef means a --worktree-pr value is not a PR number or URL.
+var ErrInvalidPRRef = errors.New("invalid pull request reference")
+
+// ErrGHNotFound means the GitHub CLI (gh) is required but not installed.
+var ErrGHNotFound = errors.New("the GitHub CLI (gh) is required to check out a pull request")
 
 // Worktree describes a git worktree created for an agent session.
 type Worktree struct {
@@ -105,6 +112,89 @@ func Create(ctx context.Context, dir, name string) (*Worktree, error) {
 	}
 
 	return wt, nil
+}
+
+// CreatePR creates a git worktree that checks out an existing GitHub pull
+// request so the agent can continue it. ref is a PR number ("123") or a
+// GitHub pull request URL. The PR's head branch is checked out tracking its
+// remote, so commits made in the worktree push back to the pull request.
+//
+// It delegates PR resolution to the GitHub CLI (gh), which handles head-branch
+// lookup, fork remotes, and upstream tracking. Returns [ErrGHNotFound] when gh
+// is not installed, [ErrInvalidPRRef] when ref is malformed, and
+// [ErrNotGitRepository] when dir is not inside a git repository.
+func CreatePR(ctx context.Context, dir, ref string) (*Worktree, error) {
+	number, err := parsePRRef(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := repoRoot(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil, ErrGHNotFound
+	}
+
+	name := fmt.Sprintf("pr-%d", number)
+	dest := filepath.Join(paths.GetDataDir(), "worktrees", name)
+	if _, err := os.Stat(dest); err == nil {
+		return nil, fmt.Errorf("%w: worktree %q already exists at %s", ErrInvalidName, name, dest)
+	}
+
+	// Create the worktree first (detached at HEAD), then let gh check out the
+	// PR head into it. gh resolves the PR's head branch, adds a fork remote
+	// when needed, and sets upstream tracking so pushes return to the PR.
+	if err := git(ctx, root, "worktree", "add", "--detach", dest); err != nil {
+		return nil, fmt.Errorf("creating git worktree: %w", err)
+	}
+
+	if err := gh(ctx, dest, "pr", "checkout", strconv.Itoa(number)); err != nil {
+		// Roll back the empty worktree so a failed checkout leaves no trace.
+		_ = git(ctx, root, "worktree", "remove", "--force", dest)
+		return nil, fmt.Errorf("checking out pull request #%d: %w", number, err)
+	}
+
+	branch, err := gitOutput(ctx, dest, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("resolving pull request branch: %w", err)
+	}
+
+	wt := &Worktree{Dir: dest, Branch: branch, Name: name, SourceDir: root}
+	if head, err := gitOutput(ctx, dest, "rev-parse", "HEAD"); err == nil {
+		wt.BaseCommit = head
+	}
+	return wt, nil
+}
+
+// parsePRRef extracts a PR number from a bare number ("123", "#123") or a
+// GitHub pull request URL (".../pull/123").
+func parsePRRef(ref string) (int, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return 0, fmt.Errorf("%w: empty reference", ErrInvalidPRRef)
+	}
+
+	candidate := strings.TrimPrefix(ref, "#")
+	if strings.Contains(ref, "://") || strings.Contains(ref, "/pull/") {
+		// Pull the segment after "/pull/" from a URL like
+		// https://github.com/owner/repo/pull/123(/files|#discussion...).
+		_, rest, ok := strings.Cut(ref, "/pull/")
+		if !ok {
+			return 0, fmt.Errorf("%w: %q", ErrInvalidPRRef, ref)
+		}
+		candidate, _, _ = strings.Cut(rest, "/")
+		candidate, _, _ = strings.Cut(candidate, "#")
+		candidate, _, _ = strings.Cut(candidate, "?")
+	}
+
+	number, err := strconv.Atoi(candidate)
+	if err != nil || number <= 0 {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidPRRef, ref)
+	}
+	return number, nil
 }
 
 // Status inspects the worktree and reports whether it holds uncommitted
@@ -214,4 +304,19 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// gh runs a GitHub CLI command in dir, surfacing its stderr on failure.
+func gh(ctx context.Context, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }

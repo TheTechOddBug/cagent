@@ -48,6 +48,7 @@ $ docker agent run [config] [message...] [flags]
 | `--sbx`                                 | Prefer the `sbx` CLI backend when available (default `true`; set `--sbx=false` to force `docker sandbox`)                                 |
 | `--no-kit`                              | Disable the [auto-kit]({{ '/configuration/sandbox/' | relative_url }}#auto-kit): do not stage skills or prompt files into the sandbox    |
 | `-w, --worktree [name]`                 | Run the agent in a fresh git worktree of the working directory, isolating its changes from your checkout. Optionally name it (`--worktree=my-feature`); otherwise a name is generated. Requires the working directory to be inside a git repository. Cannot be combined with `--remote` or `--sandbox`. When the session ends, a clean worktree is removed automatically; one with work prompts to keep or remove (never in `--exec`). |
+| `--worktree-pr <number\|url>`            | Run the agent in a git worktree checked out on an existing GitHub pull request (PR number, `#123`, or PR URL). Continues the PR's branch so commits push back to it. Requires the [GitHub CLI](https://cli.github.com/) (`gh`). Cannot be combined with `--worktree`, `--remote`, or `--sandbox`. |
 | `--working-dir <path>`                  | Set the working directory for the session (applies to tools and relative paths)                                                           |
 | `--env-from-file <path>`                | Load environment variables from file (repeatable)                                                                                         |
 | `--code-mode-tools`                     | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally)                                                |
@@ -101,7 +102,13 @@ $ docker agent run agent.yaml -w "Refactor the auth package"
 
 # Give the worktree (and its branch) an explicit name
 $ docker agent run agent.yaml --worktree=auth-refactor
+
+# Check out an existing GitHub pull request to continue it (requires gh)
+$ docker agent run agent.yaml --worktree-pr 123
+$ docker agent run agent.yaml --worktree-pr https://github.com/owner/repo/pull/123
 ```
+
+With `--worktree-pr`, the PR's head branch is checked out tracking its remote (via the [GitHub CLI](https://cli.github.com/)), so commits made during the run push straight back to the pull request. The worktree is stored under `<data-dir>/worktrees/pr-<number>`.
 
 When the interactive session ends, the worktree is cleaned up based on its state:
 
