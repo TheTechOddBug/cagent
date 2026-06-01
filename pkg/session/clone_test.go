@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 func TestClone_NilSession(t *testing.T) {
@@ -66,6 +67,42 @@ func TestClone_CopiesScalarFields(t *testing.T) {
 	assert.Equal(t, []string{"d"}, clone.Permissions.Deny)
 }
 
+func TestClone_DeepCopiesEvalFields(t *testing.T) {
+	orig := &Session{
+		Evals: &EvalCriteria{
+			Relevance:  []string{"is helpful"},
+			WorkingDir: "work",
+		},
+		EvalResult: &EvalResult{
+			Passed:    true,
+			Successes: []string{"ok"},
+			Failures:  []string{"missing"},
+			Checks: EvalResultChecks{
+				Size: &SizeCheck{Passed: true, Actual: "S", Expected: "M"},
+				Relevance: &RelevanceCheck{Results: []RelevanceCriterionResult{{
+					Criterion: "is helpful",
+					Passed:    true,
+				}}},
+			},
+		},
+	}
+
+	clone := orig.Clone()
+	require.NotNil(t, clone)
+
+	clone.Evals.Relevance[0] = "mutated"
+	clone.EvalResult.Successes[0] = "mutated"
+	clone.EvalResult.Failures[0] = "mutated"
+	clone.EvalResult.Checks.Size.Actual = "XL"
+	clone.EvalResult.Checks.Relevance.Results[0].Criterion = "mutated"
+
+	assert.Equal(t, "is helpful", orig.Evals.Relevance[0])
+	assert.Equal(t, "ok", orig.EvalResult.Successes[0])
+	assert.Equal(t, "missing", orig.EvalResult.Failures[0])
+	assert.Equal(t, "S", orig.EvalResult.Checks.Size.Actual)
+	assert.Equal(t, "is helpful", orig.EvalResult.Checks.Relevance.Results[0].Criterion)
+}
+
 func TestClone_DeepCopiesMessagesAndConfig(t *testing.T) {
 	orig := &Session{
 		ID:                  "sess-1",
@@ -74,11 +111,23 @@ func TestClone_DeepCopiesMessagesAndConfig(t *testing.T) {
 		CustomModelsUsed:    []string{"m1"},
 		AttachedFiles:       []string{"/abs/a.txt"},
 	}
+	destructive := true
 	orig.AddMessage(&Message{Message: chat.Message{
 		Role: chat.MessageRoleUser,
 		MultiContent: []chat.MessagePart{{
 			Type:     chat.MessagePartTypeImageURL,
 			ImageURL: &chat.MessageImageURL{URL: "http://orig"},
+		}},
+		ToolDefinitions: []tools.Tool{{
+			Name: "read_file",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string"},
+				},
+			},
+			OutputSchema: map[string]any{"type": "string"},
+			Annotations:  tools.ToolAnnotations{DestructiveHint: &destructive},
 		}},
 	}})
 
@@ -92,6 +141,17 @@ func TestClone_DeepCopiesMessagesAndConfig(t *testing.T) {
 	clone.CustomModelsUsed[0] = "mutated"
 	clone.AttachedFiles[0] = "/abs/mutated.txt"
 	clone.Messages[0].Message.Message.MultiContent[0].ImageURL.URL = "http://mutated"
+	cloneParams := clone.Messages[0].Message.Message.ToolDefinitions[0].Parameters.(map[string]any)
+	cloneParams["type"] = "mutated"
+	cloneNestedParams := cloneParams["properties"].(map[string]any)["path"].(map[string]any)
+	cloneNestedParams["type"] = "mutated"
+	cloneOutputSchema := clone.Messages[0].Message.Message.ToolDefinitions[0].OutputSchema.(map[string]any)
+	cloneOutputSchema["type"] = "mutated"
+	*clone.Messages[0].Message.Message.ToolDefinitions[0].Annotations.DestructiveHint = false
+
+	origParams := orig.Messages[0].Message.Message.ToolDefinitions[0].Parameters.(map[string]any)
+	origNestedParams := origParams["properties"].(map[string]any)["path"].(map[string]any)
+	origOutputSchema := orig.Messages[0].Message.Message.ToolDefinitions[0].OutputSchema.(map[string]any)
 
 	assert.Equal(t, "a", orig.Permissions.Allow[0])
 	assert.Equal(t, "k", orig.Permissions.Ask[0])
@@ -99,6 +159,10 @@ func TestClone_DeepCopiesMessagesAndConfig(t *testing.T) {
 	assert.Equal(t, "m1", orig.CustomModelsUsed[0])
 	assert.Equal(t, "/abs/a.txt", orig.AttachedFiles[0])
 	assert.Equal(t, "http://orig", orig.Messages[0].Message.Message.MultiContent[0].ImageURL.URL)
+	assert.Equal(t, "object", origParams["type"])
+	assert.Equal(t, "string", origNestedParams["type"])
+	assert.Equal(t, "string", origOutputSchema["type"])
+	assert.True(t, *orig.Messages[0].Message.Message.ToolDefinitions[0].Annotations.DestructiveHint)
 }
 
 func TestClone_AppendingDoesNotAffectOriginal(t *testing.T) {

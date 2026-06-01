@@ -56,8 +56,8 @@ func (s *Session) Clone() *Session {
 		ID:                      s.ID,
 		InputID:                 s.InputID,
 		Title:                   s.Title,
-		Evals:                   s.Evals,
-		EvalResult:              s.EvalResult,
+		Evals:                   cloneEvalCriteria(s.Evals),
+		EvalResult:              cloneEvalResult(s.EvalResult),
 		CreatedAt:               s.CreatedAt,
 		ToolsApproved:           s.ToolsApproved,
 		NonInteractive:          s.NonInteractive,
@@ -189,6 +189,44 @@ func generateBranchTitle(parentTitle string) string {
 	}
 
 	return parentTitle + " (branched)"
+}
+
+func cloneEvalCriteria(src *EvalCriteria) *EvalCriteria {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	cp.Relevance = cloneStringSlice(src.Relevance)
+	return &cp
+}
+
+func cloneEvalResult(src *EvalResult) *EvalResult {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	cp.Successes = cloneStringSlice(src.Successes)
+	cp.Failures = cloneStringSlice(src.Failures)
+	cp.Checks = cloneEvalResultChecks(src.Checks)
+	return &cp
+}
+
+func cloneEvalResultChecks(src EvalResultChecks) EvalResultChecks {
+	var cp EvalResultChecks
+	if src.Size != nil {
+		size := *src.Size
+		cp.Size = &size
+	}
+	if src.ToolCalls != nil {
+		toolCalls := *src.ToolCalls
+		cp.ToolCalls = &toolCalls
+	}
+	if src.Relevance != nil {
+		relevance := *src.Relevance
+		relevance.Results = slices.Clone(src.Relevance.Results)
+		cp.Relevance = &relevance
+	}
+	return cp
 }
 
 func clonePermissionsConfig(src *PermissionsConfig) *PermissionsConfig {

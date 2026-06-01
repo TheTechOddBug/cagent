@@ -392,7 +392,7 @@ func cloneChatMessage(m chat.Message) chat.Message {
 		m.ToolCalls = slices.Clone(m.ToolCalls)
 	}
 	if m.ToolDefinitions != nil {
-		m.ToolDefinitions = slices.Clone(m.ToolDefinitions)
+		m.ToolDefinitions = cloneToolDefinitions(m.ToolDefinitions)
 	}
 	if m.Usage != nil {
 		usageCopy := *m.Usage
@@ -402,6 +402,52 @@ func cloneChatMessage(m chat.Message) chat.Message {
 		m.ThoughtSignature = slices.Clone(m.ThoughtSignature)
 	}
 	return m
+}
+
+func cloneToolDefinitions(src []tools.Tool) []tools.Tool {
+	if src == nil {
+		return nil
+	}
+	out := make([]tools.Tool, len(src))
+	for i, tool := range src {
+		out[i] = tool
+		out[i].Parameters = cloneSchemaValue(tool.Parameters)
+		out[i].OutputSchema = cloneSchemaValue(tool.OutputSchema)
+		out[i].Annotations = cloneToolAnnotations(tool.Annotations)
+	}
+	return out
+}
+
+func cloneToolAnnotations(src tools.ToolAnnotations) tools.ToolAnnotations {
+	cp := src
+	if src.DestructiveHint != nil {
+		hint := *src.DestructiveHint
+		cp.DestructiveHint = &hint
+	}
+	if src.OpenWorldHint != nil {
+		hint := *src.OpenWorldHint
+		cp.OpenWorldHint = &hint
+	}
+	return cp
+}
+
+func cloneSchemaValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		cp := make(map[string]any, len(x))
+		for k, v := range x {
+			cp[k] = cloneSchemaValue(v)
+		}
+		return cp
+	case []any:
+		cp := make([]any, len(x))
+		for i, v := range x {
+			cp[i] = cloneSchemaValue(v)
+		}
+		return cp
+	default:
+		return v
+	}
 }
 
 // Session helper methods

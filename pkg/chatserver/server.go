@@ -470,7 +470,7 @@ func (s *server) chatCompletion(c echo.Context, rt runtime.Runtime, sess *sessio
 		return err
 	}
 
-	_ = c.JSON(http.StatusOK, ChatCompletionResponse{
+	return c.JSON(http.StatusOK, ChatCompletionResponse{
 		ID:      newChatID(),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
@@ -486,7 +486,6 @@ func (s *server) chatCompletion(c echo.Context, rt runtime.Runtime, sess *sessio
 		}},
 		Usage: sessionUsage(sess),
 	})
-	return nil
 }
 
 // streamChatCompletion runs the agent and streams its response back to the
