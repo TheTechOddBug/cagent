@@ -3,6 +3,46 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.70.1] - 2026-06-01
+
+This release introduces agent selection UI, git worktree isolation, theme preselection, and notification improvements for enhanced workflow management.
+
+## What's New
+
+- Adds `--agent-picker` flag for full-screen agent selection dialog with YAML syntax highlighting and scrollable interface
+- Adds `--worktree` flag to run agents in isolated git worktrees on dedicated branches
+- Adds `--worktree-pr` flag to run agents on GitHub pull requests in separate worktrees
+- Adds `--theme` flag to preselect TUI theme at launch, overriding user config settings
+
+## Improvements
+
+- Improves TUI notifications with hover protection, click-to-copy content, and visual enhancements
+- Adds worktree cleanup when interactive runs end to maintain clean workspace
+- Adds worktree_create hook to prepare fresh git worktrees for agent execution
+
+## Bug Fixes
+
+- Fixes agent config display sanitization and enables YAML soft-wrap in picker dialog
+
+## Technical Changes
+
+- Forwards MCP embedded resources (images, PDFs, text) to model providers as native content blocks
+- Adds theme flag validation and completion tests for better user experience
+
+### Pull Requests
+
+- [#2921](https://github.com/docker/docker-agent/pull/2921) - Address review feedback on #2896
+- [#2930](https://github.com/docker/docker-agent/pull/2930) - docs: update CHANGELOG.md for v1.70.0
+- [#2931](https://github.com/docker/docker-agent/pull/2931) - TUI - Improve notifications
+- [#2932](https://github.com/docker/docker-agent/pull/2932) - docs: document --auth-token flag, OAuth callback security note, and TUI notification UX
+- [#2933](https://github.com/docker/docker-agent/pull/2933) - feat: add --theme flag to preselect TUI theme
+- [#2935](https://github.com/docker/docker-agent/pull/2935) - feat(mcp): forward embedded resources to model providers
+- [#2936](https://github.com/docker/docker-agent/pull/2936) - docs: document --theme flag for docker agent run
+- [#2937](https://github.com/docker/docker-agent/pull/2937) - feat: add --agent-picker flag for agent selection UI
+- [#2938](https://github.com/docker/docker-agent/pull/2938) - feat: run agents in isolated git worktrees
+- [#2939](https://github.com/docker/docker-agent/pull/2939) - docs: add --theme launch example to TUI quickstart
+
+
 ## [v1.70.0] - 2026-05-29
 
 This release focuses on text handling improvements, OAuth flow enhancements for MCP catalog servers, and server filtering capabilities.
@@ -3102,3 +3142,5 @@ This release improves the terminal user interface with better error handling and
 [v1.69.0]: https://github.com/docker/docker-agent/releases/tag/v1.69.0
 
 [v1.70.0]: https://github.com/docker/docker-agent/releases/tag/v1.70.0
+
+[v1.70.1]: https://github.com/docker/docker-agent/releases/tag/v1.70.1
