@@ -97,6 +97,11 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		// required Copilot-Integration-Id) and any provider-specific defaults.
 		clientOptions = append(clientOptions, buildHeaderOptions(cfg)...)
 
+		// Preserve full error details from non-OpenAI providers (e.g. GitHub
+		// Copilot returns a bare "400 Bad Request" whose body explains the
+		// actual cause); without this the SDK discards it.
+		clientOptions = append(clientOptions, option.WithMiddleware(oaistream.ErrorBodyMiddleware()))
+
 		httpClient := httpclient.NewHTTPClient(ctx)
 		clientOptions = append(clientOptions, option.WithHTTPClient(httpClient))
 
@@ -208,10 +213,12 @@ func (c *Client) CreateChatCompletionStream(
 	case "openai_chatcompletions":
 		slog.DebugContext(ctx, "Using Chat Completions API", "api_type", apiType, "model", c.ModelConfig.Model)
 	default:
-		// Auto-detect based on model name for OpenAI provider
-		// Use Responses API for newer models that support it (gpt-4.1+, o-series, gpt-5)
-		if c.ModelConfig.Provider == "openai" && modelinfo.SupportsResponsesAPI(c.ModelConfig.Model) {
-			slog.DebugContext(ctx, "Auto-selecting Responses API", "model", c.ModelConfig.Model)
+		// Auto-detect based on model name. Use the Responses API for newer
+		// models that require it (gpt-4.1+, o-series, gpt-5, Codex). This
+		// applies to both OpenAI and GitHub Copilot, which proxies the same
+		// models and rejects them on /chat/completions with a 400.
+		if autoSelectsResponsesAPI(c.ModelConfig.Provider) && modelinfo.SupportsResponsesAPI(c.ModelConfig.Model) {
+			slog.DebugContext(ctx, "Auto-selecting Responses API", "provider", c.ModelConfig.Provider, "model", c.ModelConfig.Model)
 			return c.CreateResponseStream(ctx, messages, requestTools)
 		}
 	}
@@ -1111,6 +1118,22 @@ func getAPIType(cfg *latest.ModelConfig) string {
 // (defined in the providers: section). Custom providers have api_type set in ProviderOpts.
 func isCustomProvider(cfg *latest.ModelConfig) bool {
 	return getAPIType(cfg) != ""
+}
+
+// autoSelectsResponsesAPI reports whether, absent an explicit api_type, the
+// provider should auto-select the Responses API for models that require it.
+//
+// This covers OpenAI directly and GitHub Copilot, which proxies the same
+// OpenAI models and rejects newer ones (gpt-5, Codex, ...) on the legacy
+// /chat/completions endpoint with a 400. Detection is driven by
+// modelinfo.SupportsResponsesAPI so new models are picked up by naming
+// convention rather than a hardcoded allow-list.
+func autoSelectsResponsesAPI(provider string) bool {
+	switch provider {
+	case "openai", "github-copilot":
+		return true
+	}
+	return false
 }
 
 // noThinkingMinOutputTokens is the minimum output-token budget we enforce for
