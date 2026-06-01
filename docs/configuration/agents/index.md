@@ -305,7 +305,7 @@ Commands use JavaScript template literal syntax (`${env.VAR}`) for environment v
 
 The same syntax is also expanded in agent and toolset instructions: `agents.<name>.instruction` and `toolsets[*].instruction` support `${env.X}` placeholders (with optional `||` defaults and ternary expressions). `agents.<name>.description` and `agents.<name>.welcome_message` also support it.
 
-Note that path-like fields (`working_dir`, `path`) use a different, shell-style syntax (`$VAR`, `${VAR}`, `~`) and do **not** recognize `${env.X}`. See [Variable Expansion in Config Fields]({{ '/configuration/overview/#variable-expansion-in-config-fields' | relative_url }}) for the full table.
+Note that path-like fields (`working_dir`, `path`) primarily use a shell-style syntax (`$VAR`, `${VAR}`, `~`), and also accept `${env.X}` as an alias (though not richer JS expressions). See [Variable Expansion in Config Fields]({{ '/configuration/overview/#variable-expansion-in-config-fields' | relative_url }}) for the full table.
 
 ## Complete Example
 

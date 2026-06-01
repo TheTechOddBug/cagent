@@ -241,13 +241,13 @@ Undefined variables expand to the empty string.
 
 ### Shell-style — `$VAR`, `${VAR}`, `~`
 
-Used only for filesystem paths. Backed by `os.ExpandEnv` plus tilde expansion against the current user's home directory.
+Used for filesystem paths. Backed by `os.ExpandEnv` plus tilde expansion against the current user's home directory.
 
 Applies to:
 
 - `agents.<name>.toolsets[*].working_dir` (MCP, LSP)
 - `agents.<name>.toolsets[*].path` (memory, tasks)
-- `agents.<name>.toolsets[*].env` values (MCP, shell, script, LSP) — these go through `os.Expand`, not the JS evaluator, so `${env.X}` is **not** recognized here either.
+- `agents.<name>.toolsets[*].env` values (MCP, shell, script, LSP) — these go through `os.Expand`, not the JS evaluator, so `${env.X}` is **not** recognized here.
 - The `~` prefix is also accepted in any path-like field documented as such.
 
 ```yaml
@@ -261,7 +261,7 @@ agents:
         working_dir: "$HOME/work"
 ```
 
-The `${env.VAR}` form is **not** recognized in these path fields today.
+The `working_dir` and `path` fields additionally accept the `${env.VAR}` form as an alias for `${VAR}`, so the JS-style syntax works there too. Richer JS expressions (e.g. `${env.VAR || 'default'}`) are still **not** evaluated in path fields. The `env` values fields remain shell-only.
 
 ### Quick reference
 
@@ -271,7 +271,7 @@ The `${env.VAR}` form is **not** recognized in these path fields today.
 | `instruction` (agent and toolset)             |     ✓      |       ✗       |  ✗  |
 | `commands.*`                                  |     ✓      |       ✗       |  ✗  |
 | `headers`, `remote.headers`, `api_config.headers` |     ✓      |       ✗       |  ✗  |
-| `working_dir`, `path`                         |     ✗      |       ✓       |  ✓  |
+| `working_dir`, `path`                         |     ✓      |       ✓       |  ✓  |
 | `env` values                                  |     ✗      |       ✓       |  ✗  |
 
 When in doubt, prefer `${env.X}` for prompts and headers, and `${X}` (or `$X`) for paths.
