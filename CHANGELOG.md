@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.72.0] - 2026-06-02
+
+This release adds support for JSON output in alias commands, top-level shared configuration, and includes documentation updates and bug fixes.
+
+## What's New
+- Adds Atlassian expert agent example for specialized assistance
+- Adds JSON output support for `alias list` command with `--json` flag
+- Adds support for top-level shared skills and commands in configuration files
+
+## Bug Fixes
+- Fixes HTTP client panic when default transport is wrapped by other libraries
+
+## Technical Changes
+- Documents `--agent-picker` flag for interactive agent selection
+- Documents MCP embedded resource forwarding to model providers
+- Documents OAuth authorization cancel behavior for remote MCP servers
+- Refactors configuration handling to support shared skills and commands in latest package
+
+### Pull Requests
+
+- [#2957](https://github.com/docker/docker-agent/pull/2957) - docs: update documentation for agent-picker, MCP embedded resources, and remote MCP OAuth cancel
+- [#2962](https://github.com/docker/docker-agent/pull/2962) - docs: update CHANGELOG.md for v1.71.0
+- [#2963](https://github.com/docker/docker-agent/pull/2963) - feat(examples): add Atlassian expert agent example
+- [#2966](https://github.com/docker/docker-agent/pull/2966) - feat(cli): support `alias list --json` output
+- [#2968](https://github.com/docker/docker-agent/pull/2968) - chore: bump Go dependencies
+- [#2970](https://github.com/docker/docker-agent/pull/2970) - fix(httpclient): fall back when http.DefaultTransport is not *http.Transport
+- [#2971](https://github.com/docker/docker-agent/pull/2971) - feat(config): support top-level shared skills and commands
+
+
 ## [v1.71.0] - 2026-06-02
 
 This release improves GitHub Copilot integration with better API routing and error handling, along with enhanced conversation state management and expanded documentation.
@@ -3209,3 +3238,5 @@ This release improves the terminal user interface with better error handling and
 [v1.70.2]: https://github.com/docker/docker-agent/releases/tag/v1.70.2
 
 [v1.71.0]: https://github.com/docker/docker-agent/releases/tag/v1.71.0
+
+[v1.72.0]: https://github.com/docker/docker-agent/releases/tag/v1.72.0
