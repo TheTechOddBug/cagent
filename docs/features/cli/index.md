@@ -47,6 +47,7 @@ $ docker agent run [config] [message...] [flags]
 | `--template <image>`                    | Template image for the sandbox (default: `docker/sandbox-templates:docker-agent`)                                                         |
 | `--sbx`                                 | Prefer the `sbx` CLI backend when available (default `true`; set `--sbx=false` to force `docker sandbox`)                                 |
 | `--no-kit`                              | Disable the [auto-kit]({{ '/configuration/sandbox/' | relative_url }}#auto-kit): do not stage skills or prompt files into the sandbox    |
+| `--agent-picker [refs]`                 | Show a full-screen interactive picker before launching, letting you browse and select an agent. Accepts an optional comma-separated list of agent references to show (defaults to `default,coder`). Arrow keys navigate; `?` toggles the YAML preview panel; Enter confirms. Not available in `--exec` or non-TTY modes. |
 | `-w, --worktree [name]`                 | Run the agent in a fresh git worktree of the working directory, isolating its changes from your checkout. Optionally name it (`--worktree=my-feature`); otherwise a name is generated. Requires the working directory to be inside a git repository. Cannot be combined with `--remote` or `--sandbox`. When the session ends, a clean worktree is removed automatically; one with work prompts to keep or remove (never in `--exec`). |
 | `--worktree-pr <number\|url>`            | Run the agent in a git worktree checked out on an existing GitHub pull request (PR number, `#123`, or PR URL). Continues the PR's branch so commits push back to it. Requires the [GitHub CLI](https://cli.github.com/) (`gh`). Cannot be combined with `--worktree`, `--remote`, or `--sandbox`. |
 | `--working-dir <path>`                  | Set the working directory for the session (applies to tools and relative paths)                                                           |
@@ -87,6 +88,10 @@ $ docker agent run agent.yaml "question 1" "question 2" "question 3"
 $ docker agent run agent.yaml --app-name "My Project"
 $ docker agent run agent.yaml --sidebar=false
 $ docker agent run agent.yaml --disable-commands="/cost,/eval,/model"
+
+# Browse and pick an agent interactively
+$ docker agent run --agent-picker
+$ docker agent run --agent-picker=agentcatalog/coder,agentcatalog/researcher
 ```
 
 <div class="callout callout-tip" markdown="1">

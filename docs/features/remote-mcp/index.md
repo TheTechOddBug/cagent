@@ -27,6 +27,13 @@ toolsets:
 
 </div>
 
+<div class="callout callout-tip" markdown="1">
+<div class="callout-title">Cancelling the authorization dialog
+</div>
+  <p>If you dismiss the OAuth authorization dialog, the request is cancelled cleanly — no repeated prompts appear. The agent will report that authorization was declined. To try again, simply re-enable the server or repeat the request that triggered the flow.</p>
+
+</div>
+
 ## Configuration
 
 ```yaml

@@ -104,6 +104,16 @@ toolsets:
 
 For a curated list of public remote MCP endpoints (Linear, GitHub, Vercel, Notion, …) and full OAuth configuration details, see [Remote MCP Servers]({{ '/features/remote-mcp/' | relative_url }}).
 
+## Embedded Resources
+
+MCP tool results can include embedded resources — images, PDFs, and text files returned directly in the tool response. Docker Agent preserves these as attachments and forwards them to the model as native content blocks:
+
+- **Anthropic** — images become `image` blocks in the `tool_result`; PDFs and other documents become `document` blocks.
+- **OpenAI** — images are forwarded as `input_image` data URIs; PDFs as `input_file` data URIs in the tool result content.
+- **Bedrock** and **Gemini** — receive equivalent provider-native representations.
+
+No configuration is required. When an MCP server returns an embedded resource alongside its text output, the resource is automatically attached and sent to the model on the next turn. This is useful for MCP servers that generate charts, export PDFs, or return binary data as part of their responses.
+
 ## Reusable Definitions (`mcps:`)
 
 Repeated MCP server configurations can be hoisted into the top-level `mcps:` section and referenced by name with `{type: mcp, ref: <name>}`:
