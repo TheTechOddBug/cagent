@@ -196,6 +196,19 @@ func thoughtSignatureOrDefault(sig []byte) []byte {
 // convertMessagesToGemini converts chat.Messages into Gemini Contents
 func convertMessagesToGemini(ctx context.Context, messages []chat.Message, id modelsdev.ID, store *modelsdev.Store) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(messages))
+
+	// Vertex Gemini rejects a request unless the turn answering an N-function-call turn
+	// carries exactly N function-response parts, so consecutive tool responses are
+	// coalesced into a single Content instead of one Content per response.
+	var pendingToolParts []*genai.Part
+	var pendingToolRole genai.Role
+	flushToolParts := func() {
+		if len(pendingToolParts) > 0 {
+			contents = append(contents, genai.NewContentFromParts(pendingToolParts, pendingToolRole))
+			pendingToolParts = nil
+		}
+	}
+
 	for i := range messages {
 		msg := &messages[i]
 
@@ -206,7 +219,7 @@ func convertMessagesToGemini(ctx context.Context, messages []chat.Message, id mo
 
 		role := messageRoleToGemini(msg.Role)
 
-		// Handle tool responses
+		// Handle tool responses (accumulated, then flushed as one Content)
 		if msg.Role == chat.MessageRoleTool && msg.ToolCallID != "" {
 			response := map[string]any{"result": msg.Content}
 
@@ -218,9 +231,12 @@ func convertMessagesToGemini(ctx context.Context, messages []chat.Message, id mo
 			} else {
 				part = genai.NewPartFromFunctionResponse(msg.ToolCallID, response)
 			}
-			contents = append(contents, genai.NewContentFromParts([]*genai.Part{part}, role))
+			pendingToolParts = append(pendingToolParts, part)
+			pendingToolRole = role
 			continue
 		}
+
+		flushToolParts()
 
 		// Handle assistant messages with tool calls
 		if msg.Role == chat.MessageRoleAssistant && len(msg.ToolCalls) > 0 {
@@ -255,6 +271,9 @@ func convertMessagesToGemini(ctx context.Context, messages []chat.Message, id mo
 			contents = append(contents, genai.NewContentFromParts([]*genai.Part{part}, role))
 		}
 	}
+
+	flushToolParts()
+
 	return contents
 }
 

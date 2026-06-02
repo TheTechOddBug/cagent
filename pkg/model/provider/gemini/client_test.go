@@ -493,3 +493,41 @@ func TestBuildConfig_ThinkingFromBudget(t *testing.T) {
 	assert.True(t, config.ThinkingConfig.IncludeThoughts, "IncludeThoughts should be true")
 	assert.Equal(t, genai.ThinkingLevelHigh, config.ThinkingConfig.ThinkingLevel, "ThinkingLevel should match ThinkingBudget")
 }
+
+func TestConvertMessagesToGemini_ParallelToolResponsesCoalesced(t *testing.T) {
+	t.Parallel()
+
+	// An assistant turn emits two parallel function calls, followed by the two tool
+	// responses. Vertex Gemini requires those responses to be delivered as a single
+	// Content with two FunctionResponse parts (matching the two FunctionCall parts of
+	// the preceding turn). Regression test for the "number of function response parts is
+	// equal to the number of function call parts" INVALID_ARGUMENT error.
+	messages := []chat.Message{
+		{Role: chat.MessageRoleUser, Content: "go"},
+		{
+			Role: chat.MessageRoleAssistant,
+			ToolCalls: []tools.ToolCall{
+				{ID: "call-1", Function: tools.FunctionCall{Name: "tool_a", Arguments: `{}`}},
+				{ID: "call-2", Function: tools.FunctionCall{Name: "tool_b", Arguments: `{"x":1}`}},
+			},
+		},
+		{Role: chat.MessageRoleTool, ToolCallID: "call-1", Content: "result-a"},
+		{Role: chat.MessageRoleTool, ToolCallID: "call-2", Content: "result-b"},
+	}
+
+	contents := convertMessagesToGemini(t.Context(), messages, modelsdev.ID{}, modelsdev.NewDatabaseStore(&modelsdev.Database{}))
+
+	// user + assistant(2 function calls) + ONE coalesced tool-response content.
+	require.Len(t, contents, 3)
+
+	assistant := contents[1]
+	assert.Equal(t, genai.RoleModel, assistant.Role)
+	require.Len(t, assistant.Parts, 2)
+
+	toolResp := contents[2]
+	require.Len(t, toolResp.Parts, 2,
+		"two parallel tool responses must be coalesced into one Content with two FunctionResponse parts")
+	for i, p := range toolResp.Parts {
+		require.NotNil(t, p.FunctionResponse, "part %d should be a FunctionResponse", i)
+	}
+}
