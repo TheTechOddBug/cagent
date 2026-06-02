@@ -1,0 +1,32 @@
+models:
+  model:
+    provider: anthropic
+    model: claude-sonnet-4-0
+    max_tokens: 64000
+
+commands:
+  ci:
+    deploy: "Deploy the app"
+    test: "Run the tests"
+  docs:
+    build-docs: "Build the documentation"
+
+skills:
+  base:
+    - local
+    - git-skill
+
+agents:
+  dev:
+    model: model
+    use_commands: [ci, docs]
+    use_skills: [base]
+    commands:
+      lint: "Run linter"
+      deploy: "Custom deploy override"
+    skills:
+      - docker-skill
+  ops:
+    model: model
+    use_commands: [ci]
+    use_skills: [base]

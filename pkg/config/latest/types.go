@@ -20,12 +20,19 @@ const Version = "10"
 
 // Config represents the entire configuration file
 type Config struct {
-	Version     string                    `json:"version,omitempty"`
-	Agents      Agents                    `json:"agents,omitempty"`
-	Providers   map[string]ProviderConfig `json:"providers,omitempty"`
-	Models      map[string]ModelConfig    `json:"models,omitempty"`
-	MCPs        map[string]MCPToolset     `json:"mcps,omitempty"`
-	RAG         map[string]RAGToolset     `json:"rag,omitempty"`
+	Version   string                    `json:"version,omitempty"`
+	Agents    Agents                    `json:"agents,omitempty"`
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+	Models    map[string]ModelConfig    `json:"models,omitempty"`
+	MCPs      map[string]MCPToolset     `json:"mcps,omitempty"`
+	RAG       map[string]RAGToolset     `json:"rag,omitempty"`
+	// Commands and Skills are reusable, named groups shared across agents.
+	// An agent opts into a group by listing its name in AgentConfig.UseCommands
+	// or AgentConfig.UseSkills; the group is merged into the agent during config
+	// resolution (see resolveCommandDefinitions / resolveSkillDefinitions). This
+	// mirrors the top-level MCPs/RAG reference-by-name convention.
+	Commands    map[string]types.Commands `json:"commands,omitempty"`
+	Skills      map[string]SkillsConfig   `json:"skills,omitempty"`
 	Metadata    Metadata                  `json:"metadata"`
 	Permissions *PermissionsConfig        `json:"permissions,omitempty"`
 	Runtime     *RuntimeDefaults          `json:"runtime,omitempty"`
@@ -450,8 +457,14 @@ type AgentConfig struct {
 	Commands                types.Commands    `json:"commands,omitempty"`
 	StructuredOutput        *StructuredOutput `json:"structured_output,omitempty"`
 	Skills                  SkillsConfig      `json:"skills,omitzero"`
-	Hooks                   *HooksConfig      `json:"hooks,omitempty"`
-	Cache                   *CacheConfig      `json:"cache,omitempty"`
+	// UseCommands and UseSkills reference reusable groups defined in the
+	// top-level Config.Commands / Config.Skills sections. The referenced
+	// groups are merged into Commands / Skills during config resolution;
+	// inline entries on the agent take precedence on name conflicts.
+	UseCommands []string     `json:"use_commands,omitempty"`
+	UseSkills   []string     `json:"use_skills,omitempty"`
+	Hooks       *HooksConfig `json:"hooks,omitempty"`
+	Cache       *CacheConfig `json:"cache,omitempty"`
 }
 
 // CacheConfig configures the agent's response cache. When set and Enabled

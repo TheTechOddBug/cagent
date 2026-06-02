@@ -139,6 +139,7 @@ var blockRules = map[string]blockRule{
 	"mcp":      {mode: modeMapByLabel, outKey: "mcps"},
 	"rag":      {mode: modeMapByLabel, outKey: "rag"},
 	"command":  {mode: modeMapByLabel, outKey: "commands"},
+	"skill":    {mode: modeMapByLabel, outKey: "skills"},
 	// `shell "name" { ... }` is used inside script toolsets as a map of
 	// scripted shell commands.
 	"shell": {mode: modeMapByLabel, outKey: "shell"},

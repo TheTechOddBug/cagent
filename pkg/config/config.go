@@ -143,6 +143,14 @@ func validateConfig(cfg *latest.Config) error {
 		return err
 	}
 
+	if err := resolveCommandDefinitions(cfg); err != nil {
+		return err
+	}
+
+	if err := resolveSkillDefinitions(cfg); err != nil {
+		return err
+	}
+
 	allNames := map[string]bool{}
 	for _, agent := range cfg.Agents {
 		allNames[agent.Name] = true
@@ -173,7 +181,7 @@ func validateConfig(cfg *latest.Config) error {
 			}
 		}
 
-		if err := validateSkillsConfiguration(agent.Name, &agent); err != nil {
+		if err := validateSkills(fmt.Sprintf("agent '%s'", agent.Name), &agent.Skills); err != nil {
 			return err
 		}
 	}
@@ -258,42 +266,44 @@ func validateProviderName(name string) error {
 	return nil
 }
 
-// validateSkillsConfiguration validates the skills configuration for an agent.
-func validateSkillsConfiguration(_ string, agent *latest.AgentConfig) error {
-	for _, source := range agent.Skills.Sources {
+// validateSkills validates a skills configuration. label identifies the owner
+// of the configuration in error messages (e.g. "agent 'foo'" or
+// "skill group 'base'").
+func validateSkills(label string, sc *latest.SkillsConfig) error {
+	for _, source := range sc.Sources {
 		switch {
 		case source == latest.SkillSourceLocal:
 			// valid
 		case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 			if _, err := url.Parse(source); err != nil {
-				return fmt.Errorf("agent '%s' has invalid skills source URL '%s': %w", agent.Name, source, err)
+				return fmt.Errorf("%s has invalid skills source URL '%s': %w", label, source, err)
 			}
 		default:
-			return fmt.Errorf("agent '%s' has unknown skills source '%s' (must be 'local' or an HTTP/HTTPS URL)", agent.Name, source)
+			return fmt.Errorf("%s has unknown skills source '%s' (must be 'local' or an HTTP/HTTPS URL)", label, source)
 		}
 	}
-	for _, name := range agent.Skills.Include {
+	for _, name := range sc.Include {
 		if strings.TrimSpace(name) == "" {
-			return fmt.Errorf("agent '%s' has an empty skills entry", agent.Name)
+			return fmt.Errorf("%s has an empty skills entry", label)
 		}
 	}
-	seenInline := make(map[string]bool, len(agent.Skills.Inline))
-	for i := range agent.Skills.Inline {
-		inline := &agent.Skills.Inline[i]
+	seenInline := make(map[string]bool, len(sc.Inline))
+	for i := range sc.Inline {
+		inline := &sc.Inline[i]
 		if strings.TrimSpace(inline.Name) == "" {
-			return fmt.Errorf("agent '%s' has an inline skill with no name", agent.Name)
+			return fmt.Errorf("%s has an inline skill with no name", label)
 		}
 		if strings.TrimSpace(inline.Description) == "" {
-			return fmt.Errorf("agent '%s' inline skill '%s' is missing a description", agent.Name, inline.Name)
+			return fmt.Errorf("%s inline skill '%s' is missing a description", label, inline.Name)
 		}
 		if strings.TrimSpace(inline.Instructions) == "" {
-			return fmt.Errorf("agent '%s' inline skill '%s' is missing instructions", agent.Name, inline.Name)
+			return fmt.Errorf("%s inline skill '%s' is missing instructions", label, inline.Name)
 		}
 		if inline.Context != "" && inline.Context != "fork" {
-			return fmt.Errorf("agent '%s' inline skill '%s' has invalid context '%s' (only 'fork' is supported)", agent.Name, inline.Name, inline.Context)
+			return fmt.Errorf("%s inline skill '%s' has invalid context '%s' (only 'fork' is supported)", label, inline.Name, inline.Context)
 		}
 		if seenInline[inline.Name] {
-			return fmt.Errorf("agent '%s' has duplicate inline skill '%s'", agent.Name, inline.Name)
+			return fmt.Errorf("%s has duplicate inline skill '%s'", label, inline.Name)
 		}
 		seenInline[inline.Name] = true
 	}

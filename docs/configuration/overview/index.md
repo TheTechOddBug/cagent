@@ -67,6 +67,13 @@ providers:
 permissions:
   allow: ["read_*"]
   deny: ["shell:cmd=sudo*"]
+
+# 9. Commands & Skills — reusable, named groups shared across agents (optional)
+commands:
+  ci:
+    deploy: "Deploy the application"
+skills:
+  base: [local, git]
 ```
 
 ## Minimal Config
@@ -358,6 +365,34 @@ agents:
 ```
 
 An `mcps` entry accepts every field a regular `type: mcp` toolset accepts (command/args/env, `remote` with `url`/`transport_type`/`headers`/`oauth`, `tools` filter, `instruction`, `defer`, …) — the `type: mcp` is implicit. See the [Tool Config]({{ '/configuration/tools/' | relative_url }}) page for all options and the [Remote MCP Servers]({{ '/features/remote-mcp/' | relative_url }}) guide for remote setups.
+
+## Reusable Commands & Skills (`commands:` / `skills:`)
+
+The top-level `commands:` and `skills:` sections define named, reusable groups that agents pull in by name through `use_commands:` / `use_skills:`. This avoids repeating the same command set or skill configuration across agents. Each group value uses the exact same format as an agent's own `commands` / `skills` field.
+
+Referenced groups are merged into the agent during config loading. An agent's own inline `commands` / `skills` entries take precedence on name conflicts.
+
+```yaml
+commands:
+  ci:                       # a named command group
+    deploy: "Deploy the application"
+    test: "Run the test suite"
+skills:
+  base: [local, git]        # a named skill group
+
+agents:
+  root:
+    model: openai/gpt-5-mini
+    use_commands: [ci]        # reuse the "ci" command group
+    use_skills: [base]        # reuse the "base" skill group
+    commands:
+      lint: "Run the linter"  # inline command, merged in (wins on conflict)
+  reviewer:
+    model: openai/gpt-5-mini
+    use_commands: [ci]        # same group, reused without duplication
+```
+
+See [`examples/shared-commands-skills.yaml`](https://github.com/docker/cagent/blob/main/examples/shared-commands-skills.yaml) for a complete example.
 
 ## Custom Providers Section
 

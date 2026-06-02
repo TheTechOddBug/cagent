@@ -1,0 +1,14 @@
+models:
+  model:
+    provider: anthropic
+    model: claude-sonnet-4-0
+    max_tokens: 64000
+
+skills:
+  base:
+    - local
+
+agents:
+  dev:
+    model: model
+    use_skills: [nonexistent]

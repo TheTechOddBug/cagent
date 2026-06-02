@@ -70,6 +70,20 @@
         "$ref": "#/definitions/RAGToolset"
       }
     },
+    "commands": {
+      "type": "object",
+      "description": "Map of reusable, named command groups. Define command sets here and reference them by name from an agent's use_commands to avoid duplication.",
+      "additionalProperties": {
+        "$ref": "#/definitions/Commands"
+      }
+    },
+    "skills": {
+      "type": "object",
+      "description": "Map of reusable, named skill groups. Define skill sets here and reference them by name from an agent's use_skills to avoid duplication.",
+      "additionalProperties": {
+        "$ref": "#/definitions/SkillsConfig"
+      }
+    },
     "metadata": {
       "$ref": "#/definitions/Metadata",
       "description": "Configuration metadata"
@@ -746,9 +760,82 @@
               ]
             }
           ]
+        },
+        "use_commands": {
+          "type": "array",
+          "description": "Names of reusable command groups (defined in the top-level commands section) to merge into this agent. Inline commands on the agent take precedence on name conflicts.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "use_skills": {
+          "type": "array",
+          "description": "Names of reusable skill groups (defined in the top-level skills section) to merge into this agent. Inline skills on the agent take precedence on name conflicts.",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
+    },
+    "Commands": {
+      "description": "A set of named prompts for /commands. Supports simple string format or advanced object format with description and instruction.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Simple command format: the string becomes the instruction"
+              },
+              {
+                "$ref": "#/definitions/CommandConfig"
+              }
+            ]
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Simple command format: the string becomes the instruction"
+                },
+                {
+                  "$ref": "#/definitions/CommandConfig"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "SkillsConfig": {
+      "description": "A skills configuration. Set to true to load all discovered local skills; false disables skills. A list can mix sources (\"local\" or an HTTP/HTTPS URL), skill names to include, and inline skill definitions (objects).",
+      "oneOf": [
+        {
+          "type": "boolean",
+          "description": "When true, loads all discovered local skills. When false, skills are disabled."
+        },
+        {
+          "type": "array",
+          "description": "List combining skill sources, skill names to include, and/or inline skill definitions. String items equal to \"local\" or starting with http:// or https:// are treated as sources; any other string is treated as a skill name filter; object items are inline skill definitions.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/definitions/InlineSkill"
+              }
+            ]
+          }
+        }
+      ]
     },
     "InlineSkill": {
       "type": "object",
