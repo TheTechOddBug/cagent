@@ -1,0 +1,89 @@
+package runtime
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/tools"
+)
+
+// AddToolCallWithStop appends a single chunk that carries BOTH a complete tool
+// call AND a terminal finish_reason ("stop"), the way LiteLLM/Gemini emit a
+// function call atomically. The OpenAI-native streaming protocol never does
+// this (the tool call deltas and the terminal finish_reason live in separate
+// chunks), which is why this case was never exercised before.
+func (b *streamBuilder) AddToolCallWithStop(id, name, args string) *streamBuilder {
+	b.responses = append(b.responses, chat.MessageStreamResponse{
+		Choices: []chat.MessageStreamChoice{{
+			Index:        0,
+			FinishReason: chat.FinishReasonStop,
+			Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{{
+				ID:       id,
+				Type:     "function",
+				Function: tools.FunctionCall{Name: name, Arguments: args},
+			}}},
+		}},
+		Usage: &chat.Usage{InputTokens: 1, OutputTokens: 1},
+	})
+	return b
+}
+
+// TestHandleStream_ToolCallAndStopInSameChunk reproduces the LiteLLM/Gemini bug
+// where a subagent's tool call is silently dropped because the provider packs
+// the tool call and finish_reason:"stop" into the same streaming chunk. The
+// dropped tool call leaves the assistant message empty, which surfaces upstream
+// as "No response from agent".
+func TestHandleStream_ToolCallAndStopInSameChunk(t *testing.T) {
+	stream := newStreamBuilder().
+		AddToolCallWithStop("call_1", "company_search", `{"query":"x"}`).
+		Build()
+
+	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
+	sess := session.New(session.WithUserMessage("go"))
+
+	evCh := make(chan Event, 64) // buffered so handleStream never blocks on Emit
+	res, err := handleStream(
+		t.Context(), stream, a, nil, sess, nil,
+		defaultTelemetry{}, NewChannelSink(evCh),
+	)
+	require.NoError(t, err)
+
+	require.Len(t, res.Calls, 1, "the tool call from the terminal chunk must not be dropped")
+	assert.Equal(t, "company_search", res.Calls[0].Function.Name)
+	assert.JSONEq(t, `{"query":"x"}`, res.Calls[0].Function.Arguments)
+	assert.Equal(t, chat.FinishReasonToolCalls, res.FinishReason)
+	assert.False(t, res.Stopped, "must not stop: a tool call is pending execution")
+}
+
+// TestHandleStream_ToolCallThenSeparateStop is the OpenAI-native shape: the tool
+// call deltas arrive first, then a separate terminal chunk carries the finish
+// reason. This already works today and guards against a regression when fixing
+// the same-chunk case above.
+func TestHandleStream_ToolCallThenSeparateStop(t *testing.T) {
+	stream := newStreamBuilder().
+		AddToolCallName("call_1", "company_search").
+		AddToolCallArguments("call_1", `{"query":"x"}`).
+		AddStopWithUsage(1, 1).
+		Build()
+
+	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
+	sess := session.New(session.WithUserMessage("go"))
+
+	evCh := make(chan Event, 64)
+	res, err := handleStream(
+		t.Context(), stream, a, nil, sess, nil,
+		defaultTelemetry{}, NewChannelSink(evCh),
+	)
+	require.NoError(t, err)
+
+	require.Len(t, res.Calls, 1)
+	assert.Equal(t, "company_search", res.Calls[0].Function.Name)
+	assert.JSONEq(t, `{"query":"x"}`, res.Calls[0].Function.Arguments)
+	assert.Equal(t, chat.FinishReasonToolCalls, res.FinishReason)
+	assert.False(t, res.Stopped)
+}

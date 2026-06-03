@@ -129,33 +129,12 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 			thoughtSignature = choice.Delta.ThoughtSignature
 		}
 
-		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength {
-			recordUsage()
-			applyXMLFallback()
-			finishReason := choice.FinishReason
-			if finishReason == chat.FinishReasonStop && len(toolCalls) > 0 {
-				finishReason = chat.FinishReasonToolCalls
-			}
-			return streamResult{
-				Calls:             toolCalls,
-				Content:           fullContent.String(),
-				ReasoningContent:  fullReasoningContent.String(),
-				ThinkingSignature: thinkingSignature,
-				ThoughtSignature:  thoughtSignature,
-				Stopped:           len(toolCalls) == 0, // stop only when there are no tool calls to execute
-				FinishReason:      finishReason,
-				Usage:             messageUsage,
-			}, nil
-		}
-
-		// Track the provider's explicit finish reason (e.g. tool_calls) so we
-		// can prefer it over inference after the loop.  stop/length are already
-		// handled by the early return above.
-		if choice.FinishReason != "" {
-			providerFinishReason = choice.FinishReason
-		}
-
-		// Handle tool calls
+		// Accumulate tool call deltas from this chunk *before* evaluating the
+		// finish reason below. Some OpenAI-compatible providers (e.g. LiteLLM
+		// in front of Gemini) pack a complete tool call and a terminal
+		// finish_reason ("stop") into the same chunk; handling the finish
+		// reason first would drop the call and the turn would end with an
+		// empty assistant message ("No response from agent").
 		if len(choice.Delta.ToolCalls) > 0 {
 			// Process each tool call delta
 			for _, delta := range choice.Delta.ToolCalls {
@@ -208,7 +187,38 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 					}
 				}
 			}
-			continue
+			// Short-circuit only when the chunk carried nothing but tool call
+			// deltas. If it also carries a terminal finish reason, fall through
+			// so the early return below sees the freshly accumulated call.
+			if choice.FinishReason == "" {
+				continue
+			}
+		}
+
+		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength {
+			recordUsage()
+			applyXMLFallback()
+			finishReason := choice.FinishReason
+			if finishReason == chat.FinishReasonStop && len(toolCalls) > 0 {
+				finishReason = chat.FinishReasonToolCalls
+			}
+			return streamResult{
+				Calls:             toolCalls,
+				Content:           fullContent.String(),
+				ReasoningContent:  fullReasoningContent.String(),
+				ThinkingSignature: thinkingSignature,
+				ThoughtSignature:  thoughtSignature,
+				Stopped:           len(toolCalls) == 0, // stop only when there are no tool calls to execute
+				FinishReason:      finishReason,
+				Usage:             messageUsage,
+			}, nil
+		}
+
+		// Track the provider's explicit finish reason (e.g. tool_calls) so we
+		// can prefer it over inference after the loop.  stop/length are already
+		// handled by the early return above.
+		if choice.FinishReason != "" {
+			providerFinishReason = choice.FinishReason
 		}
 
 		if choice.Delta.ReasoningContent != "" {
