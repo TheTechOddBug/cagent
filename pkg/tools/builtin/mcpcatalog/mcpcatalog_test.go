@@ -31,6 +31,23 @@ func (s stubEnv) Get(_ context.Context, name string) (string, bool) {
 	return v, ok
 }
 
+// stubStartOK swaps the Toolset's synchronous-Start seam for a no-op so
+// handleEnable returns the success branch without dialling out. Use it on
+// tests that only need handleEnable to register the bookkeeping (the
+// majority); tests that call Tools() afterwards should use stubStartErr
+// with mcptools.AuthorizationRequiredError instead so the catalog's
+// deferred-auth path is the one that runs against the (unreachable) URL.
+func stubStartOK(ts *Toolset) {
+	ts.startToolset = func(context.Context, *tools.StartableToolSet) error { return nil }
+}
+
+// stubStartErr swaps the seam to return a fixed error. Used to exercise
+// the OAuth-declined / authorization-required / transport-error branches
+// of handleEnable without standing up a real MCP server.
+func stubStartErr(ts *Toolset, err error) {
+	ts.startToolset = func(context.Context, *tools.StartableToolSet) error { return err }
+}
+
 func TestLoadCatalog(t *testing.T) {
 	cat, err := Load()
 	require.NoError(t, err)
@@ -85,6 +102,11 @@ func TestSearchTool(t *testing.T) {
 
 func TestEnableDisableLifecycle(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	// Synchronous-Start is short-circuited so the success branch of
+	// handleEnable is exercised without dialling out to the real OAuth
+	// server. The dedicated failure-path tests below cover declined /
+	// auth-required / transport-error.
+	stubStartOK(ts)
 	ctx := t.Context()
 
 	// Pick the first OAuth-style server in the catalog as a known good fixture.
@@ -115,27 +137,23 @@ func TestEnableDisableLifecycle(t *testing.T) {
 	assert.NotContains(t, names, ToolNameResetAuth,
 		"reset_auth must not be exposed when no server is enabled")
 
-	// Enable: a callback should fire and the underlying mcp.Toolset should
-	// be present in t.enabled. We deliberately do NOT exercise the network
-	// path — Tools(ctx) on the lazily-instantiated toolset would attempt a
-	// connection. Just check the bookkeeping.
+	// Enable on the success path: handleEnable blocks until the inner
+	// toolset is connected, then reports the tools as live so the model
+	// proceeds to the user's original request in the SAME turn without
+	// asking them to retry.
 	res, err := ts.handleEnable(ctx, EnableArgs{ID: oauthID})
 	require.NoError(t, err)
 	require.False(t, res.IsError, "enable failed: %s", res.Output)
-	assert.Contains(t, res.Output, "enable requested",
-		"tool result must record the enable request so the model has something to ground its next turn on")
-	// The tool result MUST set up a self-check for the next turn: if no
-	// `<id>_` tools appear, the user dismissed the authorization dialog
-	// and the model must NOT pretend the server is connected. This was
-	// the regression that motivated the wording change — the previous
-	// "the server's tools will appear on your next turn. Proceed with
-	// the user's original request" was a flat promise the runtime cannot
-	// actually keep when OAuth is required, and the model parroted it
-	// even after the user clicked Cancel.
+	assert.Contains(t, res.Output, "enabled",
+		"the success branch must state plainly that the server is enabled — not 'enable requested'")
 	assert.Contains(t, res.Output, oauthID+"_",
-		"tool result must reference the tool-name prefix so the model can verify whether the server actually came online")
-	assert.Contains(t, res.Output, "dismissed",
-		"tool result must explicitly cover the user-dismissed-the-dialog branch so the model does not hallucinate access")
+		"tool result must reference the tool-name prefix so the model knows which tools to call")
+	assert.Contains(t, res.Output, "Proceed with the user's original request",
+		"the success branch must instruct the model to continue in the same turn — the whole point of blocking on Start")
+	assert.NotContains(t, res.Output, "next turn",
+		"the success branch must NOT defer to a next turn — tools are live now")
+	assert.NotContains(t, res.Output, "dismissed",
+		"the success branch must NOT mention the user-dismissed-the-dialog fallback — that is the OAuthDeclined branch")
 	assert.Equal(t, int32(1), changes.Load(), "enable should fire tools-changed handler exactly once")
 
 	ts.mu.RLock()
@@ -143,11 +161,18 @@ func TestEnableDisableLifecycle(t *testing.T) {
 	ts.mu.RUnlock()
 	assert.True(t, exists)
 
-	// Re-enable: idempotent, no extra change notification.
+	// Re-enable on a registered-but-still-unstarted entry: the guard at
+	// the top of handleEnable falls through to the Start retry path
+	// (otherwise the retry instructions emitted by the AuthorizationRequired
+	// / Canceled branches would dead-end at the guard). No extra
+	// tools_changed notification: the entry was already in t.enabled.
 	res, err = ts.handleEnable(ctx, EnableArgs{ID: oauthID})
 	require.NoError(t, err)
-	assert.Contains(t, res.Output, "already enabled")
-	assert.Equal(t, int32(1), changes.Load())
+	require.False(t, res.IsError, "re-enable: %s", res.Output)
+	assert.Contains(t, res.Output, "enabled",
+		"re-enable must report success — the Start retry succeeded under stubStartOK")
+	assert.Equal(t, int32(1), changes.Load(),
+		"re-enable of an existing entry must not fire tools-changed again")
 
 	// Search now reports it as enabled.
 	res, err = ts.handleSearch(ctx, SearchArgs{Query: oauthID})
@@ -203,14 +228,26 @@ func TestEnableUnresolvedHeaderEnvSurfacesWarning(t *testing.T) {
 	ts.catalog.Servers = append(ts.catalog.Servers, server)
 	ts.byID[id] = server
 
+	// Missing env vars BLOCK the enable now (rather than attaching a
+	// warning to a success result): the catalog promises a deterministic
+	// answer in the same turn, and we already know the server will reject
+	// the connection. The model is told to ask the user to set the
+	// variable and call enable again.
 	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
 	require.NoError(t, err)
-	require.False(t, res.IsError)
-	assert.Contains(t, res.Output, "WARNING")
+	assert.True(t, res.IsError,
+		"missing env vars must be returned as an error result so the model does not pretend the server is connected")
 	assert.Contains(t, res.Output, "UNDECLARED_TOKEN",
 		"the post-expansion scan must surface env vars referenced from headers but not declared under Auth.Secrets")
-	assert.Contains(t, res.Output, ToolNameDisable)
-	assert.Contains(t, res.Output, ToolNameEnable)
+	assert.Contains(t, res.Output, ToolNameEnable,
+		"the error must point the model at the recovery call to make once the env var is set")
+	// And the server must NOT have been registered — we returned before
+	// even constructing the inner toolset.
+	ts.mu.RLock()
+	_, exists := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.False(t, exists,
+		"a missing-env enable must not leave a half-registered entry behind")
 }
 
 func TestUnresolvedHeaderEnvsHelper(t *testing.T) {
@@ -247,14 +284,24 @@ func TestLoadCatalogIsCachedButReturnsCopies(t *testing.T) {
 // every turn.
 func TestToolsUsesStableIterationOrder(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	// We only care about the order of the t.enabled map after a sequence
+	// of handleEnable calls. Stub out the synchronous Start so we don't
+	// dial out to real catalog endpoints.
+	stubStartOK(ts)
 
-	// Pick the first OAuth server so handleEnable doesn't try to expand
-	// missing api_key headers; the inner toolset never starts because
-	// IsStarted() is false and Start() will fail — but we don't actually
-	// call Tools() through to the network here, we only assert the
-	// meta-tool prefix is stable.
+	// Pick the first OAuth servers so the missing-env-var guard doesn't
+	// trip — we only assert the meta-tool iteration order is stable.
 	require.GreaterOrEqual(t, len(ts.catalog.Servers), 3, "need 3+ servers")
-	ids := []string{ts.catalog.Servers[0].ID, ts.catalog.Servers[1].ID, ts.catalog.Servers[2].ID}
+	var ids []string
+	for _, s := range ts.catalog.Servers {
+		if s.Auth.Type == "oauth" {
+			ids = append(ids, s.ID)
+		}
+		if len(ids) == 3 {
+			break
+		}
+	}
+	require.Len(t, ids, 3, "test fixture: catalog should contain at least 3 OAuth servers")
 
 	ctx := t.Context()
 	for _, id := range ids {
@@ -365,14 +412,19 @@ func TestEnableAPIKeyMissingEnv(t *testing.T) {
 
 	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: apiKeyID})
 	require.NoError(t, err)
-	require.False(t, res.IsError)
-	assert.Contains(t, res.Output, "WARNING")
-	assert.Contains(t, res.Output, expectedEnv)
-	// The recovery instructions must mention the disable+enable sequence,
-	// not the misleading "re-enable" wording (the early-return at the top
-	// of handleEnable would otherwise short-circuit a plain second enable).
-	assert.Contains(t, res.Output, ToolNameDisable)
-	assert.Contains(t, res.Output, ToolNameEnable)
+	assert.True(t, res.IsError,
+		"missing api_key env vars must block enable so the model does not pretend the server is connected")
+	assert.Contains(t, res.Output, expectedEnv,
+		"the error must name the specific env var(s) the user needs to set")
+	assert.Contains(t, res.Output, ToolNameEnable,
+		"the error must point the model at the recovery call once the env var is set")
+	// No half-registered entry: we returned before constructing the inner
+	// toolset, so a follow-up enable (after the user sets the variable)
+	// goes through the full success path with no stale state.
+	ts.mu.RLock()
+	_, exists := ts.enabled[apiKeyID]
+	ts.mu.RUnlock()
+	assert.False(t, exists)
 }
 
 func TestEnableAPIKeyEnvPresent(t *testing.T) {
@@ -395,28 +447,344 @@ func TestEnableAPIKeyEnvPresent(t *testing.T) {
 	require.NotEmpty(t, apiKeyID)
 
 	// Re-instantiate with the populated env so missingAPIKeyEnv and the
-	// unresolved-header scan both come back empty.
+	// unresolved-header scan both come back empty. Stub out the synchronous
+	// Start so we don't dial the real catalog endpoint.
 	ts = New(stubEnv{vars: vars})
+	stubStartOK(ts)
 
 	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: apiKeyID})
 	require.NoError(t, err)
-	require.False(t, res.IsError)
-	assert.Contains(t, res.Output, "enable requested")
-	// With every required env var present, no WARNING line is emitted —
-	// the tool result is intentionally terse so the model proceeds to the
-	// user's original request rather than narrating setup.
-	assert.NotContains(t, res.Output, "WARNING")
+	require.False(t, res.IsError, "enable failed: %s", res.Output)
+	assert.Contains(t, res.Output, "enabled",
+		"the success branch must state plainly that the server is enabled")
+	assert.Contains(t, res.Output, apiKeyID+"_",
+		"the success branch must reference the tool-name prefix")
+}
+
+// TestEnableSyncStartSuccess asserts that handleEnable, on the happy path,
+// returns a "tools are live now" result whose wording instructs the model
+// to continue with the user's ORIGINAL request in the SAME turn — not on
+// the next one. This is the property that makes a re-ask unnecessary.
+func TestEnableSyncStartSuccess(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
+
+	id := firstOAuthServerID(t, ts)
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "enable: %s", res.Output)
+
+	assert.Contains(t, res.Output, "enabled",
+		"the success branch must state the server is enabled in past tense")
+	assert.Contains(t, res.Output, id+"_",
+		"the success branch must reference the tool-name prefix")
+	assert.Contains(t, res.Output, "Proceed with the user's original request",
+		"the success branch must tell the model to continue in the same turn")
+	assert.NotContains(t, res.Output, "next turn",
+		"the success branch must NOT defer to the next turn")
+
+	ts.mu.RLock()
+	_, present := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.True(t, present, "successful enable must leave the entry in t.enabled")
+}
+
+// TestEnableSyncStartOAuthDeclined asserts that an OAuth dismissal during
+// the synchronous Start is surfaced as an ERROR result (not a soft "tools
+// might appear" message), rolls back t.enabled so the next Tools() call
+// does not re-pop the dialog, and tells the model how to retry on user
+// request — all in the SAME turn.
+func TestEnableSyncStartOAuthDeclined(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	var changes atomic.Int32
+	ts.SetToolsChangedHandler(func() { changes.Add(1) })
+
+	id := firstOAuthServerID(t, ts)
+	stubStartErr(ts, &mcptools.OAuthDeclinedError{URL: ts.byID[id].URL})
+
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.True(t, res.IsError,
+		"a user-declined authorization must be returned as a tool ERROR so the model does not hallucinate a connection")
+
+	assert.Contains(t, res.Output, "declined",
+		"the error must name the user-declined branch explicitly")
+	assert.Contains(t, res.Output, ToolNameEnable,
+		"the error must point the model at the retry path so it knows how to honour a 'try again' from the user")
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.False(t, stillEnabled,
+		"the declined server must be removed from t.enabled so the next Tools() call does not re-trigger OAuth")
+
+	// Two notifications: one when the entry was registered, one when
+	// disableAfterDecline removed it. Both are visible to the runtime so
+	// the TUI's tool count stays correct.
+	assert.Equal(t, int32(2), changes.Load(),
+		"enable+decline must fire tools-changed exactly twice — register, then rollback")
+}
+
+// TestEnableSyncStartAuthorizationRequiredDefers covers the defensive
+// fallback for the (rare) case where the elicitation bridge isn't wired
+// up yet and Start returns AuthorizationRequiredError instead of blocking
+// on a dialog. The server must STAY in t.enabled so the next interactive
+// Tools() call retries; the tool result falls back to the legacy
+// "tools appear next turn" wording so the model knows to verify.
+func TestEnableSyncStartAuthorizationRequiredDefers(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	id := firstOAuthServerID(t, ts)
+	stubStartErr(ts, &mcptools.AuthorizationRequiredError{URL: ts.byID[id].URL})
+
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.False(t, res.IsError,
+		"a deferred-auth start must not be returned as a tool error — the runtime will retry on the next interactive turn")
+
+	assert.Contains(t, res.Output, "next turn",
+		"the deferred-auth fallback must explicitly tell the model to wait one turn for the tools to appear")
+	assert.Contains(t, res.Output, id+"_",
+		"the fallback must reference the tool-name prefix so the model can verify on the next turn")
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.True(t, stillEnabled,
+		"a deferred-auth start must leave the entry in t.enabled so the next Tools() call can retry")
+}
+
+// TestEnableSyncStartTransportError covers the generic-failure branch:
+// the inner toolset's Start returned something that isn't OAuth-related
+// (DNS, TCP refused, server returned a 5xx during handshake, …). The
+// result must be a tool ERROR with the underlying message, and the entry
+// must be rolled back so the next Tools() call doesn't replay the failed
+// handshake.
+func TestEnableSyncStartTransportError(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	id := firstOAuthServerID(t, ts)
+	stubStartErr(ts, errors.New("dial tcp: connection refused"))
+
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.True(t, res.IsError,
+		"a transport failure during synchronous Start must surface as a tool error")
+
+	assert.Contains(t, res.Output, "connection refused",
+		"the error must include the underlying transport error so the model can report it to the user")
+	assert.Contains(t, res.Output, ToolNameResetAuth,
+		"the error must mention reset_auth as a recovery hint for the credentials-changed case")
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.False(t, stillEnabled,
+		"a failed enable must roll back t.enabled so the next Tools() call does not replay the failure")
+}
+
+// flakyStartToolSet is a Startable test fake whose Start fails N times
+// before returning nil. It exists so the retry-on-second-enable regression
+// tests can assert that the model's retry instructions actually drive a
+// fresh Start attempt instead of dead-ending at the idempotent guard.
+type flakyStartToolSet struct {
+	startCalls atomic.Int32
+	failures   int   // number of times Start should fail before succeeding
+	failWith   error // sentinel returned on each failure
+}
+
+func (f *flakyStartToolSet) Tools(context.Context) ([]tools.Tool, error) {
+	return nil, nil
+}
+
+func (f *flakyStartToolSet) Start(context.Context) error {
+	n := f.startCalls.Add(1)
+	if int(n) <= f.failures {
+		return f.failWith
+	}
+	return nil
+}
+
+func (f *flakyStartToolSet) Stop(context.Context) error { return nil }
+
+// TestEnableRetriesStartOnExistingUnstartedEntry is the regression test
+// for the AuthorizationRequired-branch dead-end the reviewer flagged: the
+// model-facing retry instruction must actually drive a second Start
+// attempt. Before the fix, the top-of-handleEnable guard short-circuited
+// every retry into the "already enabled but not yet connected" message
+// without invoking the seam, so the OAuth dialog never re-surfaced and
+// the only escape was disable+enable.
+func TestEnableRetriesStartOnExistingUnstartedEntry(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	id := firstOAuthServerID(t, ts)
+	fake := &flakyStartToolSet{
+		failures: 1,
+		failWith: &mcptools.AuthorizationRequiredError{URL: ts.byID[id].URL},
+	}
+	ts.startToolset = func(ctx context.Context, _ *tools.StartableToolSet) error {
+		return fake.Start(ctx)
+	}
+
+	var changes atomic.Int32
+	ts.SetToolsChangedHandler(func() { changes.Add(1) })
+
+	// First enable: defensive AuthorizationRequired fallback. Entry stays
+	// in t.enabled, message tells the model to call enable again.
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "deferred-auth must not be returned as an error: %s", res.Output)
+	assert.Contains(t, res.Output, "next turn",
+		"the AuthRequired branch must surface its deferred-auth wording on first failure")
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	require.True(t, stillEnabled, "AuthRequired must leave the entry in t.enabled for retry")
+
+	// Second enable on the same id: the guard must NOT short-circuit on
+	// the existing unstarted entry. It must invoke Start again so the
+	// model's "call enable again" instruction actually drives a retry.
+	res, err = ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "retry: %s", res.Output)
+	assert.Contains(t, res.Output, "enabled",
+		"re-enable must report success once the underlying Start succeeds")
+	assert.Contains(t, res.Output, id+"_",
+		"re-enable must reference the tool-name prefix so the model knows the tools are live")
+
+	assert.Equal(t, int32(2), fake.startCalls.Load(),
+		"re-enable must invoke Start a second time — the AuthRequired fallback's retry instruction depends on it")
+	// Only the first enable registers the entry; the retry reuses it, so
+	// the tools-changed notification fires exactly once across both calls.
+	assert.Equal(t, int32(1), changes.Load(),
+		"re-enable of an existing entry must NOT re-fire tools-changed — it would falsely signal a tool-surface change")
+}
+
+// TestEnableSyncStartCancelledRollsBack is the regression test for the
+// "stopped turn re-pops the OAuth dialog on the next message" bug. When
+// the user clicks Stop while the OAuth dialog is parked (e.g. the
+// browser-side OAuth flow failed externally and the elicitation goroutine
+// never gets a reply), the inner Start returns context.Canceled. handleEnable
+// must:
+//
+//  1. Surface a tool error with a recognisable wording so the model can
+//     explain to the user.
+//  2. Remove the entry from t.enabled so the next RunStream's Tools()
+//     does NOT silently re-Start the wrapper and re-pop the dialog on
+//     an unrelated user message — the catalog Toolset is owned by the
+//     RuntimeSession and survives many RunStreams, so Toolset.Stop will
+//     NOT run between this turn and the user's next message.
+//  3. Notify the runtime that the tool surface changed (register + drop).
+//
+// A subsequent enable_remote_mcp_server for the same id then lands on a
+// fresh wrapper (not on the cancelled one) and drives Start again — which
+// is what makes the "user asked to retry" path work.
+func TestEnableSyncStartCancelledRollsBack(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	id := firstOAuthServerID(t, ts)
+	fake := &flakyStartToolSet{failures: 1, failWith: context.Canceled}
+	ts.startToolset = func(ctx context.Context, _ *tools.StartableToolSet) error {
+		return fake.Start(ctx)
+	}
+
+	var changes atomic.Int32
+	ts.SetToolsChangedHandler(func() { changes.Add(1) })
+
+	// First enable: Start returns context.Canceled. The handler must
+	// surface a tool error AND drop the entry so Tools() on the next
+	// RunStream does not silently re-fire the OAuth dialog.
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.True(t, res.IsError, "cancelled Start must surface a tool error: %s", res.Output)
+	assert.Contains(t, res.Output, "cancelled",
+		"the error must name cancellation so the model can explain to the user")
+	assert.Contains(t, res.Output, ToolNameEnable,
+		"the error must instruct the model how to retry on user request")
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	require.False(t, stillEnabled,
+		"context.Canceled must roll back t.enabled — leaving the entry would let the next RunStream's Tools() silently re-Start it and re-pop the OAuth dialog on an unrelated user message")
+
+	// Two notifications: one when the entry was registered, one when
+	// the cancellation rollback removed it. Mirrors the OAuthDeclined
+	// branch — both are visible to the runtime so the TUI's tool count
+	// stays correct.
+	assert.Equal(t, int32(2), changes.Load(),
+		"enable+cancel must fire tools-changed exactly twice — register, then rollback")
+
+	// Second enable: must land on a fresh wrapper (the previous one
+	// was rolled back) and drive Start again. The model's "if the user
+	// asks to retry" instruction depends on this path actually firing.
+	res, err = ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "retry after cancel: %s", res.Output)
+	assert.Contains(t, res.Output, "enabled")
+	assert.Equal(t, int32(2), fake.startCalls.Load(),
+		"the retry must invoke Start a second time — the post-cancel recovery depends on it")
+}
+
+// TestToolsAfterCancelledEnableDoesNotReFireOAuth reproduces the user-
+// reported scenario at the catalog layer:
+//
+//   - Turn 1: model calls enable_remote_mcp_server; the OAuth dialog
+//     opens, the browser-side flow fails externally, the user clicks
+//     Stop. The inner Start returns context.Canceled.
+//   - Turn 2: a fresh, UNRELATED user message arrives; the runtime
+//     calls Tools() to enumerate the available tools for the new turn.
+//
+// Before the fix the Turn-1 cancellation left the entry in t.enabled,
+// so Turn-2's Tools() iteration silently re-Started the same wrapper,
+// hit 401, and re-popped the Authentication Request dialog on a turn
+// the user did not ask for. This test pins the post-fix behaviour:
+// Turn-2's Tools() must not touch the cancelled wrapper at all.
+func TestToolsAfterCancelledEnableDoesNotReFireOAuth(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+
+	id := firstOAuthServerID(t, ts)
+	// Stop-during-OAuth is modelled as a Start that returns
+	// context.Canceled every time; if Tools() ever re-Starts the same
+	// wrapper, startCalls will go to 2 and the assertion below fails.
+	fake := &flakyStartToolSet{failures: 999, failWith: context.Canceled}
+	ts.startToolset = func(ctx context.Context, _ *tools.StartableToolSet) error {
+		return fake.Start(ctx)
+	}
+
+	res, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
+	require.NoError(t, err)
+	require.True(t, res.IsError, "stop-during-OAuth must surface as a tool error: %s", res.Output)
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	require.False(t, stillEnabled,
+		"the cancelled entry must be rolled back so the next Tools() does not see it")
+
+	// Mimic the next RunStream's tool enumeration. The runtime calls
+	// Tools() at the start of every turn; if the rollback didn't take,
+	// this would re-Start the wrapper and the dialog would re-pop.
+	for range 3 {
+		_, err := ts.Tools(t.Context())
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(1), fake.startCalls.Load(),
+		"Tools() on the next RunStream must NOT re-Start the cancelled wrapper — that is what re-pops the OAuth dialog on an unrelated user message")
 }
 
 func TestListEnabled(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ctx := t.Context()
 
 	res, err := ts.handleList(ctx, ListArgs{})
 	require.NoError(t, err)
 	assert.Contains(t, res.Output, "0 enabled")
 
-	id := ts.catalog.Servers[0].ID
+	id := firstOAuthServerID(t, ts)
 	_, err = ts.handleEnable(ctx, EnableArgs{ID: id})
 	require.NoError(t, err)
 
@@ -428,9 +796,10 @@ func TestListEnabled(t *testing.T) {
 
 func TestStopReleasesEverything(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ctx := t.Context()
 
-	id := ts.catalog.Servers[0].ID
+	id := firstOAuthServerID(t, ts)
 	_, err := ts.handleEnable(ctx, EnableArgs{ID: id})
 	require.NoError(t, err)
 
@@ -449,8 +818,24 @@ func toolNames(list []tools.Tool) []string {
 	return out
 }
 
+// firstOAuthServerID picks an arbitrary OAuth catalog server for tests that
+// only need *some* server id to feed into handleEnable. OAuth servers are
+// preferred over api_key ones so the missing-env-var guard doesn't trip and
+// turn the call into an unintended ResultError.
+func firstOAuthServerID(t *testing.T, ts *Toolset) string {
+	t.Helper()
+	for _, s := range ts.catalog.Servers {
+		if s.Auth.Type == "oauth" {
+			return s.ID
+		}
+	}
+	t.Fatalf("test fixture: catalog should contain at least one OAuth server")
+	return ""
+}
+
 func TestSetManagedOAuthPersistence(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ctx := t.Context()
 
 	// Setting before any server is enabled must persist so that the next
@@ -462,7 +847,7 @@ func TestSetManagedOAuthPersistence(t *testing.T) {
 	assert.True(t, ts.managedOAuthSet)
 	ts.mu.RUnlock()
 
-	id := ts.catalog.Servers[0].ID
+	id := firstOAuthServerID(t, ts)
 	_, err := ts.handleEnable(ctx, EnableArgs{ID: id})
 	require.NoError(t, err)
 
@@ -475,11 +860,20 @@ func TestSetManagedOAuthPersistence(t *testing.T) {
 
 func TestConcurrentEnableDisable(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ctx := t.Context()
 
-	require.GreaterOrEqual(t, len(ts.catalog.Servers), 2, "need at least 2 servers for concurrency test")
-	id1 := ts.catalog.Servers[0].ID
-	id2 := ts.catalog.Servers[1].ID
+	var oauthIDs []string
+	for _, s := range ts.catalog.Servers {
+		if s.Auth.Type == "oauth" {
+			oauthIDs = append(oauthIDs, s.ID)
+		}
+		if len(oauthIDs) == 2 {
+			break
+		}
+	}
+	require.Len(t, oauthIDs, 2, "need at least 2 OAuth servers for concurrency test")
+	id1, id2 := oauthIDs[0], oauthIDs[1]
 
 	var wg sync.WaitGroup
 	enableErrs := make(chan error, 2)
@@ -544,8 +938,9 @@ func TestConcurrentEnableDisable(t *testing.T) {
 
 func TestToolsContextCancellation(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 
-	id := ts.catalog.Servers[0].ID
+	id := firstOAuthServerID(t, ts)
 	_, err := ts.handleEnable(t.Context(), EnableArgs{ID: id})
 	require.NoError(t, err)
 
@@ -679,19 +1074,13 @@ func TestResetAuthNoOpForNonOAuth(t *testing.T) {
 // fresh handshake) AND fires the tools-changed handler.
 func TestResetAuthDisablesEnabledServer(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ts.removeOAuthToken = func(string) error { return nil }
 
 	var changes atomic.Int32
 	ts.SetToolsChangedHandler(func() { changes.Add(1) })
 
-	var oauthID string
-	for _, s := range ts.catalog.Servers {
-		if s.Auth.Type == "oauth" {
-			oauthID = s.ID
-			break
-		}
-	}
-	require.NotEmpty(t, oauthID)
+	oauthID := firstOAuthServerID(t, ts)
 
 	ctx := t.Context()
 	_, err := ts.handleEnable(ctx, EnableArgs{ID: oauthID})
@@ -745,19 +1134,13 @@ func TestResetAuthSurfacesStoreErrors(t *testing.T) {
 // whether the keyring removal eventually succeeds. Notify must fire.
 func TestResetAuthNotifiesEvenWhenKeyringFails(t *testing.T) {
 	ts := New(stubEnv{vars: map[string]string{}})
+	stubStartOK(ts)
 	ts.removeOAuthToken = func(string) error { return errors.New("keyring on fire") }
 
 	var changes atomic.Int32
 	ts.SetToolsChangedHandler(func() { changes.Add(1) })
 
-	var oauthID string
-	for _, s := range ts.catalog.Servers {
-		if s.Auth.Type == "oauth" {
-			oauthID = s.ID
-			break
-		}
-	}
-	require.NotEmpty(t, oauthID)
+	oauthID := firstOAuthServerID(t, ts)
 
 	ctx := t.Context()
 	_, err := ts.handleEnable(ctx, EnableArgs{ID: oauthID})
@@ -789,14 +1172,18 @@ func TestResetAuthNotifiesEvenWhenKeyringFails(t *testing.T) {
 // and hidden again after the last server is disabled.
 func TestDisableAndResetAuthGatedOnEnabledServers(t *testing.T) {
 	// Use a local auth-required fake server so the test never touches the
-	// network and is independent of catalog data. The OAuth path makes
-	// Tools() swallow the AuthorizationRequired error while keeping the
-	// entry in t.enabled, which is exactly the state we want to assert
-	// against.
+	// network and is independent of catalog data. The OAuth path keeps the
+	// entry in t.enabled (handleEnable's defensive deferred-auth fallback),
+	// which is exactly the state we want to assert against.
 	srv := newAuthRequiredMCPServer(t)
 	defer srv.Close()
 
 	ts := New(stubEnv{vars: map[string]string{}})
+	// Stub the synchronous Start to surface AuthorizationRequired so
+	// handleEnable takes the defensive "keep the server enabled, defer to
+	// next interactive Tools()" branch — that is what previously happened
+	// implicitly when handleEnable did no Start at all.
+	stubStartErr(ts, &mcptools.AuthorizationRequiredError{URL: srv.URL})
 
 	const id = "gated-meta-server"
 	ts.catalog.Servers = append(ts.catalog.Servers, Server{
@@ -935,6 +1322,97 @@ func TestToolsOAuthDeclineRemovesServer(t *testing.T) {
 		"reset_auth must be hidden once the declined server has been removed from the enabled set")
 }
 
+// cancelOnStartToolSet is a minimal ToolSet+Startable whose Start returns
+// context.Canceled on every call. It exists so the catalog's Tools()
+// iteration can be tested for "user stopped the turn while OAuth was
+// parked -> server is removed from the enabled set, no further retries"
+// without driving a real OAuth handshake.
+type cancelOnStartToolSet struct {
+	startCalls atomic.Int32
+	stopCalls  atomic.Int32
+}
+
+func (c *cancelOnStartToolSet) Tools(context.Context) ([]tools.Tool, error) {
+	return nil, errors.New("cancelOnStartToolSet.Tools should never be called")
+}
+
+func (c *cancelOnStartToolSet) Start(context.Context) error {
+	c.startCalls.Add(1)
+	return context.Canceled
+}
+
+func (c *cancelOnStartToolSet) Stop(context.Context) error {
+	c.stopCalls.Add(1)
+	return nil
+}
+
+// TestToolsCancelledStartRemovesServer is the Tools()-path counterpart of
+// TestToolsOAuthDeclineRemovesServer. It pins the user-stop-mid-OAuth
+// scenario reachable when the synchronous handleEnable path didn't drive
+// OAuth itself (e.g. the elicitation bridge wasn't ready and the
+// AuthorizationRequired fallback left the entry to be Started by the
+// next Tools() call). A Start returning context.Canceled must drop the
+// entry so the next Tools() iteration does not silently re-fire the
+// OAuth dialog on an unrelated user message.
+func TestToolsCancelledStartRemovesServer(t *testing.T) {
+	ts := New(stubEnv{vars: map[string]string{}})
+	const id = "cancel-server"
+	server := Server{
+		ID:        id,
+		Title:     "Cancel",
+		URL:       "https://example.test/mcp",
+		Transport: "streamable-http",
+		Auth:      Auth{Type: "oauth"},
+	}
+	ts.catalog.Servers = append(ts.catalog.Servers, server)
+	ts.byID[id] = server
+
+	fake := &cancelOnStartToolSet{}
+	wrapped := tools.NewStartable(fake)
+
+	var changes atomic.Int32
+	ts.SetToolsChangedHandler(func() { changes.Add(1) })
+
+	ts.mu.Lock()
+	ts.enabled[id] = wrapped
+	ts.mu.Unlock()
+
+	ctx := t.Context()
+
+	// First Tools() call: Start() returns context.Canceled. The catalog
+	// must swallow it cleanly (no error to the runtime) and drop the
+	// entry — leaving it would let the next Tools() call silently
+	// re-Start the wrapper and re-pop the dialog the user just abandoned.
+	list, err := ts.Tools(ctx)
+	require.NoError(t, err, "Tools() must not propagate a user-stop as an error")
+
+	names := toolNames(list)
+	for _, meta := range []string{ToolNameSearch, ToolNameList, ToolNameEnable} {
+		assert.Contains(t, names, meta, "meta tools must still be present after a stop-mid-OAuth")
+	}
+
+	ts.mu.RLock()
+	_, stillEnabled := ts.enabled[id]
+	ts.mu.RUnlock()
+	assert.False(t, stillEnabled,
+		"cancelled server must be removed from t.enabled — leaving it would let Tools() re-fire OAuth on the next user message")
+
+	assert.Equal(t, int32(1), fake.startCalls.Load(),
+		"Start() must be called exactly once before the cancellation removes the entry")
+	assert.Equal(t, int32(1), fake.stopCalls.Load(),
+		"the cancelled toolset must be Stop()'d so any partially-initialised session is cleaned up")
+	assert.Equal(t, int32(1), changes.Load(),
+		"tools-changed must fire so the runtime / UI sees the server is no longer enabled")
+
+	// Second Tools() call: the entry is gone, so the fake must not be
+	// touched again. This is the property that breaks the
+	// "dialog re-appears on every user message" loop reported by the user.
+	_, err = ts.Tools(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), fake.startCalls.Load(),
+		"Start() must NOT be called again after the cancellation: the server is no longer enabled")
+}
+
 // TestToolsOAuthDeclineNoNotifyWhenAlreadyDisabled covers the race where
 // the model called disable_remote_mcp_server (or reset_remote_mcp_server_auth)
 // between the OAuth flow being initiated and the user declining it. In that
@@ -999,6 +1477,14 @@ func TestToolsAuthRequiredIsDeferred(t *testing.T) {
 	defer srv.Close()
 
 	ts := New(stubEnv{vars: map[string]string{}})
+	// Defensive fallback: when handleEnable's synchronous Start surfaces
+	// AuthorizationRequired (e.g. because the elicitation bridge isn't
+	// wired up yet), the catalog must keep the server in t.enabled so the
+	// next interactive Tools() call can retry against the live server.
+	// That's exactly the path this test asserts: a probe with
+	// WithoutInteractivePrompts must still defer cleanly.
+	stubStartErr(ts, &mcptools.AuthorizationRequiredError{URL: srv.URL})
+
 	const id = "auth-required-server"
 	server := Server{
 		ID:        id,

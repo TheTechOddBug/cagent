@@ -56,7 +56,7 @@ Up to five tools are exposed to the model. The disable / reset-auth pair only ap
 | Tool                            | When visible            | Description                                                                                                                                          |
 | ------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `search_remote_mcp_servers`     | Always                  | Case-insensitive fuzzy search over id, title, description, category and tags. Returns id, auth requirements (`oauth` / `api_key` / `none`) and URL. |
-| `enable_remote_mcp_server`      | Always                  | Activate a server by id. The actual MCP handshake (and any OAuth flow) is deferred until the host next enumerates tools.                            |
+| `enable_remote_mcp_server`      | Always                  | Activate a server by id. **Blocks** until the connection (and any required OAuth handshake) completes; on success the server's tools are immediately live and the model continues with the user's original request in the same turn. |
 | `list_remote_mcp_servers`       | Always                  | Show currently enabled servers and their connection state.                                                                                           |
 | `disable_remote_mcp_server`     | After first enable      | Stop a server and remove its tools from the active set.                                                                                              |
 | `reset_remote_mcp_server_auth`  | After first enable      | Drop persisted OAuth credentials so the next enable triggers a fresh authorization flow. No-op for `api_key` / `none` servers.                       |
@@ -64,7 +64,9 @@ Up to five tools are exposed to the model. The disable / reset-auth pair only ap
 ### Workflow
 
 1. The agent calls `search_remote_mcp_servers` with a keyword matching the user's intent (`"notion"`, `"stripe"`, `"docs"`, `"browser"`, …).
-2. It picks a matching server id and calls `enable_remote_mcp_server`. The server's tools become available on the **next turn**.
+2. It picks a matching server id and calls `enable_remote_mcp_server`. **`enable` blocks** until the MCP handshake (and any required OAuth flow) completes:
+   - on success the server's tools are available **in the same turn** — the agent goes straight to the user's original request, no re-ask required;
+   - on failure (user dismissed the authorization dialog, missing env var, server refused) the tool returns an error result naming the specific reason so the agent can recover instead of pretending the server is connected.
 3. It uses the newly activated tools as it would any other.
 4. When done, it calls `disable_remote_mcp_server` to remove the server from the active set.
 
@@ -72,8 +74,8 @@ Up to five tools are exposed to the model. The disable / reset-auth pair only ap
 
 The catalog distinguishes three auth flavours:
 
-- **`oauth`** — On the first turn that enumerates the server's tools, an authorization URL is surfaced through the elicitation pipeline (the same one used by YAML-declared remote MCP toolsets). Once the user authorizes, tokens are persisted in the OS keyring and re-used on subsequent runs. Use `reset_remote_mcp_server_auth` to wipe them.
-- **`api_key`** — The server expects one or more env vars to be set in the agent's environment (e.g. `APIFY_API_KEY`, `BRAVE_API_KEY`). `enable_remote_mcp_server` warns if any required variable is missing — set it, then re-enable the server.
+- **`oauth`** — `enable_remote_mcp_server` surfaces an authorization URL through the elicitation pipeline (the same one used by YAML-declared remote MCP toolsets) and blocks until the user either authorizes or cancels. Once the user authorizes, tokens are persisted in the OS keyring and re-used on subsequent runs. Use `reset_remote_mcp_server_auth` to wipe them. If the user dismisses the dialog, `enable` returns an error result naming the decline so the agent can ask whether to retry.
+- **`api_key`** — The server expects one or more env vars to be set in the agent's environment (e.g. `APIFY_API_KEY`, `BRAVE_API_KEY`). `enable_remote_mcp_server` returns an error result if any required variable is missing — set it, then call `enable` again.
 - **`none`** — No authentication. The server is reachable as soon as it is enabled.
 
 Search results only carry the auth flavour (`oauth` / `api_key` / `none`); the specific env-var names are surfaced by `enable_remote_mcp_server` when it detects an unset variable, so you may need to enable an `api_key` server once just to learn which variable to set.
@@ -101,7 +103,7 @@ A complete, runnable configuration lives in [`examples/mcp_catalog.yaml`](https:
 ## Notes and Limitations
 
 - **Streamable-http only.** The catalog deliberately excludes servers that require a local subprocess or the MCP gateway — declare those with [`type: mcp`]({{ '/configuration/tools/#mcp-tools' | relative_url }}) instead.
-- **Lazy connect.** DNS, TCP, MCP handshake and OAuth flow happen the first time the host enumerates tools for a freshly enabled server. On startup the runtime probes tools non-interactively, so OAuth-pending servers fail fast and are silently deferred to the next interactive turn.
+- **Blocking enable.** DNS, TCP, MCP handshake and any OAuth flow happen synchronously inside `enable_remote_mcp_server` so the agent gets a deterministic result in the same turn. On startup, however, the runtime probes tools non-interactively (`mcp.WithoutInteractivePrompts`); OAuth-pending servers fail fast there and are silently deferred to the next interactive turn — including the sidebar-only tool-count pass, where a dialog would be impossible.
 - **No prompt discovery.** MCP prompt lookups (`/prompts`) walk YAML-declared `mcp` toolsets directly; prompts exposed by servers activated through the catalog are not surfaced. Tools — the primary interface — work fine.
 - **Frozen at build time.** The list of servers is embedded in the binary. New entries land with each docker-agent release.
 
