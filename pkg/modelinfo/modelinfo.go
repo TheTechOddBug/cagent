@@ -243,17 +243,53 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 // loadCapsTimeout is the maximum time allowed for a models.dev capability lookup.
 const loadCapsTimeout = 10 * time.Second
 
+// DefaultAnthropicContextLimit is the context window assumed for Claude models
+// when models.dev has no entry for them. Claude 3.5 through 4.x all expose a
+// 200k-token window, so it is a safe floor for clamping retries.
+const DefaultAnthropicContextLimit = 200000
+
+// ContextLimit returns the context-window size (in tokens) for a model.
+//
+// It prefers the models.dev catalogue entry for id; when the store is nil,
+// the model is unknown, or the catalogue reports no context limit, it falls
+// back to fallback. Callers that have no sensible fallback should pass 0 and
+// treat a 0 result as "unknown".
+//
+// The supplied ctx is wrapped with loadCapsTimeout so the lookup stays
+// cancellable with the caller and the underlying models.dev load is bounded.
+// Note that the first lookup may serialize behind a shared store load: the
+// timeout bounds the load itself, not time spent waiting for the store lock.
+func ContextLimit(ctx context.Context, store *modelsdev.Store, id modelsdev.ID, fallback int64) int64 {
+	if store == nil {
+		return fallback
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, loadCapsTimeout)
+	defer cancel()
+
+	model, err := store.GetModel(ctx, id)
+	if err != nil || model == nil || model.Limit.Context <= 0 {
+		return fallback
+	}
+	return int64(model.Limit.Context)
+}
+
 // LoadCaps fetches (or returns from cache) the capability record for the given
 // model ID using the provided store.
 //
 // When the store is nil or the model is not found, LoadCaps returns a
 // conservative capability set that only allows text MIME types.
-func LoadCaps(store *modelsdev.Store, id modelsdev.ID) ModelCapabilities {
+//
+// The supplied ctx is wrapped with loadCapsTimeout so the lookup stays
+// cancellable with the caller and the underlying models.dev load is bounded.
+// Note that the first lookup may serialize behind a shared store load: the
+// timeout bounds the load itself, not time spent waiting for the store lock.
+func LoadCaps(ctx context.Context, store *modelsdev.Store, id modelsdev.ID) ModelCapabilities {
 	if store == nil {
 		return ModelCapabilities{}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), loadCapsTimeout)
+	ctx, cancel := context.WithTimeout(ctx, loadCapsTimeout)
 	defer cancel()
 
 	model, err := store.GetModel(ctx, id)
