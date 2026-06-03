@@ -3,6 +3,61 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.73.0] - 2026-06-03
+
+This release improves MCP catalog server management, fixes streaming issues with AI providers, and adds memory protection for file search operations.
+
+## What's New
+
+- Adds `--json` flag to `alias list` command for structured output
+- Adds ContextLimit helper to modelinfo for centralized context window handling
+- Blocks `enable_remote_mcp_server` until the server is actually connected, eliminating the need to re-ask questions
+
+## Improvements
+
+- Removes command queueing - commands are now sent immediately
+- Removes empty query truncation from MCP server search, showing all matching servers
+- Restricts MCP catalog to OAuth and anonymous-access servers only, removing API key complexity
+
+## Bug Fixes
+
+- Fixes Gemini parallel tool responses by coalescing them into a single Content
+- Fixes custom OpenAI provider routing for Responses-only models (gpt-4.1, o-series, gpt-5, Codex)
+- Fixes memory explosion in `search_files_content` by capping output at 1 MiB and skipping large files
+- Fixes MCP catalog retry logic for existing unstarted entries
+- Fixes rollback behavior when MCP server Start is cancelled during OAuth or Tools operations
+- Fixes conversation caching to exclude failed chat continuations
+
+## Technical Changes
+
+- Refactors registry operations to reuse single session across digest and pull operations
+- Updates OpenAI handler to support newer Responses stream event shapes
+- Uses `cmd.Context()` instead of `context.Background()` for proper cancellation support
+- Uses `strings.Builder` for message merging to reduce memory allocations
+- Improves search_files_content memory handling for symlinks and device files
+
+### Pull Requests
+
+- [#2947](https://github.com/docker/docker-agent/pull/2947) - fix: keep failed chat continuations out of conversation cache
+- [#2959](https://github.com/docker/docker-agent/pull/2959) - fix(gemini): coalesce parallel tool responses into a single Content
+- [#2966](https://github.com/docker/docker-agent/pull/2966) - feat(cli): support `alias list --json` output
+- [#2973](https://github.com/docker/docker-agent/pull/2973) - feat(mcp_catalog): block enable_remote_mcp_server until the server is connected
+- [#2974](https://github.com/docker/docker-agent/pull/2974) - docs: update CHANGELOG.md for v1.72.0
+- [#2975](https://github.com/docker/docker-agent/pull/2975) - refactor: reuse registry session for OCI pulls
+- [#2976](https://github.com/docker/docker-agent/pull/2976) - openai: handle newer Responses stream event shapes
+- [#2977](https://github.com/docker/docker-agent/pull/2977) - docs: document alias list --json flag and failure-safe conversation caching
+- [#2979](https://github.com/docker/docker-agent/pull/2979) - Don't queue commands
+- [#2980](https://github.com/docker/docker-agent/pull/2980) - chore: bump direct Go dependencies
+- [#2981](https://github.com/docker/docker-agent/pull/2981) - fix: use cmd.Context() instead of context.Background()
+- [#2982](https://github.com/docker/docker-agent/pull/2982) - feat: add ContextLimit helper to modelinfo
+- [#2983](https://github.com/docker/docker-agent/pull/2983) - fix: prevent memory explosion in search_files_content
+- [#2984](https://github.com/docker/docker-agent/pull/2984) - refactor: remove empty query truncation from MCP server search
+- [#2985](https://github.com/docker/docker-agent/pull/2985) - fix(providers): route Responses-only models on custom OpenAI providers
+- [#2986](https://github.com/docker/docker-agent/pull/2986) - refactor: use strings.Builder for message merging in oaistream
+- [#2988](https://github.com/docker/docker-agent/pull/2988) - refactor: restrict mcp_catalog to oauth and none auth only
+- [#2989](https://github.com/docker/docker-agent/pull/2989) - test(mcp): fix staticcheck SA5011 nil-pointer errors in oauth_test
+
+
 ## [v1.72.0] - 2026-06-02
 
 This release adds support for JSON output in alias commands, top-level shared configuration, and includes documentation updates and bug fixes.
@@ -3240,3 +3295,5 @@ This release improves the terminal user interface with better error handling and
 [v1.71.0]: https://github.com/docker/docker-agent/releases/tag/v1.71.0
 
 [v1.72.0]: https://github.com/docker/docker-agent/releases/tag/v1.72.0
+
+[v1.73.0]: https://github.com/docker/docker-agent/releases/tag/v1.73.0
