@@ -125,10 +125,12 @@ func (exp *Expander) ExpandCommands(ctx context.Context, cmds types.Commands) ty
 
 	expanded := make(types.Commands, len(cmds))
 	for k, cmd := range cmds {
-		expanded[k] = types.Command{
-			Description: runExpansion(vm, cmd.Description),
-			Instruction: runExpansion(vm, cmd.Instruction),
-		}
+		// Copy the command so non-template fields (e.g. Agent) are preserved,
+		// then expand only the text fields. This keeps the expansion robust if
+		// new fields are added to types.Command.
+		cmd.Description = runExpansion(vm, cmd.Description)
+		cmd.Instruction = runExpansion(vm, cmd.Instruction)
+		expanded[k] = cmd
 	}
 	return expanded
 }
