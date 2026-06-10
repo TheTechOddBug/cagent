@@ -128,6 +128,9 @@ const (
 	FinishReasonLength FinishReason = "length"
 	// FinishReasonToolCalls means the model called a tool
 	FinishReasonToolCalls FinishReason = "tool_calls"
+	// FinishReasonRefusal means the model refused to answer (e.g. Anthropic's
+	// safety classifiers ended the turn with stop_reason "refusal")
+	FinishReasonRefusal FinishReason = "refusal"
 	// FinishReasonNull means no finish reason was provided
 	FinishReasonNull FinishReason = "null"
 )

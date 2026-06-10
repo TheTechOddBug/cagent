@@ -22,6 +22,7 @@ type streamAdapter struct {
 	trackUsage bool
 	toolCall   bool
 	toolID     string
+	stopReason anthropic.StopReason
 }
 
 func (c *Client) newStreamAdapter(stream *ssestream.Stream[anthropic.MessageStreamEventUnion], trackUsage bool) *streamAdapter {
@@ -134,6 +135,7 @@ func (a *streamAdapter) Recv() (chat.MessageStreamResponse, error) {
 			return response, fmt.Errorf("unknown delta type: %T", deltaVariant)
 		}
 	case anthropic.MessageDeltaEvent:
+		a.stopReason = eventVariant.Delta.StopReason
 		if a.trackUsage {
 			response.Usage = &chat.Usage{
 				InputTokens:       eventVariant.Usage.InputTokens,
@@ -143,14 +145,28 @@ func (a *streamAdapter) Recv() (chat.MessageStreamResponse, error) {
 			}
 		}
 	case anthropic.MessageStopEvent:
-		if a.toolCall {
-			response.Choices[0].FinishReason = chat.FinishReasonToolCalls
-		} else {
-			response.Choices[0].FinishReason = chat.FinishReasonStop
-		}
+		response.Choices[0].FinishReason = finishReason(a.stopReason, a.toolCall)
 	}
 
 	return response, nil
+}
+
+// finishReason maps an Anthropic stop reason (received on message_delta) onto
+// the chat finish-reason vocabulary. An empty stop reason falls back to
+// inferring tool_calls vs stop from whether a tool_use block was seen.
+func finishReason(stopReason anthropic.StopReason, sawToolUse bool) chat.FinishReason {
+	switch stopReason {
+	case anthropic.StopReasonToolUse:
+		return chat.FinishReasonToolCalls
+	case anthropic.StopReasonMaxTokens:
+		return chat.FinishReasonLength
+	case anthropic.StopReasonRefusal:
+		return chat.FinishReasonRefusal
+	}
+	if sawToolUse {
+		return chat.FinishReasonToolCalls
+	}
+	return chat.FinishReasonStop
 }
 
 // Close closes the stream

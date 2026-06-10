@@ -33,6 +33,69 @@ func (b *streamBuilder) AddToolCallWithStop(id, name, args string) *streamBuilde
 	return b
 }
 
+// AddRefusal appends a terminal chunk carrying finish_reason "refusal", the
+// way the Anthropic adapter surfaces a safety-classifier refusal (HTTP 200,
+// no content).
+func (b *streamBuilder) AddRefusal() *streamBuilder {
+	b.responses = append(b.responses, chat.MessageStreamResponse{
+		Choices: []chat.MessageStreamChoice{{
+			Index:        0,
+			FinishReason: chat.FinishReasonRefusal,
+		}},
+		Usage: &chat.Usage{InputTokens: 1},
+	})
+	return b
+}
+
+// TestHandleStream_Refusal verifies that a refusal terminates the stream with
+// the refusal finish reason and stops the loop instead of being mistaken for a
+// normal empty completion.
+func TestHandleStream_Refusal(t *testing.T) {
+	stream := newStreamBuilder().
+		AddRefusal().
+		Build()
+
+	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
+	sess := session.New(session.WithUserMessage("go"))
+
+	evCh := make(chan Event, 64)
+	res, err := handleStream(
+		t.Context(), stream, a, nil, sess, nil,
+		defaultTelemetry{}, NewChannelSink(evCh),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, chat.FinishReasonRefusal, res.FinishReason)
+	assert.True(t, res.Stopped, "a refusal ends the turn")
+	assert.Empty(t, res.Calls)
+	require.NotNil(t, res.Usage)
+}
+
+// TestHandleStream_RefusalDropsPartialToolCalls verifies that tool calls
+// streamed before the safety classifier ends the turn with "refusal" are NOT
+// executed: the refusal voids the whole turn.
+func TestHandleStream_RefusalDropsPartialToolCalls(t *testing.T) {
+	stream := newStreamBuilder().
+		AddToolCallName("call_1", "rm_rf").
+		AddToolCallArguments("call_1", `{"path":"/"}`).
+		AddRefusal().
+		Build()
+
+	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
+	sess := session.New(session.WithUserMessage("go"))
+
+	evCh := make(chan Event, 64)
+	res, err := handleStream(
+		t.Context(), stream, a, nil, sess, nil,
+		defaultTelemetry{}, NewChannelSink(evCh),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, chat.FinishReasonRefusal, res.FinishReason)
+	assert.Empty(t, res.Calls, "tool calls from a refused turn must not be executed")
+	assert.True(t, res.Stopped, "a refusal ends the turn")
+}
+
 // TestHandleStream_ToolCallAndStopInSameChunk reproduces the LiteLLM/Gemini bug
 // where a subagent's tool call is silently dropped because the provider packs
 // the tool call and finish_reason:"stop" into the same streaming chunk. The

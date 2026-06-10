@@ -619,6 +619,14 @@ func (r *LocalRuntime) runTurn(
 	endStreamSpan()
 	slog.DebugContext(ctx, "Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped)
 
+	// Surface refusals (e.g. Anthropic safety classifiers): the API returns a
+	// successful, often empty response that would otherwise look like the model
+	// silently said nothing.
+	if res.FinishReason == chat.FinishReasonRefusal {
+		slog.WarnContext(ctx, "Model refused to respond", "agent", a.Name(), "model", modelID.String(), "session_id", sess.ID)
+		events.Emit(Warning(fmt.Sprintf("Model %s refused to respond (stop reason: refusal).", modelID.String()), a.Name()))
+	}
+
 	msgUsage := r.recordAssistantMessage(sess, a, res, agentTools, modelID.String(), m, events)
 
 	usage := SessionUsage(sess, contextLimit)

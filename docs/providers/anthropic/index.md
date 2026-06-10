@@ -166,6 +166,34 @@ Object form (forward-compatible with future budget types):
 
 See the full schema on the [Model Configuration]({{ '/configuration/models/#task-budget' | relative_url }}) page.
 
+## Server-Side Fallbacks
+
+When the primary model refuses a request (e.g. Claude Fable 5's safety
+classifiers ending the turn with stop reason `refusal`), Anthropic can retry
+the request with backup models in a single round trip. Set `fallbacks` in
+`provider_opts` to a list of model IDs, in priority order:
+
+```yaml
+models:
+  fable:
+    provider: anthropic
+    model: claude-fable-5
+    provider_opts:
+      fallbacks:
+        - claude-opus-4-8
+        - claude-sonnet-4-6
+```
+
+docker-agent automatically attaches the required
+`server-side-fallback-2026-06-01` beta header and forwards the option as
+`fallbacks: [{"model": "..."}]`. The response's `model` field reports which
+model actually served the request.
+
+Fallback models receive the exact same request as the primary model
+(thinking configuration, task budget, beta features, ...), so list only
+models that accept the same request shape. Not available on Bedrock, Vertex
+AI, or the Message Batches API.
+
 ## Thinking Display
 
 Controls whether thinking blocks are returned in responses when thinking is enabled. Claude Opus 4.7 hides thinking content by default (`omitted`); earlier Claude 4 models default to `summarized`. Set `thinking_display` in `provider_opts` to override:

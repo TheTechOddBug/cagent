@@ -289,10 +289,17 @@ func (c *Client) CreateChatCompletionStream(
 		slog.DebugContext(ctx, "Request", "request", string(b))
 	}
 
-	// Add fine-grained tool streaming beta header
-	betaHeader := option.WithHeader("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
+	// Add fine-grained tool streaming beta header; the standard Messages API
+	// composes the anthropic-beta header manually (no params.Betas field).
+	betas := "fine-grained-tool-streaming-2025-05-14"
+	var requestOpts []option.RequestOption
+	if fallbacks := fallbackModels(c.ModelConfig.ProviderOpts); len(fallbacks) > 0 {
+		betas += "," + serverSideFallbackBeta
+		requestOpts = append(requestOpts, fallbacksBody(fallbacks))
+	}
+	requestOpts = append(requestOpts, option.WithHeader("anthropic-beta", betas))
 
-	stream := client.Messages.NewStreaming(ctx, params, betaHeader)
+	stream := client.Messages.NewStreaming(ctx, params, requestOpts...)
 	trackUsage := c.ModelConfig.TrackUsage == nil || *c.ModelConfig.TrackUsage
 	ad := c.newStreamAdapter(stream, trackUsage)
 
@@ -311,7 +318,7 @@ func (c *Client) CreateChatCompletionStream(
 		slog.WarnContext(ctx, "Retrying with clamped max_tokens after context length error", "original max_tokens", maxTokens, "clamped max_tokens", newMaxTokens, "used tokens", used)
 		retryParams := params
 		retryParams.MaxTokens = newMaxTokens
-		return client.Messages.NewStreaming(ctx, retryParams, betaHeader)
+		return client.Messages.NewStreaming(ctx, retryParams, requestOpts...)
 	}
 
 	slog.DebugContext(ctx, "Anthropic chat completion stream created successfully", "model", c.ModelConfig.Model)
@@ -763,10 +770,10 @@ func contentArray(m map[string]any) []any {
 }
 
 // contextLimit returns the context window for this client's model, sourced
-// from models.dev when available and falling back to the standard Claude
-// 200k window otherwise.
+// from models.dev when available and falling back to the model family's
+// standard Claude window otherwise.
 func (c *Client) contextLimit(ctx context.Context) int64 {
-	return modelinfo.ContextLimit(ctx, c.ModelOptions.ModelsDevStore(), c.ID(), modelinfo.DefaultAnthropicContextLimit)
+	return modelinfo.ContextLimit(ctx, c.ModelOptions.ModelsDevStore(), c.ID(), modelinfo.DefaultClaudeContextLimit(c.ModelConfig.Model))
 }
 
 // clampMaxTokens returns the effective max_tokens value after capping to the

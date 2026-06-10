@@ -18,6 +18,7 @@ type betaStreamAdapter struct {
 	trackUsage bool
 	toolCall   bool
 	toolID     string
+	stopReason anthropic.BetaStopReason
 }
 
 // newBetaStreamAdapter creates a new Beta stream adapter
@@ -98,6 +99,7 @@ func (a *betaStreamAdapter) Recv() (chat.MessageStreamResponse, error) {
 			return response, fmt.Errorf("unknown delta type: %T", deltaVariant)
 		}
 	case anthropic.BetaRawMessageDeltaEvent:
+		a.stopReason = eventVariant.Delta.StopReason
 		if a.trackUsage {
 			response.Usage = &chat.Usage{
 				InputTokens:       eventVariant.Usage.InputTokens,
@@ -107,11 +109,7 @@ func (a *betaStreamAdapter) Recv() (chat.MessageStreamResponse, error) {
 			}
 		}
 	case anthropic.BetaRawMessageStopEvent:
-		if a.toolCall {
-			response.Choices[0].FinishReason = chat.FinishReasonToolCalls
-		} else {
-			response.Choices[0].FinishReason = chat.FinishReasonStop
-		}
+		response.Choices[0].FinishReason = finishReason(anthropic.StopReason(a.stopReason), a.toolCall)
 	}
 
 	return response, nil

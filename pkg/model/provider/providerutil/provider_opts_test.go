@@ -59,6 +59,34 @@ func TestGetProviderOptBool(t *testing.T) {
 	}
 }
 
+func TestGetProviderOptStringSlice(t *testing.T) {
+	tests := []struct {
+		name   string
+		opts   map[string]any
+		key    string
+		want   []string
+		wantOK bool
+	}{
+		{"nil opts", nil, "fallbacks", nil, false},
+		{"missing key", map[string]any{}, "fallbacks", nil, false},
+		{"[]string value", map[string]any{"fallbacks": []string{"a", "b"}}, "fallbacks", []string{"a", "b"}, true},
+		{"[]any of strings", map[string]any{"fallbacks": []any{"a", "b"}}, "fallbacks", []string{"a", "b"}, true},
+		{"empty []any", map[string]any{"fallbacks": []any{}}, "fallbacks", []string{}, true},
+		{"[]any with non-string", map[string]any{"fallbacks": []any{"a", 42}}, "fallbacks", nil, false},
+		{"string value", map[string]any{"fallbacks": "a"}, "fallbacks", nil, false},
+		{"int value", map[string]any{"fallbacks": 42}, "fallbacks", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := GetProviderOptStringSlice(tt.opts, tt.key)
+			assert.Equal(t, tt.wantOK, ok)
+			if ok {
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestGetProviderOptInt64(t *testing.T) {
 	tests := []struct {
 		name   string

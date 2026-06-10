@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
@@ -112,7 +113,16 @@ func (c *Client) createBetaStream(
 		slog.DebugContext(ctx, "Anthropic Beta provider_opts: set top_k", "value", topK)
 	}
 
-	stream := client.Beta.Messages.NewStreaming(ctx, params)
+	// Enable server-side fallbacks when the fallbacks provider_opt is set;
+	// the beta is appended to params.Betas so the SDK composes a single
+	// anthropic-beta header.
+	var requestOpts []option.RequestOption
+	if fallbacks := fallbackModels(c.ModelConfig.ProviderOpts); len(fallbacks) > 0 {
+		params.Betas = append(params.Betas, serverSideFallbackBeta)
+		requestOpts = append(requestOpts, fallbacksBody(fallbacks))
+	}
+
+	stream := client.Beta.Messages.NewStreaming(ctx, params, requestOpts...)
 	trackUsage := c.ModelConfig.TrackUsage == nil || *c.ModelConfig.TrackUsage
 	ad := c.newBetaStreamAdapter(stream, trackUsage)
 
@@ -131,7 +141,7 @@ func (c *Client) createBetaStream(
 		slog.WarnContext(ctx, "Retrying with clamped max_tokens after context length error", "original", maxTokens, "clamped", newMaxTokens, "used", used)
 		retryParams := params
 		retryParams.MaxTokens = newMaxTokens
-		return client.Beta.Messages.NewStreaming(ctx, retryParams)
+		return client.Beta.Messages.NewStreaming(ctx, retryParams, requestOpts...)
 	}
 
 	slog.DebugContext(ctx, "Anthropic Beta API chat completion stream created successfully", "model", c.ModelConfig.Model)

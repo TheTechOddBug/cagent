@@ -195,12 +195,24 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 			}
 		}
 
-		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength {
+		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength || choice.FinishReason == chat.FinishReasonRefusal {
 			recordUsage()
-			applyXMLFallback()
 			finishReason := choice.FinishReason
-			if finishReason == chat.FinishReasonStop && len(toolCalls) > 0 {
-				finishReason = chat.FinishReasonToolCalls
+			if finishReason == chat.FinishReasonRefusal {
+				// A refusal voids tool calls streamed before the safety
+				// classifier ended the turn: executing them would perform
+				// actions the model refused to complete, and replaying their
+				// tool_use blocks without results breaks the next request.
+				if len(toolCalls) > 0 {
+					slog.WarnContext(ctx, "Dropping tool calls from refused turn",
+						"agent", a.Name(), "tool_calls", len(toolCalls))
+					toolCalls = nil
+				}
+			} else {
+				applyXMLFallback()
+				if finishReason == chat.FinishReasonStop && len(toolCalls) > 0 {
+					finishReason = chat.FinishReasonToolCalls
+				}
 			}
 			return streamResult{
 				Calls:             toolCalls,
@@ -215,8 +227,8 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		}
 
 		// Track the provider's explicit finish reason (e.g. tool_calls) so we
-		// can prefer it over inference after the loop.  stop/length are already
-		// handled by the early return above.
+		// can prefer it over inference after the loop.  stop/length/refusal are
+		// already handled by the early return above.
 		if choice.FinishReason != "" {
 			providerFinishReason = choice.FinishReason
 		}

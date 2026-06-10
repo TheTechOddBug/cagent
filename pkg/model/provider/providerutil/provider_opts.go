@@ -89,6 +89,45 @@ func GetProviderOptBool(opts map[string]any, key string) (bool, bool) {
 	}
 }
 
+// GetProviderOptStringSlice extracts a []string value from provider opts.
+// YAML parses sequences as []any, so both []string and []any of strings are
+// accepted. A sequence containing any non-string element is rejected.
+func GetProviderOptStringSlice(opts map[string]any, key string) ([]string, bool) {
+	if opts == nil {
+		return nil, false
+	}
+	v, ok := opts[key]
+	if !ok {
+		return nil, false
+	}
+	switch s := v.(type) {
+	case []string:
+		return s, true
+	case []any:
+		out := make([]string, len(s))
+		for i, e := range s {
+			str, ok := e.(string)
+			if !ok {
+				slog.Debug("provider_opts element type mismatch, ignoring",
+					"key", key,
+					"expected_type", "string",
+					"actual_type", fmt.Sprintf("%T", e),
+					"value", e)
+				return nil, false
+			}
+			out[i] = str
+		}
+		return out, true
+	default:
+		slog.Debug("provider_opts type mismatch, ignoring",
+			"key", key,
+			"expected_type", "list of strings",
+			"actual_type", fmt.Sprintf("%T", v),
+			"value", v)
+		return nil, false
+	}
+}
+
 // samplingProviderOptsKeys lists the provider_opts keys that are
 // treated as sampling parameters and forwarded to provider APIs.
 // Provider-specific infrastructure keys (api_type, transport, region, etc.)
