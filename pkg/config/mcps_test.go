@@ -89,7 +89,7 @@ func TestMCPDefinitions_Remote(t *testing.T) {
 	require.Len(t, root.Toolsets, 1)
 
 	ts := root.Toolsets[0]
-	assert.Equal(t, "https://mcp.example.com/sse", ts.Remote.URL)
+	assert.Equal(t, "https://mcp.example.com/mcp", ts.Remote.URL)
 	assert.Equal(t, "Bearer token123", ts.Remote.Headers["Authorization"])
 	assert.True(t, ts.AllowPrivateIPsEnabled())
 	assert.Empty(t, ts.Ref)

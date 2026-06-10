@@ -53,7 +53,7 @@ mcps:
   github:
     remote:
       url: https://api.githubcopilot.com/mcp
-      transport_type: streamable
+      transport_type: sse
 
 # 7. Providers — optional reusable provider definitions
 providers:
@@ -350,7 +350,7 @@ mcps:
   github:
     remote:
       url: https://api.githubcopilot.com/mcp
-      transport_type: streamable
+      transport_type: sse
   playwright:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-playwright"]
