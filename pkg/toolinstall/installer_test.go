@@ -60,6 +60,27 @@ func TestResolveForPlatform_Defaults(t *testing.T) {
 	assert.NotEmpty(t, pc.TemplateData.Arch)
 }
 
+// resolveForPlatform must never mutate the package's shared Replacements map
+// when a matching platform override adds replacements.
+func TestResolveForPlatform_DoesNotMutateSharedReplacements(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Format:       "tar.gz",
+		Asset:        "tool_{{.OS}}_{{.Arch}}.tar.gz",
+		Replacements: map[string]string{"amd64": "x86_64"},
+		Overrides: []Override{{
+			GOOS:         runtime.GOOS,
+			Replacements: map[string]string{"linux": "unknown-linux-gnu"},
+		}},
+	}
+
+	_ = resolveForPlatform(pkg, "v1.0.0")
+
+	assert.Equal(t, map[string]string{"amd64": "x86_64"}, pkg.Replacements,
+		"base Replacements map must remain unmodified")
+}
+
 func TestEnsureSymlink(t *testing.T) {
 	t.Setenv("DOCKER_AGENT_TOOLS_DIR", t.TempDir())
 

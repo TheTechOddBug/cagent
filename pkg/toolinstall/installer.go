@@ -3,6 +3,7 @@ package toolinstall
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -15,6 +16,11 @@ import (
 // Install downloads and installs a package at the specified version.
 // Returns the path to the installed binary.
 func (r *Registry) Install(ctx context.Context, pkg *Package, version string) (string, error) {
+	// Apply the aqua version_override matching this version before deciding
+	// how to install (asset, format, checksum, and even type can differ
+	// between versions).
+	pkg = resolveVersionOverride(pkg, version)
+
 	if pkg.IsGoPackage() {
 		return installGoPackage(ctx, pkg, version)
 	}
@@ -78,6 +84,10 @@ func installGoPackage(ctx context.Context, pkg *Package, version string) (string
 
 // installGitHubRelease downloads and installs a package from GitHub releases.
 func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, version string) (string, error) {
+	if pkg.NoAsset {
+		return "", fmt.Errorf("%s/%s has no downloadable asset for version %s", pkg.RepoOwner, pkg.RepoName, version)
+	}
+
 	binaryName := pkg.BinaryName()
 	if binaryName == "" {
 		return "", fmt.Errorf("cannot determine binary name for %s/%s", pkg.RepoOwner, pkg.RepoName)
@@ -100,6 +110,9 @@ func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, versi
 	if err != nil {
 		return "", fmt.Errorf("rendering asset template: %w", err)
 	}
+	if assetName == "" {
+		return "", fmt.Errorf("%s/%s has no asset configured for version %s", pkg.RepoOwner, pkg.RepoName, version)
+	}
 
 	downloadURL := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s",
 		pkg.RepoOwner, pkg.RepoName, version, assetName)
@@ -110,18 +123,35 @@ func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, versi
 	}
 	defer body.Close()
 
+	// Spool the asset to disk so its checksum can be verified before any of
+	// its bytes are extracted and made executable.
+	asset, err := spoolToTemp(body)
+	if err != nil {
+		return "", fmt.Errorf("downloading %s: %w", downloadURL, err)
+	}
+	defer func() {
+		asset.Close()
+		_ = os.Remove(asset.Name())
+	}()
+
+	if pc.Checksum.isEnabled() {
+		if err := r.verifyAssetChecksum(ctx, pkg, version, assetName, asset.Name(), pc.Checksum, pc.TemplateData); err != nil {
+			return "", err
+		}
+	}
+
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil { //nolint:gosec // package dir holds installed tool binaries; needs traversal/exec
 		return "", fmt.Errorf("creating package directory: %w", err)
 	}
 
 	switch pc.Format {
 	case "raw", "":
-		// Single-binary download — write the body directly to binaryPath.
-		if err := writeRawBinary(body, binaryPath); err != nil {
+		// Single-binary download — write the asset directly to binaryPath.
+		if err := writeRawBinary(asset, binaryPath); err != nil {
 			return "", err
 		}
 	default:
-		if err := extractRelease(body, pkgDir, pc.Format, pc.Files, pc.TemplateData); err != nil {
+		if err := extractRelease(asset, pkgDir, pc.Format, pc.Files, pc.TemplateData); err != nil {
 			return "", err
 		}
 	}
@@ -138,11 +168,12 @@ func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, versi
 }
 
 // platformConfig holds all platform-resolved package fields needed for
-// downloading and extracting a release asset.
+// downloading, verifying, and extracting a release asset.
 type platformConfig struct {
 	Format       string
 	Asset        string
 	Files        []PackageFile
+	Checksum     *Checksum
 	TemplateData templateData
 }
 
@@ -153,6 +184,8 @@ func resolveForPlatform(pkg *Package, version string) platformConfig {
 	asset := pkg.Asset
 	files := pkg.Files
 	replacements := pkg.Replacements
+	replacementsOwned := false
+	checksum := pkg.Checksum
 
 	for _, o := range pkg.Overrides {
 		if o.GOOS != "" && o.GOOS != runtime.GOOS {
@@ -170,9 +203,17 @@ func resolveForPlatform(pkg *Package, version string) platformConfig {
 		if len(o.Files) > 0 {
 			files = o.Files
 		}
+		if o.Checksum != nil {
+			checksum = mergeChecksum(checksum, o.Checksum)
+		}
 		if len(o.Replacements) > 0 {
-			if replacements == nil {
-				replacements = make(map[string]string)
+			// Copy-on-write so we never mutate the package's shared
+			// Replacements map.
+			if !replacementsOwned {
+				cp := make(map[string]string, len(replacements)+len(o.Replacements))
+				maps.Copy(cp, replacements)
+				replacements = cp
+				replacementsOwned = true
 			}
 			maps.Copy(replacements, o.Replacements)
 		}
@@ -193,9 +234,10 @@ func resolveForPlatform(pkg *Package, version string) platformConfig {
 	}
 
 	return platformConfig{
-		Format: format,
-		Asset:  asset,
-		Files:  files,
+		Format:   format,
+		Asset:    asset,
+		Files:    files,
+		Checksum: checksum,
 		TemplateData: templateData{
 			Version: templateVersion,
 			OS:      osName,
@@ -203,6 +245,40 @@ func resolveForPlatform(pkg *Package, version string) platformConfig {
 			Format:  format,
 		},
 	}
+}
+
+// spoolToTemp copies an asset stream to a temporary file so it can be
+// checksum-verified before extraction. The returned file is positioned at the
+// start; the caller must close and remove it. The copy is bounded by
+// maxArchiveCompressed to defend against an attacker-controlled release
+// streaming an unbounded body.
+func spoolToTemp(r io.Reader) (*os.File, error) {
+	f, err := os.CreateTemp("", "cagent-asset-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp file: %w", err)
+	}
+
+	cleanup := func() {
+		f.Close()
+		_ = os.Remove(f.Name())
+	}
+
+	n, err := io.Copy(f, io.LimitReader(r, maxArchiveCompressed+1))
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("buffering asset: %w", err)
+	}
+	if n > maxArchiveCompressed {
+		cleanup()
+		return nil, errExtractTooLarge
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	return f, nil
 }
 
 // ensureSymlink atomically creates a symlink in BinDir() pointing to the binary.

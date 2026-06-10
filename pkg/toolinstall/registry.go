@@ -58,10 +58,38 @@ type Package struct {
 	VersionFilter string            `yaml:"version_filter"`
 	VersionPrefix string            `yaml:"version_prefix"`
 	Name          string            `yaml:"name"`
+	Checksum      *Checksum         `yaml:"checksum"`
+	NoAsset       bool              `yaml:"no_asset"`
+
+	// VersionConstraint and VersionOverrides implement aqua's per-version
+	// configuration: the base fields apply when VersionConstraint matches
+	// (commonly "false" so it never does), otherwise the first matching
+	// override is layered on top.
+	VersionConstraint string            `yaml:"version_constraint"`
+	VersionOverrides  []VersionOverride `yaml:"version_overrides"`
 
 	// GoInstallPath is the Go module path for go_install/go_build packages.
 	// Example: "golang.org/x/tools/gopls"
 	GoInstallPath string `yaml:"path"`
+}
+
+// VersionOverride is a partial package definition applied when its
+// VersionConstraint matches the version being installed. It mirrors the aqua
+// registry "version_overrides" schema; only the fields relevant to resolving
+// and downloading an asset are parsed.
+type VersionOverride struct {
+	VersionConstraint string            `yaml:"version_constraint"`
+	Type              string            `yaml:"type"`
+	Asset             string            `yaml:"asset"`
+	Format            string            `yaml:"format"`
+	Files             []PackageFile     `yaml:"files"`
+	Overrides         []Override        `yaml:"overrides"`
+	Replacements      map[string]string `yaml:"replacements"`
+	Checksum          *Checksum         `yaml:"checksum"`
+	VersionPrefix     string            `yaml:"version_prefix"`
+	SupportedEnvs     []string          `yaml:"supported_envs"`
+	GoInstallPath     string            `yaml:"path"`
+	NoAsset           *bool             `yaml:"no_asset"`
 }
 
 // IsGoPackage returns true if this package is installed via "go install".
@@ -96,6 +124,7 @@ type Override struct {
 	Format       string            `yaml:"format"`
 	Files        []PackageFile     `yaml:"files"`
 	Replacements map[string]string `yaml:"replacements"`
+	Checksum     *Checksum         `yaml:"checksum"`
 }
 
 // registryIndex represents the top-level registry.yaml containing full package definitions.

@@ -34,6 +34,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/docker/portcullis v0.0.0-20260602141607-f40f36dfd646
 	github.com/dop251/goja v0.0.0-20260607120635-348e6bea910d
+	github.com/expr-lang/expr v1.17.8
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.1
