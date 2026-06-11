@@ -223,6 +223,66 @@ func TestScriptShellTool_RejectsNULInValue(t *testing.T) {
 	assert.Contains(t, result.Output, "NUL byte")
 }
 
+func TestScriptToolSet_InstructionsNoDescription(t *testing.T) {
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"greet": {
+			Cmd: "echo hello ${name}",
+			Args: map[string]any{
+				"name": map[string]any{
+					"type": "string",
+					// no "description" key — this must not panic
+				},
+			},
+			Required: []string{"name"},
+		},
+	}
+
+	tool, err := NewScript(shellTools, nil)
+	require.NoError(t, err)
+
+	// Must not panic even though description is absent.
+	instructions := tool.Instructions()
+	assert.Contains(t, instructions, "greet")
+	assert.Contains(t, instructions, "`name`")
+	assert.Contains(t, instructions, "(required)")
+	// No trailing colon-space artefact when description is empty.
+	assert.NotContains(t, instructions, "`name`: ")
+}
+
+func TestScriptToolSet_InstructionsNilArgDef(t *testing.T) {
+	// argDef is nil — must not panic.
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"greet": {
+			Cmd:      "echo hello ${name}",
+			Args:     map[string]any{"name": nil},
+			Required: []string{"name"},
+		},
+	}
+
+	tool, err := NewScript(shellTools, nil)
+	require.NoError(t, err)
+
+	instructions := tool.Instructions()
+	assert.Contains(t, instructions, "`name`")
+}
+
+func TestScriptToolSet_InstructionsNonMapArgDef(t *testing.T) {
+	// argDef is a bare string (not a map) — must not panic.
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"greet": {
+			Cmd:      "echo hello ${name}",
+			Args:     map[string]any{"name": "string"},
+			Required: []string{"name"},
+		},
+	}
+
+	tool, err := NewScript(shellTools, nil)
+	require.NoError(t, err)
+
+	instructions := tool.Instructions()
+	assert.Contains(t, instructions, "`name`")
+}
+
 func TestNewScript_ArgWithoutType(t *testing.T) {
 	shellTools := map[string]latest.ScriptShellToolConfig{
 		"greet": {

@@ -101,12 +101,21 @@ func (t *ScriptToolSet) Instructions() string {
 		}
 
 		for argName, argDef := range tool.Args {
-			description := argDef.(map[string]any)["description"].(string)
+			description := ""
+			if m, ok := argDef.(map[string]any); ok {
+				if d, ok := m["description"].(string); ok {
+					description = d
+				}
+			}
 			required := ""
 			if slices.Contains(tool.Required, argName) {
 				required = " (required)"
 			}
-			fmt.Fprintf(&sb, "- `%s`: %s%s\n", argName, description, required)
+			if description != "" {
+				fmt.Fprintf(&sb, "- `%s`: %s%s\n", argName, description, required)
+			} else {
+				fmt.Fprintf(&sb, "- `%s`%s\n", argName, required)
+			}
 		}
 		sb.WriteString("\n")
 	}
