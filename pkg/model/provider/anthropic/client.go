@@ -88,18 +88,25 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		if cfg.Auth != nil {
 			return nil, errors.New("anthropic: auth and Docker AI Gateway are mutually exclusive")
 		}
-		// Fail fast if Docker Desktop's auth token isn't available
-		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
-			slog.ErrorContext(ctx, "Anthropic client creation failed", "error", "failed to get Docker Desktop's authentication token")
-			return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+		// When using a Gateway targeting a Docker domain, tokens are short-lived.
+		// Only require and inject the Docker JWT if the gateway is a .docker.com URL.
+		if environment.IsTrustedDockerURL(gateway) {
+			// Fail fast if Docker Desktop's auth token isn't available
+			if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
+				slog.ErrorContext(ctx, "Anthropic client creation failed", "error", "failed to get Docker Desktop's authentication token")
+				return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+			}
 		}
 
 		// When using a Gateway, tokens are short-lived.
 		anthropicClient.clientFn = func(ctx context.Context) (anthropic.Client, error) {
-			// Query a fresh auth token each time the client is used
-			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-			if authToken == "" {
-				return anthropic.Client{}, errors.New(base.NoDesktopTokenErrorMessage)
+			var authToken string
+			if environment.IsTrustedDockerURL(gateway) {
+				// Query a fresh auth token each time the client is used
+				authToken, _ = env.Get(ctx, environment.DockerDesktopTokenEnv)
+				if authToken == "" {
+					return anthropic.Client{}, errors.New(base.NoDesktopTokenErrorMessage)
+				}
 			}
 
 			url, err := url.Parse(gateway)
@@ -120,12 +127,14 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 				httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
 			}
 
-			client := anthropic.NewClient(
-				option.WithAuthToken(authToken),
-				option.WithAPIKey(authToken),
+			clientOptions := []option.RequestOption{
 				option.WithBaseURL(baseURL),
 				option.WithHTTPClient(httpclient.NewHTTPClient(ctx, httpOptions...)),
-			)
+			}
+			if authToken != "" {
+				clientOptions = append(clientOptions, option.WithAuthToken(authToken), option.WithAPIKey(authToken))
+			}
+			client := anthropic.NewClient(clientOptions...)
 
 			return client, nil
 		}

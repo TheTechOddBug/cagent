@@ -69,7 +69,7 @@ func Load(ctx context.Context, source Source) (*latest.Config, error) {
 //
 // This allows exiting early with a proper error message instead of failing later when trying to use a model or tool.
 func CheckRequiredEnvVars(ctx context.Context, cfg *latest.Config, modelsGateway string, env environment.Provider) error {
-	if modelsGateway != "" {
+	if modelsGateway != "" && environment.IsTrustedDockerURL(modelsGateway) {
 		if jwt, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); jwt == "" {
 			return errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
 		}

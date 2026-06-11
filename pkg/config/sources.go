@@ -250,8 +250,8 @@ func (a urlSource) Read(ctx context.Context) ([]byte, error) {
 		req.Header.Set("If-None-Match", cachedETag)
 	}
 
-	// Add GitHub token authorization for GitHub URLs
 	a.addGitHubAuth(ctx, req)
+	a.addDockerAuth(ctx, req)
 
 	client := httpclient.NewHTTPClient(ctx)
 	if !a.unsafe {
@@ -340,6 +340,9 @@ func isGitHubURL(urlStr string) bool {
 	return slices.Contains(githubHosts, u.Host)
 }
 
+// isTrustedDockerURL is an alias for [environment.IsTrustedDockerURL] for local readability.
+var isTrustedDockerURL = environment.IsTrustedDockerURL
+
 // addGitHubAuth adds GitHub token authorization to the request if:
 // - The URL is a GitHub URL
 // - An environment provider is configured
@@ -360,6 +363,28 @@ func (a urlSource) addGitHubAuth(ctx context.Context, req *http.Request) {
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	slog.DebugContext(ctx, "Added GitHub token authorization to request", "url", a.url)
+}
+
+// addDockerAuth adds the Docker Desktop JWT to the request if:
+// - The URL targets a .docker.com domain or localhost
+// - An environment provider is configured
+// - DOCKER_TOKEN is available in the environment
+func (a urlSource) addDockerAuth(ctx context.Context, req *http.Request) {
+	if a.envProvider == nil {
+		return
+	}
+
+	if !isTrustedDockerURL(a.url) {
+		return
+	}
+
+	token, ok := a.envProvider.Get(ctx, environment.DockerDesktopTokenEnv)
+	if !ok || token == "" {
+		return
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	slog.DebugContext(ctx, "Added Docker token authorization to request", "url", a.url)
 }
 
 // hashURL creates a safe filename from a URL.
