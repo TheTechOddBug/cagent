@@ -340,18 +340,8 @@ func isGitHubURL(urlStr string) bool {
 	return slices.Contains(githubHosts, u.Host)
 }
 
-// isDockerURL checks if the URL targets a .docker.com domain that should
-// receive the Docker Desktop JWT. The check matches the exact host
-// "docker.com" as well as any subdomain (e.g. "desktop.docker.com").
-// It performs strict hostname validation to prevent token leakage.
-func isDockerURL(urlStr string) bool {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return false
-	}
-	host := u.Hostname()
-	return host == "docker.com" || strings.HasSuffix(host, ".docker.com")
-}
+// isDockerURL is an alias for [environment.IsDockerURL] for local readability.
+var isDockerURL = environment.IsDockerURL
 
 // addGitHubAuth adds GitHub token authorization to the request if:
 // - The URL is a GitHub URL

@@ -121,18 +121,25 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			return client, nil
 		}
 	} else {
-		// Fail fast if Docker Desktop's auth token isn't available
-		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
-			slog.ErrorContext(ctx, "Gemini client creation failed", "error", "failed to get Docker Desktop's authentication token")
-			return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+		// When using a Gateway targeting a Docker domain, tokens are short-lived.
+		// Only require and inject the Docker JWT if the gateway is a .docker.com URL.
+		if environment.IsDockerURL(gateway) {
+			// Fail fast if Docker Desktop's auth token isn't available
+			if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
+				slog.ErrorContext(ctx, "Gemini client creation failed", "error", "failed to get Docker Desktop's authentication token")
+				return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+			}
 		}
 
 		// When using a Gateway, tokens are short-lived.
 		clientFn = func(ctx context.Context) (*genai.Client, error) {
-			// Query a fresh auth token each time the client is used
-			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-			if authToken == "" {
-				return nil, errors.New(base.NoDesktopTokenErrorMessage)
+			var authToken string
+			if environment.IsDockerURL(gateway) {
+				// Query a fresh auth token each time the client is used
+				authToken, _ = env.Get(ctx, environment.DockerDesktopTokenEnv)
+				if authToken == "" {
+					return nil, errors.New(base.NoDesktopTokenErrorMessage)
+				}
 			}
 
 			url, err := url.Parse(gateway)
@@ -152,16 +159,20 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 				httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
 			}
 
+			httpOpts := genai.HTTPOptions{
+				BaseURL: baseURL,
+			}
+			if authToken != "" {
+				httpOpts.Headers = http.Header{
+					"Authorization": []string{"Bearer " + authToken},
+				}
+			}
+
 			return genai.NewClient(ctx, &genai.ClientConfig{
-				APIKey:     authToken,
-				Backend:    genai.BackendGeminiAPI,
-				HTTPClient: httpclient.NewHTTPClient(ctx, httpOptions...),
-				HTTPOptions: genai.HTTPOptions{
-					BaseURL: baseURL,
-					Headers: http.Header{
-						"Authorization": []string{"Bearer " + authToken},
-					},
-				},
+				APIKey:      authToken,
+				Backend:     genai.BackendGeminiAPI,
+				HTTPClient:  httpclient.NewHTTPClient(ctx, httpOptions...),
+				HTTPOptions: httpOpts,
 			})
 		}
 	}

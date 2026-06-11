@@ -301,7 +301,7 @@ func TestCheckRequiredEnvVarsWithModelGateway(t *testing.T) {
 			environment.DockerDesktopTokenEnv: "some-jwt-token",
 		}}
 
-		err = CheckRequiredEnvVars(t.Context(), cfg, "gateway:8080", env)
+		err = CheckRequiredEnvVars(t.Context(), cfg, "https://models.docker.com", env)
 		require.NoError(t, err)
 	})
 
@@ -311,8 +311,18 @@ func TestCheckRequiredEnvVarsWithModelGateway(t *testing.T) {
 		cfg, err := Load(t.Context(), NewFileSource("testdata/env/all.yaml"))
 		require.NoError(t, err)
 
-		err = CheckRequiredEnvVars(t.Context(), cfg, "gateway:8080", &noEnvProvider{})
+		err = CheckRequiredEnvVars(t.Context(), cfg, "https://models.docker.com", &noEnvProvider{})
 		require.ErrorContains(t, err, "sign in Docker Desktop")
+	})
+
+	t.Run("non-docker gateway without token", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := Load(t.Context(), NewFileSource("testdata/env/all.yaml"))
+		require.NoError(t, err)
+
+		err = CheckRequiredEnvVars(t.Context(), cfg, "https://my-gateway.example.com", &noEnvProvider{})
+		require.NoError(t, err)
 	})
 }
 
