@@ -47,6 +47,25 @@ func SetConfigDir(dir string) { configDirOverride.Set(dir) }
 // An empty value restores the default behaviour.
 func SetDataDir(dir string) { dataDirOverride.Set(dir) }
 
+// SetRoot re-homes all docker-agent state under one directory: data,
+// config, and cache land in the "data", "config", and "cache"
+// subdirectories of root. It is the one-call override for embedders that
+// must keep their embedded agent's state isolated from a docker-agent
+// installation on the same machine (e.g. the Gordon assistant in Docker
+// Sandboxes homes everything under ~/.sbx/gordon). An empty root restores
+// the per-directory defaults.
+func SetRoot(root string) {
+	if root == "" {
+		SetDataDir("")
+		SetConfigDir("")
+		SetCacheDir("")
+		return
+	}
+	SetDataDir(filepath.Join(root, "data"))
+	SetConfigDir(filepath.Join(root, "config"))
+	SetCacheDir(filepath.Join(root, "cache"))
+}
+
 // GetCacheDir returns the user's cache directory for docker agent.
 //
 // If an override has been set via [SetCacheDir] it is returned instead.

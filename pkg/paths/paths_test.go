@@ -1,6 +1,7 @@
 package paths_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,4 +47,23 @@ func TestGetHomeDir(t *testing.T) {
 	t.Parallel()
 
 	assert.NotEmpty(t, paths.GetHomeDir())
+}
+
+func TestSetRoot(t *testing.T) {
+	t.Cleanup(func() { paths.SetRoot("") })
+
+	defaultData := paths.GetDataDir()
+	defaultConfig := paths.GetConfigDir()
+	defaultCache := paths.GetCacheDir()
+
+	paths.SetRoot("/custom/root")
+	assert.Equal(t, filepath.Join("/custom/root", "data"), paths.GetDataDir())
+	assert.Equal(t, filepath.Join("/custom/root", "config"), paths.GetConfigDir())
+	assert.Equal(t, filepath.Join("/custom/root", "cache"), paths.GetCacheDir())
+
+	// Empty root restores the defaults.
+	paths.SetRoot("")
+	assert.Equal(t, defaultData, paths.GetDataDir())
+	assert.Equal(t, defaultConfig, paths.GetConfigDir())
+	assert.Equal(t, defaultCache, paths.GetCacheDir())
 }
