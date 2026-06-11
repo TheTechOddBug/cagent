@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -107,10 +106,14 @@ func TestKeyMapDecisionFor(t *testing.T) {
 		key      string
 		decision Decision
 	}{
-		{"y", Approve}, {"Y", Approve},
-		{"n", Reject}, {"N", Reject},
-		{"t", ApproveTool}, {"T", ApproveTool},
-		{"a", ApproveSession}, {"A", ApproveSession},
+		{"y", Approve},
+		{"Y", Approve},
+		{"n", Reject},
+		{"N", Reject},
+		{"t", ApproveTool},
+		{"T", ApproveTool},
+		{"a", ApproveSession},
+		{"A", ApproveSession},
 	} {
 		decision, ok := keyMap.DecisionFor(tea.KeyPressMsg{Code: rune(tt.key[0]), Text: tt.key})
 		require.True(t, ok, "key %q", tt.key)

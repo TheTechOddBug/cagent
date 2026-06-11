@@ -155,6 +155,8 @@ var (
 
 // The cached styles bake in theme colors; invalidate them whenever a new
 // theme is applied so no ApplyTheme caller has to remember ResetStyles.
+//
+//nolint:gochecknoinits // Intentional: the hook must be registered before any theme change
 func init() {
 	styles.OnThemeChange(ResetStyles)
 }

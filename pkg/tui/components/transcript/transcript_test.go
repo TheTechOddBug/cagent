@@ -20,12 +20,12 @@ func newTestTranscript() *Transcript {
 	return New(service.StaticSessionState{AgentName: testAgent})
 }
 
-func toolCall(id, name string) (tools.ToolCall, tools.Tool) {
+func toolCall(id string) (tools.ToolCall, tools.Tool) {
 	call := tools.ToolCall{
 		ID:       id,
-		Function: tools.FunctionCall{Name: name, Arguments: "{}"},
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
 	}
-	return call, tools.Tool{Name: name}
+	return call, tools.Tool{Name: "shell"}
 }
 
 func TestAppendAndRender(t *testing.T) {
@@ -79,7 +79,7 @@ func TestAddOrUpdateToolCall(t *testing.T) {
 	tr := newTestTranscript()
 	defer tr.StopAnimations()
 
-	call, def := toolCall("call-1", "shell")
+	call, def := toolCall("call-1")
 	_ = tr.AddOrUpdateToolCall(testAgent, call, def, types.ToolStatusRunning)
 	require.Len(t, tr.msgs, 1)
 	assert.Equal(t, types.ToolStatusRunning, tr.msgs[0].ToolStatus)
@@ -90,7 +90,7 @@ func TestAddOrUpdateToolCall(t *testing.T) {
 	assert.Equal(t, types.ToolStatusCompleted, tr.msgs[0].ToolStatus)
 
 	// A new ID appends a new entry.
-	call2, def2 := toolCall("call-2", "shell")
+	call2, def2 := toolCall("call-2")
 	_ = tr.AddOrUpdateToolCall(testAgent, call2, def2, types.ToolStatusRunning)
 	require.Len(t, tr.msgs, 2)
 }
@@ -99,7 +99,7 @@ func TestSetToolStatus(t *testing.T) {
 	tr := newTestTranscript()
 	defer tr.StopAnimations()
 
-	call, def := toolCall("call-1", "shell")
+	call, def := toolCall("call-1")
 	_ = tr.Append(types.ToolCallMessage(testAgent, call, def, types.ToolStatusConfirmation))
 
 	_, ok := tr.SetToolStatus("call-1", types.ToolStatusRunning)
@@ -114,8 +114,8 @@ func TestFinalizeToolCalls(t *testing.T) {
 	tr := newTestTranscript()
 	defer tr.StopAnimations()
 
-	running, runningDef := toolCall("call-1", "shell")
-	done, doneDef := toolCall("call-2", "shell")
+	running, runningDef := toolCall("call-1")
+	done, doneDef := toolCall("call-2")
 	_ = tr.Append(types.ToolCallMessage(testAgent, running, runningDef, types.ToolStatusRunning))
 	_ = tr.Append(types.ToolCallMessage(testAgent, done, doneDef, types.ToolStatusCompleted))
 
@@ -130,12 +130,12 @@ func TestConsecutiveToolCallsGroupTightly(t *testing.T) {
 	tr := newTestTranscript()
 	defer tr.StopAnimations()
 
-	call1, def1 := toolCall("call-1", "shell")
-	call2, def2 := toolCall("call-2", "shell")
+	call1, def1 := toolCall("call-1")
+	call2, def2 := toolCall("call-2")
 	_ = tr.Append(types.ToolCallMessage(testAgent, call1, def1, types.ToolStatusCompleted))
 	_ = tr.Append(types.ToolCallMessage(testAgent, call2, def2, types.ToolStatusCompleted))
 
-	for _, line := range strings.Split(tr.Render(80), "\n") {
+	for line := range strings.SplitSeq(tr.Render(80), "\n") {
 		assert.NotEmpty(t, strings.TrimSpace(line), "consecutive tool calls must not be separated by a blank line")
 	}
 }
@@ -161,7 +161,7 @@ func TestRebuildPreservesContent(t *testing.T) {
 	defer tr.StopAnimations()
 
 	_ = tr.Append(types.User("hello"))
-	call, def := toolCall("call-1", "shell")
+	call, def := toolCall("call-1")
 	_ = tr.Append(types.ToolCallMessage(testAgent, call, def, types.ToolStatusCompleted))
 	before := tr.Render(80)
 
@@ -179,7 +179,7 @@ func TestRenderReflowsOnWidthChange(t *testing.T) {
 	wide := tr.Render(120)
 	narrow := tr.Render(40)
 	assert.NotEqual(t, wide, narrow)
-	for _, line := range strings.Split(narrow, "\n") {
+	for line := range strings.SplitSeq(narrow, "\n") {
 		assert.LessOrEqual(t, ansi.StringWidth(line), 40)
 	}
 }

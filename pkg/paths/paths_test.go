@@ -57,9 +57,9 @@ func TestSetRoot(t *testing.T) {
 	defaultCache := paths.GetCacheDir()
 
 	paths.SetRoot("/custom/root")
-	assert.Equal(t, filepath.Join("/custom/root", "data"), paths.GetDataDir())
-	assert.Equal(t, filepath.Join("/custom/root", "config"), paths.GetConfigDir())
-	assert.Equal(t, filepath.Join("/custom/root", "cache"), paths.GetCacheDir())
+	assert.Equal(t, filepath.Clean("/custom/root/data"), paths.GetDataDir())
+	assert.Equal(t, filepath.Clean("/custom/root/config"), paths.GetConfigDir())
+	assert.Equal(t, filepath.Clean("/custom/root/cache"), paths.GetCacheDir())
 
 	// Empty root restores the defaults.
 	paths.SetRoot("")

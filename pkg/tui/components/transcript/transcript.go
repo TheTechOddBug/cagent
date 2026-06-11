@@ -12,6 +12,7 @@
 package transcript
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ func (t *Transcript) Append(msg *types.Message) tea.Cmd {
 
 // newView creates the right view for a message, like the message list's
 // createToolCallView / createMessageView helpers.
-func (t *Transcript) newView(msg *types.Message, prev *types.Message) layout.Model {
+func (t *Transcript) newView(msg, prev *types.Message) layout.Model {
 	var v layout.Model
 	if msg.Type == types.MessageTypeToolCall {
 		v = tool.New(msg, t.state)
@@ -122,7 +123,7 @@ func (t *Transcript) AddOrUpdateToolCall(agentName string, toolCall tools.ToolCa
 // reporting whether an entry was found. The view is recreated so no
 // memoized rendering of the previous status can survive the update.
 func (t *Transcript) SetToolStatus(callID string, status types.ToolStatus) (tea.Cmd, bool) {
-	for i := len(t.msgs) - 1; i >= 0; i-- {
+	for i := range slices.Backward(t.msgs) {
 		if t.msgs[i].Type != types.MessageTypeToolCall || t.msgs[i].ToolCall.ID != callID {
 			continue
 		}
