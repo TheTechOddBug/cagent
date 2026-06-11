@@ -153,6 +153,12 @@ var (
 	globalStylesMu   sync.Mutex
 )
 
+// The cached styles bake in theme colors; invalidate them whenever a new
+// theme is applied so no ApplyTheme caller has to remember ResetStyles.
+func init() {
+	styles.OnThemeChange(ResetStyles)
+}
+
 // ResetStyles resets the cached markdown styles so they will be rebuilt on next use.
 // Call this when the theme changes to pick up new colors.
 func ResetStyles() {

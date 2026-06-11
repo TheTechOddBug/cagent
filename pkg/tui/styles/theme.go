@@ -957,6 +957,10 @@ func ApplyTheme(theme *Theme) {
 
 	// Clear style sequence cache (used by RenderComposite)
 	clearStyleSeqCache()
+
+	// Let dependent packages invalidate their own memoized rendering
+	// (e.g. the markdown renderer's style cache).
+	runThemeChangeHooks()
 }
 
 // rebuildStyles rebuilds all derived lipgloss.Style variables from the current color values.

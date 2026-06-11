@@ -21,7 +21,6 @@ import (
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
-	"github.com/docker/docker-agent/pkg/tui/components/markdown"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/components/tool/editfile"
 	"github.com/docker/docker-agent/pkg/tui/core"
@@ -609,16 +608,12 @@ func (m *appModel) handleThemeCancelPreview(originalRef string) (tea.Model, tea.
 	if current := styles.CurrentTheme(); current != nil && current.Ref == originalRef {
 		return m, nil
 	}
-	theme, err := styles.LoadTheme(originalRef)
-	if err != nil {
-		theme = styles.DefaultTheme()
-	}
-	styles.ApplyTheme(theme)
+	styles.ApplyThemeRef(originalRef)
 	return m.applyThemeChanged()
 }
 
 func (m *appModel) invalidateCachesForThemeChange() {
-	markdown.ResetStyles()
+	// markdown's style cache resets itself via styles.OnThemeChange.
 	m.statusBar.InvalidateCache()
 }
 
