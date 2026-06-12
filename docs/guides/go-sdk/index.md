@@ -38,7 +38,7 @@ docker-agent can be used as a Go library, allowing you to build AI agents direct
 
 ## Embedding TUI Components
 
-When building custom UIs on top of docker-agent's TUI primitives, three packages define the contracts that keep the runtime and the UI in sync:
+When building custom UIs on top of docker-agent's TUI primitives, four packages define the contracts that keep the runtime and the UI in sync:
 
 - **`pkg/tui/components/toolconfirm`** — import this package for the permission-decision policy rather than copying the pattern-building logic. The `Decision` enum, `BuildPermissionPattern` helper, and rejection-reason presets are the canonical source of truth: whatever pattern is shown to the user in the confirmation dialog is exactly the pattern granted to the runtime.
 - **`pkg/tui/service`** — use `StaticSessionState` as a stub `SessionStateReader` when rendering individual message or tool views outside the full TUI app. It returns conservative fixed values for all nine interface methods, eliminating the need for hand-rolled stubs.
