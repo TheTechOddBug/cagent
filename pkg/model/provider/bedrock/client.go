@@ -61,10 +61,6 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		opt(&globalOptions)
 	}
 
-	if globalOptions.TransportWrapper() != nil {
-		slog.WarnContext(ctx, "HTTP transport wrapper is set but not applied: Bedrock provider uses the AWS SDK HTTP client")
-	}
-
 	// Check for bearer token
 	// Bearer token is optional: if not provided, falls back to standard AWS credential chain (SigV4).
 	//
