@@ -65,7 +65,7 @@ func TestNewClient_TransportWrapperInvokedDirectPath(t *testing.T) {
 		}
 	}
 
-	assert.Greater(t, counter.calls.Load(), int64(0), "transport wrapper RoundTrip should have been called at least once")
+	assert.Positive(t, counter.calls.Load(), "transport wrapper RoundTrip should have been called at least once")
 }
 
 func TestNewClient_TransportWrapperInvokedGatewayPath(t *testing.T) {
@@ -108,5 +108,5 @@ func TestNewClient_TransportWrapperInvokedGatewayPath(t *testing.T) {
 		}
 	}
 
-	assert.Greater(t, counter.calls.Load(), int64(0), "transport wrapper RoundTrip should have been called at least once in gateway path")
+	assert.Positive(t, counter.calls.Load(), "transport wrapper RoundTrip should have been called at least once in gateway path")
 }

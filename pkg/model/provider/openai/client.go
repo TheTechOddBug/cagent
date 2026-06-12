@@ -195,6 +195,9 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	if getTransport(cfg) == "websocket" && globalOptions.Gateway() == "" {
 		baseURL := cmp.Or(cfg.BaseURL, "https://api.openai.com/v1")
 		client.wsPool = newWSPool(httpToWSURL(baseURL), client.buildWSHeaderFn())
+		if globalOptions.TransportWrapper() != nil {
+			slog.WarnContext(ctx, "HTTP transport wrapper is set but not applied: WebSocket transport uses an SDK-managed connection")
+		}
 	}
 
 	return client, nil
