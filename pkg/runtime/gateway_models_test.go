@@ -237,6 +237,45 @@ func TestListGatewayModels_CachesFailure(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load(), "failures must be cached to avoid hammering the gateway")
 }
 
+func TestListGatewayModels_DoubleCheckAvoidsRedundantFetch(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4o"}]}`))
+	}))
+	defer server.Close()
+
+	now := time.Now()
+	r := gatewayRuntime(server.URL, stubModelStore{})
+	r.now = func() time.Time { return now }
+
+	_, err := r.listGatewayModels(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int32(1), requests.Load())
+
+	// Simulate the TOCTOU window: the caller's freshness check sees a
+	// stale cache (singleflight already released the key), but by the
+	// time its closure runs the cache has been repopulated. The clock
+	// reads stale exactly once — for the outer check — then fresh for
+	// the double-check inside the closure, which must return the cached
+	// result instead of re-fetching.
+	staleReads := 1
+	r.now = func() time.Time {
+		if staleReads > 0 {
+			staleReads--
+			return now.Add(gatewayModelsTTL + time.Second)
+		}
+		return now
+	}
+
+	ids, err := r.listGatewayModels(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openai/gpt-4o"}, ids)
+	assert.Equal(t, int32(1), requests.Load(), "double-check inside the singleflight closure must reuse the fresh cache")
+}
+
 func TestListGatewayModels_ConcurrentCallersCoalesce(t *testing.T) {
 	t.Parallel()
 

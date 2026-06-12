@@ -44,15 +44,28 @@ func (r *LocalRuntime) listGatewayModels(ctx context.Context) ([]string, error) 
 
 	c := &r.gatewayModels
 
-	c.mu.Lock()
-	if !c.fetchedAt.IsZero() && now().Sub(c.fetchedAt) < gatewayModelsTTL {
-		ids, err := c.ids, c.err
-		c.mu.Unlock()
+	readFresh := func() (ids []string, ok bool, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if !c.fetchedAt.IsZero() && now().Sub(c.fetchedAt) < gatewayModelsTTL {
+			return c.ids, true, c.err
+		}
+		return nil, false, nil
+	}
+
+	if ids, ok, err := readFresh(); ok {
 		return ids, err
 	}
-	c.mu.Unlock()
 
 	v, err, _ := c.sf.Do("models", func() (any, error) {
+		// Double-check the cache now that we hold the in-flight slot: a
+		// caller that read a stale cache right before a concurrent
+		// singleflight completed would otherwise trigger a redundant
+		// fetch immediately after the cache was populated.
+		if ids, ok, err := readFresh(); ok {
+			return ids, err
+		}
+
 		ids, err := modelsgateway.ListModels(ctx, r.modelSwitcherCfg.ModelsGateway, r.modelSwitcherCfg.EnvProvider)
 		c.mu.Lock()
 		c.ids, c.err, c.fetchedAt = ids, err, now()
