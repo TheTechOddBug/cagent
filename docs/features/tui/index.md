@@ -132,6 +132,8 @@ Change the AI model during a session with `/model` or <kbd>Ctrl</kbd>+<kbd>M</kb
 2. Select from config models or type a custom `provider/model`
 3. The model switch is saved with the session and restored on reload
 
+When a models gateway is configured (`--models-gateway`) and it exposes an OpenAI-style `/v1/models` endpoint, the picker lists the models actually served by the gateway (merged with the models defined in the agent config). When the gateway doesn't expose `/v1/models`, the picker falls back to the regular catalog.
+
 <div class="callout callout-tip" markdown="1">
 <div class="callout-title">Tip
 </div>
