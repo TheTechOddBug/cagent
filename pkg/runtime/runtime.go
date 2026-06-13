@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/hooks"
@@ -672,6 +675,250 @@ func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, err
 	return a.Tools(ctx)
 }
 
+// ToolsetState is the coarse lifecycle bucket the agent inspector renders as a
+// status glyph. It collapses the full lifecycle.State machine into the three
+// distinctions a reader cares about: serving (started), not running (stopped),
+// or broken (error).
+type ToolsetState string
+
+const (
+	ToolsetStarted ToolsetState = "started"
+	ToolsetStopped ToolsetState = "stopped"
+	ToolsetError   ToolsetState = "error"
+)
+
+// ToolsetDetail describes one configured toolset for the agent inspector: its
+// display name, kind, lifecycle bucket and the tools it exposes. Tools holds
+// the live tool names when the toolset is started, otherwise the declared
+// `tools:` allow-list from the retained config, and is empty when neither is
+// available (a not-yet-started toolset with no explicit allow-list).
+type ToolsetDetail struct {
+	Name  string
+	Kind  string
+	State ToolsetState
+	Tools []string
+}
+
+// AgentConfigInfo is the static-plus-live dataset behind the read-only agent
+// inspector modal. The static parts (sub-agents, handoffs, fallbacks, skills,
+// limits, option flags, declared toolset allow-lists) are derived from the
+// resolved *agent.Agent and the retained config without starting any toolset;
+// the live parts (per-toolset lifecycle state, started tool names, IsCurrent)
+// reflect the running team. Remote runtimes (which hold no local team) return
+// the zero value, so the modal omits every config-derived section.
+type AgentConfigInfo struct {
+	SubAgents []string // sub-agent names, sorted
+	Handoffs  []string // handoff target names, sorted
+	Fallbacks []string // fallback model ids ("provider/model"), in priority order
+	Skills    []string // configured skill names (inline + included + used), sorted
+
+	MaxIterations           int // 0 when unset
+	NumHistoryItems         int // 0 when unset
+	MaxConsecutiveToolCalls int // 0 when unset
+
+	Options  []string        // enabled option flags (add-date, redact-secrets, ...)
+	Toolsets []ToolsetDetail // per-toolset live state + tools, in declaration order
+
+	IsCurrent bool // true when this is the live current agent
+}
+
+// AgentConfigInfo returns the named agent's inspector dataset. It inspects the
+// resolved agent and the retained config, reading live tool names only from
+// already-started toolsets (never starting one), so it is safe to call for any
+// agent whether or not it has run. Unknown agents yield the zero value, so the
+// modal omits the corresponding sections.
+func (r *LocalRuntime) AgentConfigInfo(agentName string) AgentConfigInfo {
+	a, err := r.team.Agent(agentName)
+	if err != nil || a == nil {
+		return AgentConfigInfo{}
+	}
+
+	cfg, hasCfg := r.team.AgentConfig(agentName)
+
+	var subAgents []string
+	for _, sub := range a.SubAgents() {
+		if sub != nil {
+			subAgents = append(subAgents, sub.Name())
+		}
+	}
+
+	var handoffs []string
+	for _, h := range a.Handoffs() {
+		if h != nil {
+			handoffs = append(handoffs, h.Name())
+		}
+	}
+
+	var fallbacks []string
+	for _, p := range a.FallbackModels() {
+		if p != nil {
+			fallbacks = append(fallbacks, p.ID().String())
+		}
+	}
+
+	info := AgentConfigInfo{
+		SubAgents:               uniqueNames(subAgents, true),
+		Handoffs:                uniqueNames(handoffs, true),
+		Fallbacks:               uniqueNames(fallbacks, false),
+		MaxIterations:           a.MaxIterations(),
+		NumHistoryItems:         a.NumHistoryItems(),
+		MaxConsecutiveToolCalls: a.MaxConsecutiveToolCalls(),
+		Options:                 agentOptionFlags(a, cfg, hasCfg),
+		Toolsets:                toolsetDetails(a, cfg, hasCfg),
+		IsCurrent:               r.agents != nil && r.agents.Name() == agentName,
+	}
+	if hasCfg {
+		info.Skills = configSkillNames(cfg)
+	}
+	return info
+}
+
+// agentOptionFlags lists the agent's enabled boolean options as stable,
+// hyphenated display names. AddDate/AddEnvironmentInfo/RedactSecrets read the
+// agent's effective (resolved) values; CodeModeTools is only knowable from the
+// retained config because the runtime folds it into a single wrapper toolset.
+func agentOptionFlags(a *agent.Agent, cfg latest.AgentConfig, hasCfg bool) []string {
+	var opts []string
+	if a.AddDate() {
+		opts = append(opts, "add-date")
+	}
+	if a.AddEnvironmentInfo() {
+		opts = append(opts, "add-environment-info")
+	}
+	if a.RedactSecrets() {
+		opts = append(opts, "redact-secrets")
+	}
+	if hasCfg && cfg.CodeModeTools {
+		opts = append(opts, "code-mode-tools")
+	}
+	return opts
+}
+
+// configSkillNames lists the cleanly-resolvable skill names from the agent
+// config: inline skill names, the Include allow-list, and referenced skill
+// groups (UseSkills). Skills auto-discovered from Sources (e.g. a local
+// directory) are not enumerated here because doing so would require loading
+// them from disk; the inspector notes this rather than starting that work.
+func configSkillNames(cfg latest.AgentConfig) []string {
+	var names []string
+	for _, s := range cfg.Skills.Inline {
+		names = append(names, s.Name)
+	}
+	names = append(names, cfg.Skills.Include...)
+	names = append(names, cfg.UseSkills...)
+	return uniqueNames(names, true)
+}
+
+// toolsetDetails builds one ToolsetDetail per live toolset of the agent,
+// combining the side-effect-free lifecycle status with tool names: live names
+// for started toolsets, otherwise the declared `tools:` allow-list keyed by the
+// same name the registry assigns (cmp.Or(name, type)).
+func toolsetDetails(a *agent.Agent, cfg latest.AgentConfig, hasCfg bool) []ToolsetDetail {
+	toolSets := a.ToolSets()
+	if len(toolSets) == 0 {
+		return nil
+	}
+	var declared map[string][]string
+	if hasCfg {
+		declared = declaredToolNames(cfg)
+	}
+	infos := make([]ToolsetDetail, 0, len(toolSets))
+	for _, ts := range toolSets {
+		status := toolsetStatusFor(ts)
+		info := ToolsetDetail{
+			Name:  status.Name,
+			Kind:  status.Kind,
+			State: toolsetStateBucket(status.State),
+		}
+		if live, ok := startedToolNames(ts); ok {
+			info.Tools = live
+		} else if names, ok := declared[status.Name]; ok {
+			info.Tools = names
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+// toolsetStateBucket collapses the lifecycle state machine into the inspector's
+// three buckets. Failed is the only error state; Stopped (including a
+// not-yet-started toolset) is stopped; everything else (Ready, Degraded,
+// Starting, Restarting) reads as started/serving.
+func toolsetStateBucket(s lifecycle.State) ToolsetState {
+	switch s {
+	case lifecycle.StateFailed:
+		return ToolsetError
+	case lifecycle.StateStopped:
+		return ToolsetStopped
+	default:
+		return ToolsetStarted
+	}
+}
+
+// startedToolNames returns the live tool names of ts, but only when it is a
+// started toolset; the boolean is false for not-yet-started toolsets so the
+// caller can fall back to the declared allow-list. context.TODO is safe here:
+// the toolset is already started, so listing returns its cached tools without
+// a cancellable round-trip.
+func startedToolNames(ts tools.ToolSet) ([]string, bool) {
+	s, ok := tools.As[*tools.StartableToolSet](ts)
+	if !ok || !s.IsStarted() {
+		return nil, false
+	}
+	tl, err := s.Tools(context.TODO())
+	if err != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(tl))
+	for i := range tl {
+		if tl[i].Name != "" {
+			names = append(names, tl[i].Name)
+		}
+	}
+	return names, true
+}
+
+// declaredToolNames maps each configured toolset's display name to its declared
+// `tools:` allow-list. The key matches the registry's naming
+// (cmp.Or(name, type)) so it lines up with the live toolset's Name. Toolsets
+// with no explicit allow-list (serve all tools) are omitted.
+func declaredToolNames(cfg latest.AgentConfig) map[string][]string {
+	m := make(map[string][]string, len(cfg.Toolsets))
+	for i := range cfg.Toolsets {
+		t := cfg.Toolsets[i]
+		key := cmp.Or(t.Name, t.Type)
+		if key == "" || len(t.Tools) == 0 {
+			continue
+		}
+		m[key] = slices.Clone(t.Tools)
+	}
+	return m
+}
+
+// uniqueNames drops empty entries and de-duplicates names. By default it keeps
+// the first-seen order (meaningful for declaration/priority order); when sorted
+// is true it orders the result case-insensitively instead.
+func uniqueNames(names []string, sorted bool) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if sorted {
+		slices.SortFunc(out, func(a, b string) int {
+			return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+		})
+	}
+	return out
+}
+
 // CurrentAgentToolsetStatuses returns one ToolsetStatus per toolset of the
 // active agent. The list is in declaration order. Toolsets that wrap
 // another (StartableToolSet, Multiplexer) are unwrapped so the inner
@@ -679,6 +926,24 @@ func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, err
 func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 	a := r.CurrentAgent()
 	if a == nil {
+		return nil
+	}
+	toolSets := a.ToolSets()
+	statuses := make([]tools.ToolsetStatus, 0, len(toolSets))
+	for _, ts := range toolSets {
+		statuses = append(statuses, toolsetStatusFor(ts))
+	}
+	return statuses
+}
+
+// AgentToolsetStatuses returns one ToolsetStatus per toolset of the named
+// agent, in declaration order. It mirrors CurrentAgentToolsetStatuses but for
+// an arbitrary agent and is side-effect-free: it reads each toolset's live
+// lifecycle (state, kind, last error, restart count) without starting it.
+// Unknown agents yield nil, so callers degrade gracefully.
+func (r *LocalRuntime) AgentToolsetStatuses(name string) []tools.ToolsetStatus {
+	a, err := r.team.Agent(name)
+	if err != nil || a == nil {
 		return nil
 	}
 	toolSets := a.ToolSets()
@@ -981,8 +1246,10 @@ func (r *LocalRuntime) agentDetailsFromTeam(ctx context.Context) []AgentDetails 
 
 // agentThinkingLabel returns a short, user-facing label for the effective
 // thinking-effort level of the agent's current model: the effort level (e.g.
-// "high"), "off" when thinking is disabled on a reasoning-capable model, or
-// "" when the model has no selectable thinking configuration to display.
+// "high"), "adaptive" for adaptive budgets, the decimal token count for
+// token-based budgets, "off" when thinking is disabled on a reasoning-capable
+// model, or "" when the model has no selectable thinking configuration to
+// display.
 func (r *LocalRuntime) agentThinkingLabel(ctx context.Context, a *agent.Agent) string {
 	models := a.EffectiveModels()
 	if len(models) == 0 {
@@ -1000,7 +1267,10 @@ func (r *LocalRuntime) agentThinkingLabel(ctx context.Context, a *agent.Agent) s
 	if l, ok := budget.EffortLevel(); ok {
 		return l.String()
 	}
-	return "on" // token-based or adaptive budget
+	if budget.IsAdaptive() {
+		return "adaptive"
+	}
+	return strconv.Itoa(budget.Tokens) // token-based budget
 }
 
 // SessionStore returns the session store for browsing/loading past sessions.

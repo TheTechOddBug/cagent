@@ -314,10 +314,18 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		}
 	}
 
+	// Retain the resolved per-agent configs so inspection surfaces (the agent
+	// inspector modal) can show declared toolset allow-lists, limits and flags.
+	agentConfigs := make(map[string]latest.AgentConfig, len(cfg.Agents))
+	for i := range cfg.Agents {
+		agentConfigs[cfg.Agents[i].Name] = cfg.Agents[i]
+	}
+
 	return &LoadResult{
 		Team: team.New(
 			team.WithAgents(agents...),
 			team.WithPermissions(permChecker),
+			team.WithAgentConfigs(agentConfigs),
 		),
 		Models:             cfg.Models,
 		Providers:          cfg.Providers,

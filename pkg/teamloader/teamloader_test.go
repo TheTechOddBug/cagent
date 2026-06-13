@@ -651,3 +651,34 @@ agents:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "escapes parent directory")
 }
+
+// TestLoadRetainsAgentConfig verifies the loader retains the raw resolved
+// per-agent config on the team (team.WithAgentConfigs) so the agent inspector
+// can surface declared toolset allow-lists, limits and flags. It uses a
+// built-in toolset (shell) and an openai model so no network access is needed.
+func TestLoadRetainsAgentConfig(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "dummy")
+
+	data := []byte(`agents:
+  root:
+    model: openai/gpt-4o
+    instruction: test
+    max_iterations: 7
+    toolsets:
+      - type: shell
+        tools: [shell]
+`)
+
+	team, err := Load(t.Context(), config.NewBytesSource("inspector.yaml", data), &config.RuntimeConfig{})
+	require.NoError(t, err)
+
+	cfg, ok := team.AgentConfig("root")
+	require.True(t, ok, "loader must retain the resolved agent config")
+	assert.Equal(t, 7, cfg.MaxIterations)
+	require.Len(t, cfg.Toolsets, 1)
+	assert.Equal(t, "shell", cfg.Toolsets[0].Type)
+	assert.Equal(t, []string{"shell"}, cfg.Toolsets[0].Tools)
+
+	_, ok = team.AgentConfig("missing")
+	assert.False(t, ok, "unknown agent reports no retained config")
+}

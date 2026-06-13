@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/permissions"
 )
@@ -14,6 +15,12 @@ import (
 type Team struct {
 	agents      []*agent.Agent
 	permissions *permissions.Checker
+	// agentConfigs holds the raw resolved config for each agent, keyed by
+	// name. It is retained only when the team is built from a config file
+	// (WithAgentConfigs) so surfaces like the agent inspector can show
+	// declared toolset allow-lists, limits and flags. Teams built without it
+	// (e.g. the remote runtime) leave it nil and AgentConfig returns false.
+	agentConfigs map[string]latest.AgentConfig
 }
 
 type Opt func(*Team)
@@ -27,6 +34,15 @@ func WithAgents(agents ...*agent.Agent) Opt {
 func WithPermissions(checker *permissions.Checker) Opt {
 	return func(t *Team) {
 		t.permissions = checker
+	}
+}
+
+// WithAgentConfigs retains the per-agent resolved configs (keyed by agent
+// name) on the team. They are read-only reference data used by inspection
+// surfaces; the runtime continues to operate on the resolved *agent.Agent.
+func WithAgentConfigs(configs map[string]latest.AgentConfig) Opt {
+	return func(t *Team) {
+		t.agentConfigs = configs
 	}
 }
 
@@ -68,6 +84,11 @@ func (t *Team) AgentsInfo() []AgentInfo {
 			id := model.ID()
 			info.Provider = id.Provider
 			info.Model = id.Model
+		} else if harnessType := a.HarnessType(); harnessType != "" {
+			// Harness-backed agents have no provider.Provider; surface the
+			// harness type (e.g. "claude-code") as the display model and leave
+			// Thinking empty so no badge/card line is shown.
+			info.Model = harnessType
 		}
 		infos = append(infos, info)
 	}
@@ -129,6 +150,15 @@ func (t *Team) StopToolSets(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// AgentConfig returns the raw resolved config for the named agent and true
+// when it was retained at construction (WithAgentConfigs). Teams built
+// without configs (e.g. the remote runtime) return the zero value and false,
+// letting callers gracefully omit config-derived detail.
+func (t *Team) AgentConfig(name string) (latest.AgentConfig, bool) {
+	cfg, ok := t.agentConfigs[name]
+	return cfg, ok
 }
 
 // Permissions returns the permission checker for this team.

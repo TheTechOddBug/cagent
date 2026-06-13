@@ -870,6 +870,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.SwitchAgentMsg:
 		return m.handleSwitchAgent(msg.AgentName)
 
+	case messages.ShowAgentDetailsMsg:
+		return m.handleShowAgentDetails(msg.AgentName)
+
 	// --- Session browser ---
 
 	case messages.OpenSessionBrowserMsg:

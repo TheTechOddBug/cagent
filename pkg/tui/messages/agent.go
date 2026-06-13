@@ -5,6 +5,10 @@ type (
 	// SwitchAgentMsg switches to a different agent.
 	SwitchAgentMsg struct{ AgentName string }
 
+	// ShowAgentDetailsMsg opens the read-only agent-details dialog for the
+	// named agent (clicking the current agent's card or Ctrl+clicking any agent).
+	ShowAgentDetailsMsg struct{ AgentName string }
+
 	// AgentCommandMsg sends a command to the agent.
 	AgentCommandMsg struct{ Command string }
 

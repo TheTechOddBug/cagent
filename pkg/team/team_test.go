@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
 func newAgent(name string) *agent.Agent {
@@ -79,5 +80,44 @@ func TestAgentOrDefault(t *testing.T) {
 
 		_, err = team.AgentOrDefault("anything")
 		require.Error(t, err)
+	})
+}
+
+// TestAgentConfig verifies the raw per-agent config retained via
+// WithAgentConfigs is returned by name, and that callers can distinguish a
+// team built without configs (remote runtime) from one built with them: both
+// the unknown-agent and no-configs cases report false so the inspector omits
+// config-derived sections.
+func TestAgentConfig(t *testing.T) {
+	t.Parallel()
+
+	configs := map[string]latest.AgentConfig{
+		"root": {Name: "root", Model: "openai/gpt-5", MaxIterations: 42},
+	}
+
+	t.Run("returns retained config by name", func(t *testing.T) {
+		t.Parallel()
+		tm := New(WithAgents(newAgent("root")), WithAgentConfigs(configs))
+
+		cfg, ok := tm.AgentConfig("root")
+		require.True(t, ok)
+		assert.Equal(t, "openai/gpt-5", cfg.Model)
+		assert.Equal(t, 42, cfg.MaxIterations)
+	})
+
+	t.Run("unknown agent returns false", func(t *testing.T) {
+		t.Parallel()
+		tm := New(WithAgents(newAgent("root")), WithAgentConfigs(configs))
+
+		_, ok := tm.AgentConfig("missing")
+		assert.False(t, ok)
+	})
+
+	t.Run("team built without configs returns false", func(t *testing.T) {
+		t.Parallel()
+		tm := New(WithAgents(newAgent("root")))
+
+		_, ok := tm.AgentConfig("root")
+		assert.False(t, ok)
 	})
 }

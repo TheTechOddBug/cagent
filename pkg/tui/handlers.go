@@ -329,6 +329,20 @@ func (m *appModel) handleSwitchAgent(agentName string) (tea.Model, tea.Cmd) {
 	)
 }
 
+// handleShowAgentDetails opens the read-only agent-details dialog for the named
+// agent, looking it up in the available-agents roster.
+func (m *appModel) handleShowAgentDetails(agentName string) (tea.Model, tea.Cmd) {
+	for _, agent := range m.sessionState.AvailableAgents() {
+		if agent.Name == agentName {
+			cfg := m.application.AgentConfigInfo(agentName)
+			return m, core.CmdHandler(dialog.OpenDialogMsg{
+				Model: dialog.NewAgentDetailsDialog(agent, cfg),
+			})
+		}
+	}
+	return m, nil
+}
+
 func (m *appModel) handleCycleAgent() (tea.Model, tea.Cmd) {
 	availableAgents := m.sessionState.AvailableAgents()
 	if len(availableAgents) <= 1 {
@@ -532,13 +546,14 @@ func (m *appModel) handleCycleThinkingLevel() (tea.Model, tea.Cmd) {
 	if !m.application.SupportsModelSwitching() {
 		return m, notification.InfoCmd("Thinking levels can't be changed with remote runtimes")
 	}
-	if _, err := m.application.CycleAgentThinkingLevel(context.Background()); err != nil {
+	level, err := m.application.CycleAgentThinkingLevel(context.Background())
+	if err != nil {
 		if errors.Is(err, runtime.ErrUnsupported) {
 			return m, notification.InfoCmd("Current model does not support thinking levels")
 		}
 		return m, notification.ErrorCmd(fmt.Sprintf("Failed to change thinking level: %v", err))
 	}
-	return m, nil
+	return m, notification.InfoCmd(styles.ThinkingGlyph + " Thinking: " + level.String())
 }
 
 func (m *appModel) handleChangeModel(modelRef string) (tea.Model, tea.Cmd) {

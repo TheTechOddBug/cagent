@@ -149,11 +149,8 @@ func (p *chatPage) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cm
 		}
 
 	case TargetSidebarAgent:
-		if msg.Button == tea.MouseLeft {
-			if hit.AgentName != "" {
-				return p, core.CmdHandler(msgtypes.SwitchAgentMsg{AgentName: hit.AgentName})
-			}
-			return p, nil
+		if cmd := p.agentClickCmd(hit.AgentName, msg.Button, msg.Mod); cmd != nil {
+			return p, cmd
 		}
 
 	case TargetMessages:
@@ -171,6 +168,25 @@ func (p *chatPage) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cm
 	// Default: route to appropriate component
 	cmd := p.routeMouseEvent(msg, msg.Y)
 	return p, cmd
+}
+
+// agentClickCmd resolves a sidebar agent click to its command: a right-click or
+// Ctrl+left-click on any agent opens the read-only details dialog; a plain
+// left-click switches to it (switching to the already-current agent is a
+// harmless no-op). Returns nil when no agent was resolved or the gesture isn't
+// one we handle.
+func (p *chatPage) agentClickCmd(agentName string, button tea.MouseButton, mod tea.KeyMod) tea.Cmd {
+	if agentName == "" {
+		return nil
+	}
+	switch {
+	case button == tea.MouseRight, button == tea.MouseLeft && mod == tea.ModCtrl:
+		return core.CmdHandler(msgtypes.ShowAgentDetailsMsg{AgentName: agentName})
+	case button == tea.MouseLeft:
+		return core.CmdHandler(msgtypes.SwitchAgentMsg{AgentName: agentName})
+	default:
+		return nil
+	}
 }
 
 // handleMouseMotion handles mouse motion events.
