@@ -366,12 +366,13 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		}
 	}()
 
-	loadResult, err := b.LoadTeam(ctx, b.LoadTeamRequest())
-	if err != nil {
-		return err
-	}
-
 	if f.dryRun {
+		// A dry run initializes the team but runs nothing, so it never
+		// creates a worktree.
+		loadResult, err := b.LoadTeam(ctx, b.LoadTeamRequest())
+		if err != nil {
+			return err
+		}
 		if loadResult != nil {
 			stopToolSets(loadResult.Team)
 		}
@@ -379,17 +380,16 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return nil
 	}
 
+	// Create the worktree BEFORE loading the team. Toolsets capture the
+	// working directory when they are built, so the worktree must already be
+	// the working directory by then for every tool — the shell included — to
+	// operate inside it rather than the user's checkout.
 	wd, _ := os.Getwd()
-	createdWorktree, err := f.setupWorktree(ctx, wd)
+	loadResult, createdWorktree, wd, err := f.loadTeamInWorktree(ctx, b, wd)
 	if err != nil {
-		if loadResult != nil {
-			stopToolSets(loadResult.Team)
-		}
 		return err
 	}
 	if createdWorktree != nil {
-		wd = createdWorktree.Dir
-		f.runConfig.WorkingDir = createdWorktree.Dir
 		out.Println("Using git worktree: " + createdWorktree.Dir + " (branch " + createdWorktree.Branch + ")")
 		// loadResult is nil for the remote backend; worktrees are mutually
 		// exclusive with --remote so this is belt-and-suspenders, matching
@@ -456,6 +456,39 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		f.cleanupWorktree(context.WithoutCancel(ctx), out, createdWorktree)
 	}
 	return nil
+}
+
+// loadTeamInWorktree creates the requested worktree (if any) and then loads
+// the team with the worktree as its working directory. The ordering matters:
+// toolsets capture runConfig.WorkingDir when they are constructed during
+// LoadTeam, so the worktree must be settled first for every tool — the shell
+// included — to operate inside the worktree instead of the user's checkout.
+//
+// It returns the loaded team, the created worktree (nil when neither
+// --worktree nor --worktree-pr was given) and the working directory to run in
+// (the worktree's directory when one was created, otherwise wd unchanged).
+func (f *runExecFlags) loadTeamInWorktree(ctx context.Context, b backend, wd string) (*teamloader.LoadResult, *worktree.Worktree, string, error) {
+	createdWorktree, err := f.setupWorktree(ctx, wd)
+	if err != nil {
+		return nil, nil, wd, err
+	}
+	if createdWorktree != nil {
+		wd = createdWorktree.Dir
+		f.runConfig.WorkingDir = createdWorktree.Dir
+	}
+
+	loadResult, err := b.LoadTeam(ctx, b.LoadTeamRequest())
+	if err != nil {
+		// The worktree was created before the load; tear it down so a load
+		// failure doesn't leave an orphaned worktree behind.
+		if createdWorktree != nil {
+			if rmErr := createdWorktree.Remove(ctx); rmErr != nil {
+				slog.WarnContext(ctx, "Failed to remove worktree after load error", "dir", createdWorktree.Dir, "error", rmErr)
+			}
+		}
+		return nil, nil, wd, err
+	}
+	return loadResult, createdWorktree, wd, nil
 }
 
 // setupWorktree creates the git worktree requested by --worktree or
