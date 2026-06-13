@@ -582,8 +582,9 @@ type AgentDetails struct {
 	Provider    string `json:"provider"`
 	Model       string `json:"model"`
 	// Thinking is a short label describing the model's current thinking-effort
-	// level (e.g. "high", "off"). Empty when the model has no selectable
-	// thinking configuration.
+	// configuration: an effort level (e.g. "high"), "adaptive", a decimal token
+	// count for token-based budgets, or "off" when disabled. Empty when the
+	// model has no selectable thinking configuration.
 	Thinking string         `json:"thinking,omitempty"`
 	Commands types.Commands `json:"commands,omitempty"`
 }

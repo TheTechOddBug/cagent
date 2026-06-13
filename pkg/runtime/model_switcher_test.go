@@ -155,8 +155,8 @@ func TestAgentThinkingLabel(t *testing.T) {
 		{"reasoning model, no budget shows off", latest.ModelConfig{Provider: "openai", Model: "gpt-5"}, "off"},
 		{"reasoning model with effort", latest.ModelConfig{Provider: "openai", Model: "gpt-5", ThinkingBudget: &latest.ThinkingBudget{Effort: "high"}}, "high"},
 		{"reasoning model disabled shows off", latest.ModelConfig{Provider: "openai", Model: "gpt-5", ThinkingBudget: &latest.ThinkingBudget{Effort: "none"}}, "off"},
-		{"adaptive budget shows on", latest.ModelConfig{Provider: "anthropic", Model: "claude-opus-4-7", ThinkingBudget: &latest.ThinkingBudget{Effort: "adaptive"}}, "on"},
-		{"token budget shows on", latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-5", ThinkingBudget: &latest.ThinkingBudget{Tokens: 4096}}, "on"},
+		{"adaptive budget shows adaptive", latest.ModelConfig{Provider: "anthropic", Model: "claude-opus-4-7", ThinkingBudget: &latest.ThinkingBudget{Effort: "adaptive"}}, "adaptive"},
+		{"token budget shows token count", latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-5", ThinkingBudget: &latest.ThinkingBudget{Tokens: 4096}}, "4096"},
 		{"non-reasoning model hides line", latest.ModelConfig{Provider: "openai", Model: "gpt-4o"}, ""},
 	}
 

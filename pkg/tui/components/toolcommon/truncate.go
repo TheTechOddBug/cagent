@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
@@ -28,6 +29,40 @@ func TruncateText(text string, maxWidth int) string {
 	runes := []rune(text)
 	end := takeRunesThatFit(runes, 0, maxWidth-1)
 	return string(runes[:end]) + "…"
+}
+
+// TruncateTextLeft truncates text from the left to fit within maxWidth, keeping
+// the tail and prepending an ellipsis when truncation occurs. It mirrors
+// [TruncateText]'s edge cases but is the keep-the-tail counterpart: useful for
+// model identifiers where the informative suffix (e.g. "…sonnet-4-6") should
+// survive. Wraps [ansi.TruncateLeft] so ANSI escape sequences and wide
+// characters are handled correctly.
+func TruncateTextLeft(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+
+	// Fast path: check if text fits without truncation.
+	if lipgloss.Width(text) <= maxWidth {
+		return text
+	}
+
+	if maxWidth == 1 {
+		return "…"
+	}
+
+	// Remove enough leading cells to leave room for the ellipsis prefix.
+	cut := lipgloss.Width(text) - maxWidth + 1
+	out := ansi.TruncateLeft(text, cut, "…")
+
+	// Wide characters cannot be split, so cutting on a wide-char boundary can
+	// leave the result one cell too wide; drop further graphemes until it fits.
+	for lipgloss.Width(out) > maxWidth {
+		cut++
+		out = ansi.TruncateLeft(text, cut, "…")
+	}
+
+	return out
 }
 
 func takeRunesThatFit(runes []rune, start, width int) int {

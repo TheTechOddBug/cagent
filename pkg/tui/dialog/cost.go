@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/components/scrollview"
+	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/styles"
@@ -529,14 +529,7 @@ func formatCostPadded(cost float64) string {
 }
 
 func formatTokenCount(count int64) string {
-	switch {
-	case count >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(count)/1_000_000)
-	case count >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(count)/1_000)
-	default:
-		return strconv.FormatInt(count, 10)
-	}
+	return toolcommon.FormatTokenCount(count)
 }
 
 func formatDuration(d time.Duration) string {

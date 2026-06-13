@@ -106,6 +106,21 @@ const (
 
 	// DoubleClickThreshold is the maximum time between clicks to register as a double-click
 	DoubleClickThreshold = 400 * time.Millisecond
+
+	// ThinkingGlyph marks thinking/reasoning state in the TUI (reasoning-block
+	// badge, sidebar thinking labels, Shift+Tab toast). U+273B is single-width
+	// with no emoji-presentation variant, so it is safe for column alignment.
+	ThinkingGlyph = "✻"
+
+	// TokenGlyph marks token-budget figures (Token Usage tab, token-based
+	// thinking badges). U+25C9 is single-width and non-emoji.
+	TokenGlyph = "◉"
+
+	// GaugeFilled and GaugeEmpty are the filled/empty cells of the compact
+	// effort gauge shown in sidebar roster rows. U+25B0/U+25B1 are single-width
+	// and non-emoji, so a fixed-width gauge keeps the badge column aligned.
+	GaugeFilled = "▰"
+	GaugeEmpty  = "▱"
 )
 
 var (
