@@ -56,12 +56,25 @@ type SessionManager struct {
 	// signalling that the server is ready to accept session-scoped requests.
 	sessionReady     chan struct{}
 	sessionReadyOnce sync.Once
+
+	// followUpInjectors routes a follow-up for an attached session to its
+	// owner (the TUI App) instead of the runtime follow-up queue. The queue
+	// is only drained mid-stream, so for an idle attached session it would
+	// never be consumed; the injector starts a real turn whose events reach
+	// the TUI and every SSE subscriber. Keyed by session ID; set via
+	// RegisterFollowUpInjector.
+	followUpInjectors *concurrent.Map[string, FollowUpInjector]
 }
 
 // EventSource pushes session events to send for the lifetime of ctx. The
 // callback is invoked from request goroutines (e.g. an SSE handler), so it
 // must be safe to call concurrently across requests.
 type EventSource func(ctx context.Context, send func(any))
+
+// FollowUpInjector delivers a follow-up message to the session's owner (the
+// TUI App) as if a user had submitted it, starting a real turn. Registered by
+// the attached control plane via [SessionManager.RegisterFollowUpInjector].
+type FollowUpInjector func(ctx context.Context, content string)
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore session.Store, refreshInterval time.Duration, runConfig *config.RuntimeConfig) *SessionManager {
@@ -71,14 +84,15 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 	}
 
 	sm := &SessionManager{
-		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
-		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
-		eventSources:    concurrent.NewMap[string, EventSource](),
-		sessionStore:    sessionStore,
-		Sources:         loaders,
-		refreshInterval: refreshInterval,
-		runConfig:       runConfig,
-		sessionReady:    make(chan struct{}),
+		runtimeSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		eventSources:      concurrent.NewMap[string, EventSource](),
+		followUpInjectors: concurrent.NewMap[string, FollowUpInjector](),
+		sessionStore:      sessionStore,
+		Sources:           loaders,
+		refreshInterval:   refreshInterval,
+		runConfig:         runConfig,
+		sessionReady:      make(chan struct{}),
 	}
 
 	return sm
@@ -104,6 +118,14 @@ func (sm *SessionManager) WaitReady(ctx context.Context) error {
 // can subscribe to events via GET /api/sessions/:id/events.
 func (sm *SessionManager) RegisterEventSource(sessionID string, src EventSource) {
 	sm.eventSources.Store(sessionID, src)
+}
+
+// RegisterFollowUpInjector registers fn as the follow-up delivery path for an
+// attached sessionID. When set, [SessionManager.FollowUpSession] routes
+// messages through fn (which feeds them to the TUI App so a real turn starts)
+// instead of the runtime follow-up queue. Used by the --listen control plane.
+func (sm *SessionManager) RegisterFollowUpInjector(sessionID string, fn FollowUpInjector) {
+	sm.followUpInjectors.Store(sessionID, fn)
 }
 
 // GetEventSource returns the registered event source for sessionID.
@@ -295,6 +317,7 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 		}()
 	}
 	sm.eventSources.Delete(sess.ID)
+	sm.followUpInjectors.Delete(sess.ID)
 
 	return nil
 }
@@ -503,13 +526,30 @@ func (sm *SessionManager) SteerSession(_ context.Context, sessionID string, mess
 // running session. Each message is popped one at a time after the current
 // turn finishes, giving each follow-up a full undivided agent turn.
 //
-// If no stream is currently running (agent is idle), the messages are still
-// enqueued but will not be consumed until the next RunSession starts a new
-// stream. The returned boolean indicates whether a stream is active.
-func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) (streaming bool, err error) {
+// When a follow-up injector is registered for the session (the --listen
+// control plane attaches one for the TUI App), messages are delivered through
+// it instead: the App submits them as normal user input, which starts a turn
+// even when the agent is idle and streams events to the TUI and every SSE
+// subscriber. The returned streaming flag is true in this case because a turn
+// is (or is about to be) running.
+//
+// Without an injector (headless server-owned sessions) the messages go to the
+// runtime follow-up queue. If no stream is currently running the messages are
+// still enqueued but are not consumed until the next RunSession starts a
+// stream; the returned boolean indicates whether a stream is active.
+func (sm *SessionManager) FollowUpSession(ctx context.Context, sessionID string, messages []api.Message) (streaming bool, err error) {
 	rt, exists := sm.runtimeSessions.Load(sessionID)
 	if !exists {
 		return false, ErrSessionNotRunning
+	}
+
+	// Attached session: hand the follow-up to its owner (the TUI App) so a
+	// real turn starts and events reach all subscribers.
+	if inject, ok := sm.followUpInjectors.Load(sessionID); ok {
+		for _, msg := range messages {
+			inject(ctx, msg.Content)
+		}
+		return true, nil
 	}
 
 	for _, msg := range messages {
@@ -1087,6 +1127,7 @@ func (sm *SessionManager) BatchDeleteSessions(ctx context.Context, sessionIDs []
 				sm.runtimeSessions.Delete(sessionID)
 			}
 			sm.eventSources.Delete(sessionID)
+			sm.followUpInjectors.Delete(sessionID)
 		}
 	}
 
