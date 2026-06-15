@@ -167,6 +167,21 @@ type SteerSessionRequest struct {
 	Messages []Message `json:"messages"`
 }
 
+// FollowUpResponse is the response to POST /api/sessions/:id/followup.
+//
+// Status is one of:
+//   - "queued_streaming": delivered; a turn is running (or starting).
+//   - "queued_idle": delivered to an idle headless session; it will run on the
+//     next turn.
+//   - "duplicate": a request with the same Idempotency-Key already landed, so
+//     this one was acknowledged without delivering the follow-up again.
+//
+// Duplicate mirrors the "duplicate" status as a boolean for convenience.
+type FollowUpResponse struct {
+	Status    string `json:"status"`
+	Duplicate bool   `json:"duplicate"`
+}
+
 // UpdateSessionTitleRequest represents a request to update a session's title
 type UpdateSessionTitleRequest struct {
 	Title string `json:"title"`
@@ -269,6 +284,40 @@ type SessionStatusResponse struct {
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
 	NumMessages  int    `json:"num_messages"`
+}
+
+// SessionSnapshotResponse is the full, self-contained state of a session: its
+// stored fields (messages, tokens, permissions), its live runtime state
+// (streaming, current agent), and the sequence number of the most recent
+// event on its /events stream.
+//
+// It exists so a client can rebuild a session's state in a single call and
+// then continue without a gap: read the snapshot, then connect to
+// GET /api/sessions/:id/events?since=<last_event_seq>. Any event that occurs
+// between the snapshot and the stream connecting is buffered and replayed, so
+// no transition is lost.
+type SessionSnapshotResponse struct {
+	ID            string                     `json:"id"`
+	Title         string                     `json:"title"`
+	CreatedAt     time.Time                  `json:"created_at"`
+	WorkingDir    string                     `json:"working_dir,omitempty"`
+	Messages      []session.Message          `json:"messages"`
+	ToolsApproved bool                       `json:"tools_approved"`
+	Permissions   *session.PermissionsConfig `json:"permissions,omitempty"`
+	InputTokens   int64                      `json:"input_tokens"`
+	OutputTokens  int64                      `json:"output_tokens"`
+
+	// Streaming is true when a turn is currently running.
+	Streaming bool `json:"streaming"`
+	// Agent is the session's current agent, when an active runtime is
+	// attached (empty otherwise).
+	Agent string `json:"agent,omitempty"`
+	// LastEventSeq is the sequence number of the most recent event on the
+	// session's /events stream. Connect to /events?since=<LastEventSeq>
+	// right after reading the snapshot to tail without missing anything.
+	// Zero when the session has no event stream (no events yet, or not
+	// attached to a control plane).
+	LastEventSeq uint64 `json:"last_event_seq"`
 }
 
 // RunAgentRequest is the body of POST /api/sessions/:id/agent/:agent[/:agent_name].

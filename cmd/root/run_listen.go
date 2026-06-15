@@ -67,5 +67,9 @@ func (f *runExecFlags) startAttachedServer(ctx context.Context, out *cli.Printer
 				}
 			})
 		})
+		// Route control-plane follow-ups into the TUI App so each starts a
+		// real turn (even when the agent is idle) and streams events to the
+		// TUI and SSE subscribers alike.
+		sm.RegisterFollowUpInjector(sess.ID, a.InjectUserMessage)
 	}, nil
 }

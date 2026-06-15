@@ -655,6 +655,22 @@ func (a *App) RunBangCommand(ctx context.Context, command string) {
 	a.events <- runtime.ShellOutput(output)
 }
 
+// InjectUserMessage feeds content into the app exactly as if the user had
+// typed and submitted it in the TUI. It is the entry point external drivers
+// (the --listen control plane) use to send follow-up prompts: routing through
+// the normal SendMsg path means the message is queued when the agent is busy,
+// triggers title generation on the first turn, and — crucially — starts a
+// RunStream whose events flow through a.events to every subscriber (the TUI
+// and any SSE consumer). Enqueuing into the runtime's follow-up queue instead
+// would do nothing while the agent is idle, since that queue is only drained
+// mid-stream.
+//
+// SendMsg is a TUI message, not a runtime.Event, so SSE subscribers (which
+// forward only runtime.Events) ignore it; it reaches the TUI program alone.
+func (a *App) InjectUserMessage(ctx context.Context, content string) {
+	a.sendEvent(ctx, messages.SendMsg{Content: content})
+}
+
 // SubscribeWith subscribes to app events using a custom send function.
 // Multiple concurrent subscribers are supported: a single fan-out goroutine
 // drains the throttled event stream and dispatches a copy to each one.

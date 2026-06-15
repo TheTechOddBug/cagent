@@ -40,7 +40,7 @@ type activeRuntimes struct {
 type SessionManager struct {
 	runtimeSessions *concurrent.Map[string, *activeRuntimes]
 	deletedSessions *concurrent.Map[string, *activeRuntimes]
-	eventSources    *concurrent.Map[string, EventSource]
+	eventLogs       *concurrent.Map[string, *pumpedEventLog]
 	sessionStore    session.Store
 	Sources         config.Sources
 
@@ -56,12 +56,30 @@ type SessionManager struct {
 	// signalling that the server is ready to accept session-scoped requests.
 	sessionReady     chan struct{}
 	sessionReadyOnce sync.Once
+
+	// followUpInjectors routes a follow-up for an attached session to its
+	// owner (the TUI App) instead of the runtime follow-up queue. The queue
+	// is only drained mid-stream, so for an idle attached session it would
+	// never be consumed; the injector starts a real turn whose events reach
+	// the TUI and every SSE subscriber. Keyed by session ID; set via
+	// RegisterFollowUpInjector.
+	followUpInjectors *concurrent.Map[string, FollowUpInjector]
+
+	// followUpKeys deduplicates follow-up requests per session by their
+	// caller-supplied Idempotency-Key, so a retried request that already
+	// landed is not delivered twice. Created lazily per session.
+	followUpKeys *concurrent.Map[string, *idempotencyCache]
 }
 
 // EventSource pushes session events to send for the lifetime of ctx. The
 // callback is invoked from request goroutines (e.g. an SSE handler), so it
 // must be safe to call concurrently across requests.
 type EventSource func(ctx context.Context, send func(any))
+
+// FollowUpInjector delivers a follow-up message to the session's owner (the
+// TUI App) as if a user had submitted it, starting a real turn. Registered by
+// the attached control plane via [SessionManager.RegisterFollowUpInjector].
+type FollowUpInjector func(ctx context.Context, content string)
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore session.Store, refreshInterval time.Duration, runConfig *config.RuntimeConfig) *SessionManager {
@@ -71,14 +89,16 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 	}
 
 	sm := &SessionManager{
-		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
-		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
-		eventSources:    concurrent.NewMap[string, EventSource](),
-		sessionStore:    sessionStore,
-		Sources:         loaders,
-		refreshInterval: refreshInterval,
-		runConfig:       runConfig,
-		sessionReady:    make(chan struct{}),
+		runtimeSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		eventLogs:         concurrent.NewMap[string, *pumpedEventLog](),
+		followUpInjectors: concurrent.NewMap[string, FollowUpInjector](),
+		followUpKeys:      concurrent.NewMap[string, *idempotencyCache](),
+		sessionStore:      sessionStore,
+		Sources:           loaders,
+		refreshInterval:   refreshInterval,
+		runConfig:         runConfig,
+		sessionReady:      make(chan struct{}),
 	}
 
 	return sm
@@ -99,42 +119,72 @@ func (sm *SessionManager) WaitReady(ctx context.Context) error {
 	}
 }
 
-// RegisterEventSource attaches an event source for sessionID. It is used by
+// pumpedEventLog couples an [eventLog] with the goroutine (the pump) that
+// feeds it from a registered [EventSource]. cancel stops the pump; the log
+// keeps buffering events for the session's lifetime so reconnecting clients
+// can replay.
+type pumpedEventLog struct {
+	log    *eventLog
+	cancel context.CancelFunc
+}
+
+// RegisterEventSource attaches an event source for sessionID and immediately
+// starts pumping its events into a per-session [eventLog]. It is used by
 // callers that own a runtime out-of-band (e.g. the TUI) so that HTTP clients
-// can subscribe to events via GET /api/sessions/:id/events.
+// can subscribe to events — with sequence numbers and replay — via
+// GET /api/sessions/:id/events.
+//
+// The pump runs for the session's lifetime (until DeleteSession or the source
+// returns), buffering events even when no client is connected, so a client
+// that connects or reconnects later can replay what it missed.
 func (sm *SessionManager) RegisterEventSource(sessionID string, src EventSource) {
-	sm.eventSources.Store(sessionID, src)
+	pumpCtx, cancel := context.WithCancel(context.Background())
+	log := newEventLog(defaultEventLogCapacity)
+	sm.eventLogs.Store(sessionID, &pumpedEventLog{log: log, cancel: cancel})
+
+	go func() {
+		defer log.close("session ended")
+		src(pumpCtx, log.append)
+	}()
 }
 
-// GetEventSource returns the registered event source for sessionID.
-func (sm *SessionManager) GetEventSource(sessionID string) (EventSource, bool) {
-	return sm.eventSources.Load(sessionID)
+// HasEventSource reports whether an event log is registered for sessionID.
+func (sm *SessionManager) HasEventSource(sessionID string) bool {
+	_, ok := sm.eventLogs.Load(sessionID)
+	return ok
 }
 
-// StreamEvents drives the EventSource registered for sessionID, sending each
-// event through send. It blocks until the source returns, the caller's ctx is
-// cancelled, or the session is detached via [SessionManager.DeleteSession].
-// Returns false when no source is registered.
-func (sm *SessionManager) StreamEvents(ctx context.Context, sessionID string, send func(any)) bool {
-	src, ok := sm.eventSources.Load(sessionID)
+// LastEventSeq returns the most recent event sequence number for sessionID,
+// so a snapshot can advertise the exact point from which a client should tail.
+// Returns 0 and false when no event log exists.
+func (sm *SessionManager) LastEventSeq(sessionID string) (uint64, bool) {
+	pe, ok := sm.eventLogs.Load(sessionID)
+	if !ok {
+		return 0, false
+	}
+	return pe.log.lastSeq(), true
+}
+
+// RegisterFollowUpInjector registers fn as the follow-up delivery path for an
+// attached sessionID. When set, [SessionManager.FollowUpSession] routes
+// messages through fn (which feeds them to the TUI App so a real turn starts)
+// instead of the runtime follow-up queue. Used by the --listen control plane.
+func (sm *SessionManager) RegisterFollowUpInjector(sessionID string, fn FollowUpInjector) {
+	sm.followUpInjectors.Store(sessionID, fn)
+}
+
+// StreamEvents replays and tails the events buffered for sessionID, calling
+// send for each one with its sequence number. When since is non-nil only
+// events newer than *since are replayed before tailing (see [eventLog.stream]
+// for the gap semantics). It blocks until ctx is cancelled, the session is
+// detached via [SessionManager.DeleteSession], or the source ends. Returns
+// false when no event log is registered.
+func (sm *SessionManager) StreamEvents(ctx context.Context, sessionID string, since *uint64, send func(seq uint64, event any)) bool {
+	pe, ok := sm.eventLogs.Load(sessionID)
 	if !ok {
 		return false
 	}
-
-	if rs, ok := sm.runtimeSessions.Load(sessionID); ok && rs.done != nil {
-		derived, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go func() {
-			select {
-			case <-rs.done:
-				cancel()
-			case <-derived.Done():
-			}
-		}()
-		ctx = derived
-	}
-
-	src(ctx, send)
+	pe.log.stream(ctx, since, send)
 	return true
 }
 
@@ -166,6 +216,36 @@ func (sm *SessionManager) GetSession(ctx context.Context, id string) (*session.S
 	return sess, nil
 }
 
+// WaitSessionAttached blocks until a runtime is attached for sessionID (i.e.
+// the session is ready to accept follow-ups and produce events), the timeout
+// elapses, or ctx is cancelled. It returns true once the session is attached.
+//
+// Unlike WaitReady, which fires as soon as *any* session is ready, this is
+// session-scoped: a client that launched a specific run can wait for exactly
+// that session instead of racing the server's startup.
+func (sm *SessionManager) WaitSessionAttached(ctx context.Context, sessionID string, timeout time.Duration) bool {
+	if _, ok := sm.runtimeSessions.Load(sessionID); ok {
+		return true
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_, ok := sm.runtimeSessions.Load(sessionID)
+			return ok
+		case <-ticker.C:
+			if _, ok := sm.runtimeSessions.Load(sessionID); ok {
+				return true
+			}
+		}
+	}
+}
+
 // GetSessionStatus returns a lightweight snapshot of the session's current
 // runtime state. Designed for late-joining SSE consumers that need to know
 // the session's state without waiting for the next event transition.
@@ -192,6 +272,55 @@ func (sm *SessionManager) GetSessionStatus(_ context.Context, id string) (*api.S
 		InputTokens:  sess.InputTokens,
 		OutputTokens: sess.OutputTokens,
 		NumMessages:  len(sess.GetAllMessages()),
+	}, nil
+}
+
+// GetSessionSnapshot returns the full, self-contained state of a session: its
+// stored fields plus, when an active runtime is attached, its live runtime
+// state (streaming, current agent) and the sequence number of the most recent
+// event on its /events stream. It is the resync primitive for the control
+// plane: a client reads the snapshot, then tails /events?since=<LastEventSeq>
+// to continue without a gap.
+func (sm *SessionManager) GetSessionSnapshot(ctx context.Context, id string) (*api.SessionSnapshotResponse, error) {
+	// Prefer the live in-memory session (it has the freshest messages and
+	// title) and fall back to the store when the session is not attached.
+	var sess *session.Session
+	streaming := false
+	agent := ""
+	if rs, ok := sm.runtimeSessions.Load(id); ok {
+		sess = rs.session
+		agent = rs.runtime.CurrentAgentName()
+		// Probe streaming state without interfering: TryLock succeeds only
+		// when no RunStream is in progress.
+		if rs.streaming.TryLock() {
+			rs.streaming.Unlock()
+		} else {
+			streaming = true
+		}
+	}
+	if sess == nil {
+		var err error
+		sess, err = sm.sessionStore.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	lastSeq, _ := sm.LastEventSeq(id)
+
+	return &api.SessionSnapshotResponse{
+		ID:            sess.ID,
+		Title:         sess.Title,
+		CreatedAt:     sess.CreatedAt,
+		WorkingDir:    sess.WorkingDir,
+		Messages:      sess.GetAllMessages(),
+		ToolsApproved: sess.ToolsApproved,
+		Permissions:   sess.Permissions,
+		InputTokens:   sess.InputTokens,
+		OutputTokens:  sess.OutputTokens,
+		Streaming:     streaming,
+		Agent:         agent,
+		LastEventSeq:  lastSeq,
 	}, nil
 }
 
@@ -294,7 +423,12 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 			}
 		}()
 	}
-	sm.eventSources.Delete(sess.ID)
+	if pe, ok := sm.eventLogs.Load(sess.ID); ok {
+		pe.cancel()
+		sm.eventLogs.Delete(sess.ID)
+	}
+	sm.followUpInjectors.Delete(sess.ID)
+	sm.followUpKeys.Delete(sess.ID)
 
 	return nil
 }
@@ -503,13 +637,49 @@ func (sm *SessionManager) SteerSession(_ context.Context, sessionID string, mess
 // running session. Each message is popped one at a time after the current
 // turn finishes, giving each follow-up a full undivided agent turn.
 //
-// If no stream is currently running (agent is idle), the messages are still
-// enqueued but will not be consumed until the next RunSession starts a new
-// stream. The returned boolean indicates whether a stream is active.
-func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) (streaming bool, err error) {
+// idempotencyKey, when non-empty, makes the call safe to retry: if a request
+// with the same key already landed for this session, this one is a no-op and
+// returns duplicate=true. The reservation is rolled back if delivery fails, so
+// a genuine failure stays retryable.
+//
+// When a follow-up injector is registered for the session (the --listen
+// control plane attaches one for the TUI App), messages are delivered through
+// it: the App submits them as normal user input, which starts a turn even when
+// the agent is idle and streams events to the TUI and every SSE subscriber.
+// The returned streaming flag is true in this case because a turn is (or is
+// about to be) running.
+//
+// Without an injector (headless server-owned sessions) the messages go to the
+// runtime follow-up queue. If no stream is currently running the messages are
+// still enqueued but are not consumed until the next RunSession starts a
+// stream; the returned boolean indicates whether a stream is active.
+func (sm *SessionManager) FollowUpSession(ctx context.Context, sessionID string, messages []api.Message, idempotencyKey string) (streaming, duplicate bool, err error) {
 	rt, exists := sm.runtimeSessions.Load(sessionID)
 	if !exists {
-		return false, ErrSessionNotRunning
+		return false, false, ErrSessionNotRunning
+	}
+
+	if idempotencyKey != "" {
+		cache, _ := sm.followUpKeys.LoadOrStore(sessionID, newIdempotencyCache(defaultIdempotencyCapacity))
+		if cache.reserve(idempotencyKey) {
+			return false, true, nil
+		}
+		// Roll the reservation back if we end up returning an error, so the
+		// caller can safely retry a failed request with the same key.
+		defer func() {
+			if err != nil {
+				cache.release(idempotencyKey)
+			}
+		}()
+	}
+
+	// Attached session: hand the follow-up to its owner (the TUI App) so a
+	// real turn starts and events reach all subscribers.
+	if inject, ok := sm.followUpInjectors.Load(sessionID); ok {
+		for _, msg := range messages {
+			inject(ctx, msg.Content)
+		}
+		return true, false, nil
 	}
 
 	for _, msg := range messages {
@@ -517,7 +687,7 @@ func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, m
 			Content:      msg.Content,
 			MultiContent: msg.MultiContent,
 		}); err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
 
@@ -528,7 +698,7 @@ func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, m
 		rt.streaming.Unlock()
 	}
 
-	return streaming, nil
+	return streaming, false, nil
 }
 
 // ResumeElicitation resumes an elicitation request.
@@ -1086,7 +1256,12 @@ func (sm *SessionManager) BatchDeleteSessions(ctx context.Context, sessionIDs []
 				sessionRuntime.cancel()
 				sm.runtimeSessions.Delete(sessionID)
 			}
-			sm.eventSources.Delete(sessionID)
+			if pe, ok := sm.eventLogs.Load(sessionID); ok {
+				pe.cancel()
+				sm.eventLogs.Delete(sessionID)
+			}
+			sm.followUpInjectors.Delete(sessionID)
+			sm.followUpKeys.Delete(sessionID)
 		}
 	}
 

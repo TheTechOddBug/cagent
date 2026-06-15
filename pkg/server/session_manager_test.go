@@ -70,12 +70,14 @@ func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntim
 	require.NoError(t, store.AddSession(ctx, sess))
 
 	sm := &SessionManager{
-		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
-		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
-		sessionStore:    store,
-		Sources:         config.Sources{},
-		runConfig:       &config.RuntimeConfig{},
-		sessionReady:    make(chan struct{}),
+		runtimeSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions:   concurrent.NewMap[string, *activeRuntimes](),
+		followUpInjectors: concurrent.NewMap[string, FollowUpInjector](),
+		followUpKeys:      concurrent.NewMap[string, *idempotencyCache](),
+		sessionStore:      store,
+		Sources:           config.Sources{},
+		runConfig:         &config.RuntimeConfig{},
+		sessionReady:      make(chan struct{}),
 	}
 
 	// Pre-register a runtime for this session so RunSession skips agent loading.
@@ -217,6 +219,7 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
 		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
+		followUpKeys:    concurrent.NewMap[string, *idempotencyCache](),
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
@@ -254,4 +257,111 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 	// Both sessions should have streamed (1 each).
 	assert.Equal(t, int32(1), fake1.maxConcurrent.Load())
 	assert.Equal(t, int32(1), fake2.maxConcurrent.Load())
+}
+
+// recordingFollowUpRuntime records calls to FollowUp so tests can assert
+// whether the runtime follow-up queue was used.
+type recordingFollowUpRuntime struct {
+	fakeRuntime
+
+	mu        sync.Mutex
+	followUps []string
+}
+
+func (r *recordingFollowUpRuntime) FollowUp(msg runtime.QueuedMessage) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.followUps = append(r.followUps, msg.Content)
+	return nil
+}
+
+func (r *recordingFollowUpRuntime) followUpContents() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.followUps...)
+}
+
+// TestFollowUpSession_RoutesToInjectorWhenRegistered verifies that an
+// attached session's follow-up is delivered through the registered injector
+// (which starts a real turn in the TUI App) rather than the runtime
+// follow-up queue, which an idle session never drains.
+func TestFollowUpSession_RoutesToInjectorWhenRegistered(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	sess := session.New()
+	fake := &recordingFollowUpRuntime{}
+	sm := newTestSessionManager(t, sess, &fake.fakeRuntime)
+	// Replace the pre-registered runtime with our recording one.
+	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{runtime: fake, session: sess})
+
+	var injected []string
+	sm.RegisterFollowUpInjector(sess.ID, func(_ context.Context, content string) {
+		injected = append(injected, content)
+	})
+
+	streaming, duplicate, err := sm.FollowUpSession(ctx, sess.ID, []api.Message{{Content: "do this"}, {Content: "then that"}}, "")
+	require.NoError(t, err)
+
+	assert.True(t, streaming, "an injected follow-up always starts/continues a turn")
+	assert.False(t, duplicate)
+	assert.Equal(t, []string{"do this", "then that"}, injected)
+	assert.Empty(t, fake.followUpContents(), "the runtime queue must be bypassed when an injector is registered")
+}
+
+// TestFollowUpSession_UsesRuntimeQueueWithoutInjector verifies the headless
+// path (no injector): messages go to the runtime follow-up queue.
+func TestFollowUpSession_UsesRuntimeQueueWithoutInjector(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	sess := session.New()
+	fake := &recordingFollowUpRuntime{}
+	sm := newTestSessionManager(t, sess, &fake.fakeRuntime)
+	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{runtime: fake, session: sess})
+
+	_, _, err := sm.FollowUpSession(ctx, sess.ID, []api.Message{{Content: "queued"}}, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"queued"}, fake.followUpContents())
+}
+
+// TestFollowUpSession_UnknownSession returns ErrSessionNotRunning.
+func TestFollowUpSession_UnknownSession(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	sm := newTestSessionManager(t, sess, &fakeRuntime{})
+
+	_, _, err := sm.FollowUpSession(t.Context(), "does-not-exist", []api.Message{{Content: "x"}}, "")
+	assert.ErrorIs(t, err, ErrSessionNotRunning)
+}
+
+// TestFollowUpSession_IdempotencyKeyDedupes verifies that two follow-ups with
+// the same Idempotency-Key are delivered only once; the second is reported as
+// a duplicate.
+func TestFollowUpSession_IdempotencyKeyDedupes(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	sess := session.New()
+	fake := &recordingFollowUpRuntime{}
+	sm := newTestSessionManager(t, sess, &fake.fakeRuntime)
+	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{runtime: fake, session: sess})
+
+	_, dup1, err := sm.FollowUpSession(ctx, sess.ID, []api.Message{{Content: "once"}}, "key-1")
+	require.NoError(t, err)
+	assert.False(t, dup1)
+
+	_, dup2, err := sm.FollowUpSession(ctx, sess.ID, []api.Message{{Content: "once"}}, "key-1")
+	require.NoError(t, err)
+	assert.True(t, dup2, "a repeat with the same key must be a duplicate")
+
+	// A different key is delivered normally.
+	_, dup3, err := sm.FollowUpSession(ctx, sess.ID, []api.Message{{Content: "again"}}, "key-2")
+	require.NoError(t, err)
+	assert.False(t, dup3)
+
+	assert.Equal(t, []string{"once", "again"}, fake.followUpContents(),
+		"the deduplicated follow-up must be delivered exactly once")
 }

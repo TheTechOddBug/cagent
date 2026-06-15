@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
+	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 // mockRuntime is a minimal mock for testing App without a real runtime.
@@ -425,4 +426,30 @@ func TestApp_RegenerateSessionTitle(t *testing.T) {
 		err := app.RegenerateSessionTitle(ctx)
 		require.ErrorIs(t, err, ErrTitleGenerating)
 	})
+}
+
+// TestApp_InjectUserMessage verifies a follow-up injected by an external
+// driver is published on the event bus as a SendMsg — the same message the
+// TUI produces when the user submits input — so it flows through the normal
+// run path (queueing, title generation, event streaming).
+func TestApp_InjectUserMessage(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan tea.Msg, 4)
+	app := &App{
+		runtime: &mockRuntime{},
+		session: session.New(),
+		events:  events,
+	}
+
+	app.InjectUserMessage(t.Context(), "do the thing")
+
+	select {
+	case msg := <-events:
+		sendMsg, ok := msg.(messages.SendMsg)
+		require.True(t, ok, "should emit a SendMsg, got %T", msg)
+		assert.Equal(t, "do the thing", sendMsg.Content)
+	default:
+		t.Fatal("expected a SendMsg to be emitted")
+	}
 }

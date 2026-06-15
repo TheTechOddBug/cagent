@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func (s *Server) registerRoutes() {
 	group.GET("/sessions", s.getSessions)
 	group.GET("/sessions/:id", s.getSession)
 	group.GET("/sessions/:id/status", s.getSessionStatus)
+	group.GET("/sessions/:id/snapshot", s.getSessionSnapshot)
 	group.POST("/sessions/:id/resume", s.resumeSession)
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
@@ -250,12 +252,38 @@ func (s *Server) getSession(c echo.Context) error {
 	})
 }
 
+// getSessionStatus returns the session's current runtime state. With
+// ?wait=<duration> it blocks until the session's runtime is attached (ready
+// to accept follow-ups and produce events) before responding, so a client
+// that just launched a run can wait for that exact session instead of polling.
 func (s *Server) getSessionStatus(c echo.Context) error {
+	if v := c.QueryParam("wait"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid wait: %v", err))
+		}
+		if !s.sm.WaitSessionAttached(c.Request().Context(), c.Param("id"), min(d, maxAPITimeout)) {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "session not ready within timeout")
+		}
+	}
+
 	status, err := s.sm.GetSessionStatus(c.Request().Context(), c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("session not found: %v", err))
 	}
 	return c.JSON(http.StatusOK, status)
+}
+
+// getSessionSnapshot returns the full state of a session in one response
+// (stored fields + live runtime state + last event sequence number) so a
+// client can rebuild its view and then tail /events?since=<last_event_seq>
+// without missing any transition.
+func (s *Server) getSessionSnapshot(c echo.Context) error {
+	snapshot, err := s.sm.GetSessionSnapshot(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("session not found: %v", err))
+	}
+	return c.JSON(http.StatusOK, snapshot)
 }
 
 func (s *Server) resumeSession(c echo.Context) error {
@@ -499,10 +527,27 @@ func (s *Server) steerSession(c echo.Context) error {
 
 // sessionEvents streams events for a session as Server-Sent Events. The
 // stream lasts until the client disconnects or the session ends.
+//
+// Each delivered event carries its monotonic sequence number in the SSE
+// "id:" field. A client that reconnects may resume from where it left off by
+// supplying the last sequence number it saw, either as the standard
+// Last-Event-ID request header (sent automatically by EventSource clients) or
+// as a ?since=<seq> query parameter. Buffered events newer than that point are
+// replayed before live tailing resumes. If the resume point has already been
+// evicted from the buffer, a {"type":"gap"} event is sent first so the client
+// knows to re-snapshot (GET /api/sessions/:id/snapshot) before continuing.
+//
+// End-of-session contract: when the session ends (the agent process exits or
+// the session is deleted) a terminal {"type":"session_exited"} event is sent
+// and the stream closes. A client that receives session_exited should stop. A
+// stream that closes WITHOUT a session_exited event indicates a transport
+// drop; the client should reconnect with its last id to replay and continue.
 func (s *Server) sessionEvents(c echo.Context) error {
-	if _, ok := s.sm.GetEventSource(c.Param("id")); !ok {
+	if !s.sm.HasEventSource(c.Param("id")) {
 		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
 	}
+
+	since := parseSinceParam(c)
 
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
@@ -510,15 +555,39 @@ func (s *Server) sessionEvents(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
-	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), func(event any) {
+	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), since, func(seq uint64, event any) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return
+		}
+		// seq 0 marks a per-connection control event (e.g. gap) that is not
+		// part of the sequenced stream, so it carries no id.
+		if seq > 0 {
+			fmt.Fprintf(c.Response(), "id: %d\n", seq)
 		}
 		fmt.Fprintf(c.Response(), "data: %s\n\n", data)
 		c.Response().Flush()
 	})
 	return nil
+}
+
+// parseSinceParam resolves the resume point for an /events stream from the
+// ?since=<seq> query parameter, falling back to the Last-Event-ID header that
+// SSE clients replay automatically on reconnect. Returns nil when neither is
+// present or parseable, meaning "replay the current buffer, then tail".
+func parseSinceParam(c echo.Context) *uint64 {
+	raw := c.QueryParam("since")
+	if raw == "" {
+		raw = c.Request().Header.Get("Last-Event-ID")
+	}
+	if raw == "" {
+		return nil
+	}
+	seq, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &seq
 }
 
 func (s *Server) followUpSession(c echo.Context) error {
@@ -532,7 +601,12 @@ func (s *Server) followUpSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one message is required")
 	}
 
-	streaming, err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages)
+	// An optional Idempotency-Key makes the request safe to retry: a repeat
+	// with the same key for this session is acknowledged without delivering
+	// the follow-up twice.
+	idempotencyKey := c.Request().Header.Get("Idempotency-Key")
+
+	streaming, duplicate, err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages, idempotencyKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "queue full") {
 			c.Response().Header().Set("Retry-After", "1")
@@ -542,10 +616,13 @@ func (s *Server) followUpSession(c echo.Context) error {
 	}
 
 	status := "queued_streaming"
-	if !streaming {
+	switch {
+	case duplicate:
+		status = "duplicate"
+	case !streaming:
 		status = "queued_idle"
 	}
-	return c.JSON(http.StatusAccepted, map[string]string{"status": status})
+	return c.JSON(http.StatusAccepted, api.FollowUpResponse{Status: status, Duplicate: duplicate})
 }
 
 func (s *Server) addMessage(c echo.Context) error {
