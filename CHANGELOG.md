@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.81.2] - 2026-06-16
+
+This release adds Grafana Cloud to the MCP server catalog.
+
+## What's New
+- Adds Grafana Cloud as a remote MCP server to the catalog, accessible via `https://mcp.grafana.com/mcp` using streamable-http transport and browser-based OAuth 2.1 authentication
+### Pull Requests
+
+- [#3139](https://github.com/docker/docker-agent/pull/3139) - feat(mcpcatalog): add Grafana Cloud remote MCP server
+
+
 ## [v1.79.0] - 2026-06-12
 
 This release adds TUI embedding capabilities, gateway model discovery, and HTTP transport middleware support, along with various fixes and improvements.
@@ -3532,3 +3543,5 @@ This release improves the terminal user interface with better error handling and
 [v1.78.0]: https://github.com/docker/docker-agent/releases/tag/v1.78.0
 
 [v1.79.0]: https://github.com/docker/docker-agent/releases/tag/v1.79.0
+
+[v1.81.2]: https://github.com/docker/docker-agent/releases/tag/v1.81.2
