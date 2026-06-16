@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
+	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
@@ -3454,4 +3455,46 @@ func TestElicitationHandler_Interactive_NoChannel(t *testing.T) {
 
 	require.Error(t, err, "interactive runtime with no events channel should error")
 	assert.ErrorIs(t, err, errNoElicitationChannel)
+}
+
+// TestRunAgentPersistsSubSessionOnError covers the background-agent path
+// (runCollecting) when the sub-agent's model stream fails. Before the fix,
+// runCollecting returned early on ErrorEvent without calling
+// parent.AddSubSession, so the sub-session was silently dropped from the
+// parent's in-memory record — invisible to any code that walks session.Messages.
+func TestRunAgentPersistsSubSessionOnError(t *testing.T) {
+	t.Parallel()
+
+	parentProv := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
+	failingProv := &mockProviderWithError{id: "test/mock-model"}
+
+	worker := agent.New("worker", "Worker agent", agent.WithModel(failingProv))
+	root := agent.New("root", "Root agent", agent.WithModel(parentProv))
+	agent.WithSubAgents(worker)(root)
+
+	tm := team.New(team.WithAgents(root, worker))
+	rt, err := NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
+
+	result := rt.RunAgent(t.Context(), agenttool.RunParams{
+		AgentName:     "worker",
+		Task:          "do something",
+		ParentSession: sess,
+	})
+
+	require.NotEmpty(t, result.ErrMsg, "RunAgent should surface the sub-session error")
+
+	// The parent session must hold a sub-session record even though the
+	// sub-agent errored — without the fix AddSubSession was skipped and
+	// the entire partial transcript was lost.
+	var subSessionItems int
+	for _, item := range sess.Messages {
+		if item.SubSession != nil {
+			subSessionItems++
+		}
+	}
+	assert.Equal(t, 1, subSessionItems,
+		"parent session must record the sub-session even when the background agent errored")
 }

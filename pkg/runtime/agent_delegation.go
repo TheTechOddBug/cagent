@@ -347,14 +347,22 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	for range events {
 	}
 
+	// Persist the sub-session unconditionally — the partial transcript is
+	// the most valuable artifact for debugging a failed background agent.
+	// AddSubSession records it in-memory on both the success and error paths.
+	//
+	// Note: SubSessionCompletedEvent cannot be emitted here because
+	// runCollecting has no EventSink — the persistence observer pipeline
+	// (PersistenceObserver.OnEvent) is not triggered and the sub-session is
+	// not written to the store. Fixing that requires threading EventSink
+	// through RunParams / the Runner interface.
+	parent.AddSubSession(s)
+
 	if errMsg != "" {
 		return &agenttool.RunResult{ErrMsg: errMsg}
 	}
 
-	result := s.GetLastAssistantMessageContent()
-	parent.AddSubSession(s)
-
-	return &agenttool.RunResult{Result: result}
+	return &agenttool.RunResult{Result: s.GetLastAssistantMessageContent()}
 }
 
 // CurrentAgentSubAgentNames implements agenttool.Runner.
