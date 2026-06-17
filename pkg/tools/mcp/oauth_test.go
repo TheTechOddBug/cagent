@@ -1243,6 +1243,7 @@ type unmanagedOAuthTestServer struct {
 
 	tokenCalls atomic.Int32
 	lastForm   url.Values
+	prmHeaders http.Header
 }
 
 func newUnmanagedOAuthTestServer(t *testing.T) *unmanagedOAuthTestServer {
@@ -1251,6 +1252,7 @@ func newUnmanagedOAuthTestServer(t *testing.T) *unmanagedOAuthTestServer {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		srv.prmHeaders = r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(protectedResourceMetadata{
 			Resource:             srv.URL,
@@ -1398,6 +1400,37 @@ func TestUnmanagedOAuthFlow_DriveFlow_ExchangesCodeForToken(t *testing.T) {
 	assert.Equal(t, "registered-client-id", tok.ClientID)
 	assert.Equal(t, "registered-secret", tok.ClientSecret)
 	assert.Equal(t, srv.URL, tok.AuthServer)
+}
+
+// TestInitialize_CustomHeadersReachOAuthDiscovery drives the real
+// Initialize -> createHTTPClient path (not a hand-built transport) to prove
+// the production wiring forwards configured custom headers to the OAuth
+// protected-resource-metadata discovery request. Grafana Cloud relies on the
+// X-Grafana-URL header on that request to scope the OAuth flow to the right
+// instance; without it the auth screen prompts for the instance. Regression
+// test for issue #3148.
+func TestInitialize_CustomHeadersReachOAuthDiscovery(t *testing.T) {
+	srv := newUnmanagedOAuthTestServer(t)
+	defer srv.Close()
+
+	headers := map[string]string{"X-Grafana-URL": "https://instance.grafana.net/"}
+	client := newRemoteClient(srv.URL, "streamable", headers, NewInMemoryTokenStore(), nil, true)
+
+	// Decline the OAuth elicitation: the unmanaged flow reaches the
+	// protected-resource-metadata discovery request (which carries the
+	// header) before the elicitation, so declining lets Initialize return
+	// promptly while still exercising the discovery request through the real
+	// createHTTPClient wiring.
+	client.SetElicitationHandler(func(context.Context, *gomcp.ElicitParams) (tools.ElicitationResult, error) {
+		return tools.ElicitationResult{Action: tools.ElicitationActionDecline}, nil
+	})
+
+	_, err := client.Initialize(t.Context(), nil)
+	require.Error(t, err, "Initialize should fail after the OAuth elicitation is declined")
+
+	require.NotNil(t, srv.prmHeaders, "protected-resource-metadata endpoint was never hit during the OAuth flow")
+	assert.Equal(t, "https://instance.grafana.net/", srv.prmHeaders.Get("X-Grafana-URL"),
+		"the configured header must reach the protected-resource-metadata discovery request (issue #3148)")
 }
 
 // TestUnmanagedOAuthFlow_ElicitationDeclineReturnsSentinel verifies that

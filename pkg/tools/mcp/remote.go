@@ -178,7 +178,7 @@ func (c *remoteMCPClient) createHTTPClient() (*http.Client, *oauthTransport, err
 		managed:                   c.managed,
 		unmanagedOAuthRedirectURI: c.unmanagedOAuthRedirectURI,
 		oauthConfig:               c.oauthConfig,
-		oauthHTTPClient:           oauthHTTPClientForAllowPrivateIPs(c.allowPrivateIPs),
+		oauthHTTPClient:           oauthHTTPClientWithHeaders(c.url, c.headers, c.allowPrivateIPs),
 	}
 
 	// Persist cookies across requests
