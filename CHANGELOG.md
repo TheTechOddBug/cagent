@@ -3,6 +3,56 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.83.0] - 2026-06-19
+
+This release adds an opt-in sudo askpass flow for shell commands, a headless embedded chat session API, and several bug fixes for cost accounting, session handling, and custom provider model resolution.
+
+## What's New
+
+- Adds opt-in `sudo_askpass: true` flag to the `shell` toolset, bridging `sudo` password prompts to the agent's elicitation flow instead of hanging until timeout
+- Adds `pkg/embeddedchat`, a headless chat session API for embedding docker-agent runtime conversations in non-docker-agent UIs, with support for streaming events, tool call confirmation, conversation restart, and cancellation
+- Makes OpenAI, Anthropic, Google, and Amazon Bedrock providers optional via build tags, allowing embedders to drop unneeded providers and reduce binary size
+
+## Improvements
+
+- Replaces the bleve full-text search library with a lightweight pure-Go BM25 matcher for model routing, removing a large transitive dependency tree and enabling WebAssembly cross-compilation
+
+## Bug Fixes
+
+- Fixes duplicate `tool_result` blocks for the same `tool_call_id` being passed to strict providers such as AWS Bedrock
+- Fixes custom providers (defined with `base_url` + `token_key`) triggering a blocking fetch of the full models.dev catalog (~3.4 MB) on every turn in internet-restricted environments
+- Fixes reasoning tokens from streaming usage not being recorded for Anthropic extended-thinking models
+- Fixes `run_background_agent` sub-sessions not being persisted to the store
+- Adds a warning when an uncatalogued model bills $0 with token usage
+- Fixes the Shift+Tab thinking-level cycle in the TUI not offering the `max` effort tier on Claude models that support it (Opus 4.7/4.8, Sonnet 4.6, Fable 5)
+
+## Technical Changes
+
+- Replaces external `go-memoize` and `go-cache` libraries with a new internal `pkg/memoize` package built on `golang.org/x/sync/singleflight`
+- Makes the RAG toolset opt-in to remove the cgo dependency on go-tree-sitter from the default build
+- Documents YAML anchors, aliases, and merge keys support in the configuration overview
+- Documents the 10-second per-toolset tool-listing timeout for wedged MCP servers in the troubleshooting guide
+### Pull Requests
+
+- [#1551](https://github.com/docker/docker-agent/pull/1551) - feat(shell): add opt-in sudo askpass flow (#1551)
+- [#3154](https://github.com/docker/docker-agent/pull/3154) - fix(runtime): bound per-toolset tool listing during startup (#3137)
+- [#3161](https://github.com/docker/docker-agent/pull/3161) - docs: update CHANGELOG.md for v1.82.0
+- [#3162](https://github.com/docker/docker-agent/pull/3162) - fix(session): drop duplicate tool results in sanitizeToolCalls
+- [#3163](https://github.com/docker/docker-agent/pull/3163) - feat(shell): opt-in sudo askpass flow (#1551)
+- [#3165](https://github.com/docker/docker-agent/pull/3165) - fix(modelsdev): skip models.dev fetch for custom providers (#3165)
+- [#3166](https://github.com/docker/docker-agent/pull/3166) - docs: document startup tool-listing timeout for wedged MCP servers
+- [#3169](https://github.com/docker/docker-agent/pull/3169) - fix(modelsdev): skip models.dev fetch for custom providers (#3165)
+- [#3170](https://github.com/docker/docker-agent/pull/3170) - chore: bump direct Go dependencies
+- [#3171](https://github.com/docker/docker-agent/pull/3171) - feat(embeddedchat): add headless chat session API
+- [#3172](https://github.com/docker/docker-agent/pull/3172) - refactor: replace go-memoize and go-cache with internal memoize package
+- [#3173](https://github.com/docker/docker-agent/pull/3173) - fix(runtime): close cost-accounting blind spots (reasoning tokens, $0 spend leaks)
+- [#3174](https://github.com/docker/docker-agent/pull/3174) - refactor(rag): make the rag toolset opt-in to drop cgo from embedders
+- [#3175](https://github.com/docker/docker-agent/pull/3175) - docs: document YAML anchors, aliases and merge keys
+- [#3176](https://github.com/docker/docker-agent/pull/3176) - feat(provider): make openai, anthropic, google, and amazon-bedrock optional
+- [#3177](https://github.com/docker/docker-agent/pull/3177) - refactor: replace bleve with lightweight BM25 matcher for model routing
+- [#3178](https://github.com/docker/docker-agent/pull/3178) - fix(modelinfo): offer the max effort tier in the Shift+Tab thinking cycle
+
+
 ## [v1.82.0] - 2026-06-18
 
 This release adds visual pause state indicators to the TUI, expands MCP catalog and OAuth support, and fixes several runtime, provider, and memory issues.
@@ -3587,3 +3637,5 @@ This release improves the terminal user interface with better error handling and
 [v1.81.2]: https://github.com/docker/docker-agent/releases/tag/v1.81.2
 
 [v1.82.0]: https://github.com/docker/docker-agent/releases/tag/v1.82.0
+
+[v1.83.0]: https://github.com/docker/docker-agent/releases/tag/v1.83.0
