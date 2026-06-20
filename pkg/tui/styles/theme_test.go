@@ -1,15 +1,184 @@
 package styles
 
 import (
+	"embed"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"testing/fstest"
 
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// embedderThemes mirrors how a downstream embedder ships themes: a //go:embed
+// of a themes/ directory handed to RegisterBuiltinThemes. Here the files live
+// under testdata/, so the test re-roots the FS with fs.Sub; an embedder that
+// embeds at themes/*.yaml would pass its embed.FS directly.
+//
+//go:embed testdata/themes/*.yaml
+var embedderThemes embed.FS
+
+// resetThemes clears embedder-registered theme sources and the theme caches
+// before and after a test, so tests that register themes stay isolated.
+func resetThemes(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		extraThemeFSesMu.Lock()
+		extraThemeFSes = nil
+		extraThemeFSesMu.Unlock()
+
+		builtinRefsCacheMu.Lock()
+		builtinRefsCacheOK = false
+		builtinRefsCache = nil
+		builtinRefsCacheMu.Unlock()
+
+		InvalidateThemeCache("")
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+// TestRegisterBuiltinThemes_EmbedderFlow exercises the full embedder loop:
+// register a theme from a real embed.FS, then discover, load, and apply it the
+// way a downstream CLI/TUI would.
+func TestRegisterBuiltinThemes_EmbedderFlow(t *testing.T) {
+	resetThemes(t)
+	original := CurrentTheme()
+	t.Cleanup(func() { ApplyTheme(original) })
+
+	themesFS, err := fs.Sub(embedderThemes, "testdata")
+	require.NoError(t, err)
+	require.NoError(t, RegisterBuiltinThemes(themesFS))
+
+	// The registered theme is discoverable and classified like a built-in.
+	refs, err := ListThemeRefs()
+	require.NoError(t, err)
+	assert.Contains(t, refs, "embedder")
+	assert.True(t, IsBuiltinTheme("embedder"))
+
+	// It applies via the embedder entry point, merged onto the default theme so
+	// unspecified fields are inherited.
+	applied := ApplyThemeRef("embedder")
+	require.NotNil(t, applied)
+	assert.Equal(t, "embedder", applied.Ref)
+	assert.Equal(t, "Embedder", applied.Name)
+	assert.Equal(t, "#FF00AA", applied.Colors.Accent)
+	assert.Equal(t, DefaultTheme().Colors.Background, applied.Colors.Background)
+	assert.Equal(t, "embedder", CurrentTheme().Ref)
+}
+
+// TestRegisterBuiltinThemes covers core registration: a registered theme is
+// listed, classified as built-in, and loads merged onto the default theme.
+func TestRegisterBuiltinThemes(t *testing.T) {
+	resetThemes(t)
+
+	def := DefaultTheme()
+
+	src := fstest.MapFS{
+		"themes/branded.yaml": &fstest.MapFile{
+			Data: []byte("name: Branded\ncolors:\n  accent: \"#FF0000\"\n"),
+		},
+	}
+	require.NoError(t, RegisterBuiltinThemes(src))
+
+	refs, err := ListThemeRefs()
+	require.NoError(t, err)
+	assert.Contains(t, refs, "branded")
+	assert.True(t, IsBuiltinTheme("branded"))
+
+	theme, err := LoadTheme("branded")
+	require.NoError(t, err)
+	assert.Equal(t, "Branded", theme.Name)
+	assert.Equal(t, "branded", theme.Ref)
+	assert.Equal(t, "#FF0000", theme.Colors.Accent)
+	assert.Equal(t, def.Colors.Background, theme.Colors.Background)
+	assert.Equal(t, def.Markdown.Heading, theme.Markdown.Heading)
+}
+
+// TestRegisterBuiltinThemes_MultipleSources verifies the built-in set aggregates
+// across more than one registered source, and that the first-registered source
+// wins a name collision between two registered sources.
+func TestRegisterBuiltinThemes_MultipleSources(t *testing.T) {
+	resetThemes(t)
+
+	first := fstest.MapFS{
+		"themes/alpha.yaml":  &fstest.MapFile{Data: []byte("name: Alpha\n")},
+		"themes/shared.yaml": &fstest.MapFile{Data: []byte("name: First\n")},
+	}
+	second := fstest.MapFS{
+		"themes/beta.yaml":   &fstest.MapFile{Data: []byte("name: Beta\n")},
+		"themes/shared.yaml": &fstest.MapFile{Data: []byte("name: Second\n")},
+	}
+	require.NoError(t, RegisterBuiltinThemes(first))
+	require.NoError(t, RegisterBuiltinThemes(second))
+
+	refs, err := ListThemeRefs()
+	require.NoError(t, err)
+	assert.Contains(t, refs, "alpha")
+	assert.Contains(t, refs, "beta")
+
+	// Earlier registration wins a collision between two registered sources.
+	shared, err := LoadTheme("shared")
+	require.NoError(t, err)
+	assert.Equal(t, "First", shared.Name)
+}
+
+// TestRegisterBuiltinThemes_OverridesBuiltin verifies a registered source takes
+// precedence over a bundled theme of the same name.
+func TestRegisterBuiltinThemes_OverridesBuiltin(t *testing.T) {
+	resetThemes(t)
+
+	src := fstest.MapFS{
+		"themes/nord.yaml": &fstest.MapFile{
+			Data: []byte("name: NotNord\ncolors:\n  accent: \"#123456\"\n"),
+		},
+	}
+	require.NoError(t, RegisterBuiltinThemes(src))
+
+	got, err := LoadTheme("nord")
+	require.NoError(t, err)
+	assert.Equal(t, "#123456", got.Colors.Accent)
+	assert.Equal(t, "NotNord", got.Name)
+}
+
+// TestRegisterBuiltinThemes_MasksDefault verifies an embedder can replace the
+// "default" theme; the override merges onto cagent's pristine default base.
+func TestRegisterBuiltinThemes_MasksDefault(t *testing.T) {
+	resetThemes(t)
+
+	cagentDefault := DefaultTheme()
+
+	src := fstest.MapFS{
+		"themes/default.yaml": &fstest.MapFile{
+			Data: []byte("name: Branded Default\ncolors:\n  accent: \"#ABCDEF\"\n"),
+		},
+	}
+	require.NoError(t, RegisterBuiltinThemes(src))
+
+	got, err := LoadTheme(DefaultThemeRef)
+	require.NoError(t, err)
+	assert.Equal(t, "#ABCDEF", got.Colors.Accent)
+	assert.Equal(t, "Branded Default", got.Name)
+	assert.Equal(t, cagentDefault.Colors.Background, got.Colors.Background)
+
+	// DefaultTheme() itself remains the pristine merge base.
+	assert.Equal(t, "Default", DefaultTheme().Name)
+}
+
+// TestRegisterBuiltinThemes_Errors covers eager validation of the source.
+func TestRegisterBuiltinThemes_Errors(t *testing.T) {
+	resetThemes(t)
+
+	assert.Error(t, RegisterBuiltinThemes(nil))
+	// A source without a "themes" directory is rejected eagerly.
+	assert.Error(t, RegisterBuiltinThemes(fstest.MapFS{
+		"other/x.yaml": &fstest.MapFile{Data: []byte("{}")},
+	}))
+}
 
 func TestDefaultThemeRef(t *testing.T) {
 	t.Parallel()
