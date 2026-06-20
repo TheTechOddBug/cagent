@@ -1,6 +1,6 @@
 //go:build unix
 
-package mcp
+package keyringstore
 
 import (
 	"os"
