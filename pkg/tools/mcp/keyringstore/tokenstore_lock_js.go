@@ -1,6 +1,6 @@
 //go:build js && wasm
 
-package mcp
+package keyringstore
 
 import "os"
 
