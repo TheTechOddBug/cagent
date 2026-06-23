@@ -574,25 +574,34 @@ func drainSamplingStreamWithTools(stream chat.MessageStream) (string, []tools.To
 			text.WriteString(choice.Delta.Content)
 		}
 
-		for _, delta := range choice.Delta.ToolCalls {
-			idx, ok := toolIndex[delta.ID]
-			if !ok {
-				idx = len(toolCalls)
-				toolIndex[delta.ID] = idx
-				toolCalls = append(toolCalls, tools.ToolCall{
-					ID:   delta.ID,
-					Type: delta.Type,
-				})
+		if len(choice.Delta.ToolCalls) > 0 {
+			for _, delta := range choice.Delta.ToolCalls {
+				idx, ok := toolIndex[delta.ID]
+				if !ok {
+					idx = len(toolCalls)
+					toolIndex[delta.ID] = idx
+					toolCalls = append(toolCalls, tools.ToolCall{
+						ID:   delta.ID,
+						Type: delta.Type,
+					})
+				}
+				tc := &toolCalls[idx]
+				if delta.Type != "" {
+					tc.Type = delta.Type
+				}
+				if delta.Function.Name != "" {
+					tc.Function.Name = delta.Function.Name
+				}
+				if delta.Function.Arguments != "" {
+					tc.Function.Arguments += delta.Function.Arguments
+				}
 			}
-			tc := &toolCalls[idx]
-			if delta.Type != "" {
-				tc.Type = delta.Type
-			}
-			if delta.Function.Name != "" {
-				tc.Function.Name = delta.Function.Name
-			}
-			if delta.Function.Arguments != "" {
-				tc.Function.Arguments += delta.Function.Arguments
+			// Short-circuit only when the chunk carried nothing but tool-call
+			// deltas. If it also carries a terminal finish reason, fall through
+			// so the break below sees the freshly accumulated call. Mirrors
+			// the equivalent guard in handleStream (streaming.go).
+			if choice.FinishReason == "" {
+				continue
 			}
 		}
 

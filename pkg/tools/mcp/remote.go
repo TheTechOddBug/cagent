@@ -113,22 +113,15 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeReq
 
 	toolChanged, promptChanged := c.notificationHandlers()
 
-	// Sampling: prefer the with-tools handler when registered. The SDK's two
-	// CreateMessage* handlers are mutually exclusive, so populate exactly one.
-	// The handler fields are read here at Initialize time; callers must invoke
-	// SetSamplingHandler / SetSamplingWithToolsHandler before Initialize (and
-	// before any reconnect) or the chosen branch falls back to no handler.
+	// Sampling registration is delegated to applySamplingHandlerOpts so the
+	// with-tools callback is wired eagerly even when handler fields are still
+	// nil at Initialize time — see that method for the ordering rationale.
 	opts := &gomcp.ClientOptions{
 		ElicitationHandler:       c.handleElicitationRequest,
 		ToolListChangedHandler:   toolChanged,
 		PromptListChangedHandler: promptChanged,
 	}
-	switch {
-	case c.samplingWithToolsHandler != nil:
-		opts.CreateMessageWithToolsHandler = c.handleSamplingWithToolsRequest
-	case c.samplingHandler != nil:
-		opts.CreateMessageHandler = c.handleSamplingRequest
-	}
+	c.applySamplingHandlerOpts(opts)
 
 	client := gomcp.NewClient(impl, opts)
 

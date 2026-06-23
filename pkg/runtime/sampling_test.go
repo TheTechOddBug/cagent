@@ -648,4 +648,32 @@ func TestDrainSamplingStreamWithTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, chat.FinishReasonToolCalls, fr)
 	})
+
+	t.Run("tool-call-only chunks continue without falling into finish logic", func(t *testing.T) {
+		t.Parallel()
+		// Reproduces the streaming.go-style short-circuit: any chunk that
+		// carries only tool-call deltas (no finish reason, no content) must
+		// continue to the next chunk rather than fall through downstream
+		// finish-reason processing. The argument fragments arrive across
+		// three intermediate chunks before the terminal one.
+		s := &fakeStream{responses: []chat.MessageStreamResponse{
+			{Choices: []chat.MessageStreamChoice{{Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{
+				{ID: "c1", Type: "function", Function: tools.FunctionCall{Name: "fn"}},
+			}}}}},
+			{Choices: []chat.MessageStreamChoice{{Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{
+				{ID: "c1", Function: tools.FunctionCall{Arguments: `{"a":`}},
+			}}}}},
+			{Choices: []chat.MessageStreamChoice{{Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{
+				{ID: "c1", Function: tools.FunctionCall{Arguments: `1,"b":`}},
+			}}}}},
+			{Choices: []chat.MessageStreamChoice{{Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{
+				{ID: "c1", Function: tools.FunctionCall{Arguments: `2}`}},
+			}}, FinishReason: chat.FinishReasonToolCalls}}},
+		}}
+		_, calls, fr, err := drainSamplingStreamWithTools(s)
+		require.NoError(t, err)
+		require.Len(t, calls, 1)
+		assert.Equal(t, `{"a":1,"b":2}`, calls[0].Function.Arguments)
+		assert.Equal(t, chat.FinishReasonToolCalls, fr)
+	})
 }

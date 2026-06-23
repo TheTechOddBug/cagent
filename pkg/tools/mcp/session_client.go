@@ -347,6 +347,30 @@ func (c *sessionClient) SetSamplingWithToolsHandler(handler tools.SamplingWithTo
 	c.mu.Unlock()
 }
 
+// applySamplingHandlerOpts wires the SDK CreateMessage* callback into opts.
+//
+// The SDK panics if both CreateMessageHandler and CreateMessageWithToolsHandler
+// are populated, so we register exactly one. The with-tools callback is the
+// default — it gets registered even when both handler fields are still nil at
+// Initialize time. The callback itself reads c.samplingWithToolsHandler /
+// c.samplingHandler under c.mu at request time (see handleSamplingWithToolsRequest
+// above), so a SetSampling*Handler call that lands after Initialize — for
+// example, on a supervisor-driven reconnect that races configureToolsetHandlers
+// — still takes effect without a re-init. We only fall back to the basic
+// CreateMessageHandler when the caller has demonstrated that only the basic
+// path will ever be used (i.e. samplingHandler is set and samplingWithToolsHandler
+// is not).
+func (c *sessionClient) applySamplingHandlerOpts(opts *gomcp.ClientOptions) {
+	c.mu.RLock()
+	basicOnly := c.samplingHandler != nil && c.samplingWithToolsHandler == nil
+	c.mu.RUnlock()
+	if basicOnly {
+		opts.CreateMessageHandler = c.handleSamplingRequest
+		return
+	}
+	opts.CreateMessageWithToolsHandler = c.handleSamplingWithToolsRequest
+}
+
 // requestElicitation invokes the registered elicitation handler directly.
 // This is used by the OAuth transport to trigger elicitation outside of
 // the normal MCP request flow.
