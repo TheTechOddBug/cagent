@@ -58,7 +58,10 @@ func mergeCloneOptions(cfg base.Config, opts []options.Opt) (latest.ModelConfig,
 		modelConfig.MaxTokens = &mt
 	}
 	if merged.NoThinking() {
-		modelConfig.ThinkingBudget = nil
+		// Write the disabled sentinel instead of nil so the downstream
+		// applyProviderDefaults pass cannot revive a provider-level
+		// thinking_budget via its setIfNil merge.
+		modelConfig.ThinkingBudget = &latest.ThinkingBudget{Effort: "none"}
 	}
 	return modelConfig, mergedOpts
 }
