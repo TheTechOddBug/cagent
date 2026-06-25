@@ -95,7 +95,14 @@ func (t *ScriptToolSet) Instructions() string {
 	var sb strings.Builder
 	sb.WriteString("## Custom Shell Tools\n\n")
 
-	for name, tool := range t.shellTools {
+	names := make([]string, 0, len(t.shellTools))
+	for name := range t.shellTools {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
+		tool := t.shellTools[name]
 		fmt.Fprintf(&sb, "### %s\n", name)
 		if tool.Description != "" {
 			fmt.Fprintf(&sb, "%s\n", tool.Description)
@@ -129,8 +136,14 @@ func (t *ScriptToolSet) Instructions() string {
 func (t *ScriptToolSet) Tools(context.Context) ([]tools.Tool, error) {
 	var toolsList []tools.Tool
 
-	for name, toolConfig := range t.shellTools {
-		cfg := toolConfig
+	names := make([]string, 0, len(t.shellTools))
+	for name := range t.shellTools {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
+		cfg := t.shellTools[name]
 		toolName := name
 
 		description := cmp.Or(cfg.Description, "Execute shell command: "+cfg.Cmd)

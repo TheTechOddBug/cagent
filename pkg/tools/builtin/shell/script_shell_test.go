@@ -3,6 +3,7 @@ package shell
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -281,6 +282,39 @@ func TestScriptToolSet_InstructionsNonMapArgDef(t *testing.T) {
 
 	instructions := tool.Instructions()
 	assert.Contains(t, instructions, "`name`")
+}
+
+func TestScriptToolSet_DeterministicOrdering(t *testing.T) {
+	// Three tools whose names sort as: alpha < beta < gamma.
+	// Because Go map iteration is random, without explicit sorting the
+	// returned order could be anything — this test catches regressions.
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"gamma": {Description: "Third tool", Cmd: "echo gamma"},
+		"alpha": {Description: "First tool", Cmd: "echo alpha"},
+		"beta":  {Description: "Second tool", Cmd: "echo beta"},
+	}
+
+	tool, err := NewScript(shellTools, nil)
+	require.NoError(t, err)
+
+	// Tools() must return tools in alphabetical order.
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+	require.Len(t, allTools, 3)
+	assert.Equal(t, "alpha", allTools[0].Name)
+	assert.Equal(t, "beta", allTools[1].Name)
+	assert.Equal(t, "gamma", allTools[2].Name)
+
+	// Instructions() must list sections in alphabetical order.
+	instructions := tool.Instructions()
+	alphaPos := strings.Index(instructions, "### alpha")
+	betaPos := strings.Index(instructions, "### beta")
+	gammaPos := strings.Index(instructions, "### gamma")
+	assert.Greater(t, alphaPos, -1, "alpha heading not found")
+	assert.Greater(t, betaPos, -1, "beta heading not found")
+	assert.Greater(t, gammaPos, -1, "gamma heading not found")
+	assert.Less(t, alphaPos, betaPos, "alpha must appear before beta")
+	assert.Less(t, betaPos, gammaPos, "beta must appear before gamma")
 }
 
 func TestNewScript_ArgWithoutType(t *testing.T) {
