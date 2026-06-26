@@ -104,6 +104,69 @@ func (m *mockRuntime) OnToolsChanged(func(runtime.Event))                    {}
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)
 
+// retryMockRuntime mimics the real run loop's startup event ordering: it
+// re-emits a UserMessageEvent for the session's trailing message BEFORE
+// StreamStarted (exactly what LocalRuntime.runStreamLoop does when
+// SendUserMessage is set), then a StreamStopped. Used to verify App.Retry
+// suppresses the pre-StreamStarted re-emission.
+type retryMockRuntime struct {
+	mockRuntime
+}
+
+func (m *retryMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
+	ch := make(chan runtime.Event, 8)
+	go func() {
+		defer close(ch)
+		// Re-emitted user message (pre-StreamStarted): must be suppressed.
+		ch <- runtime.UserMessage("hello", sess.ID, nil, 0)
+		ch <- runtime.StreamStarted(sess.ID, "mock")
+		// A genuine mid-run user message (post-StreamStarted): must pass through.
+		ch <- runtime.UserMessage("steered", sess.ID, nil, 1)
+		ch <- runtime.StreamStopped(sess.ID, "mock", "normal")
+	}()
+	return ch
+}
+
+func TestApp_Retry_SuppressesReEmittedUserMessage(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan tea.Msg, 16)
+	app := &App{
+		runtime: &retryMockRuntime{},
+		session: session.New(),
+		events:  events,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app.Retry(ctx, cancel)
+
+	var userMessages []string
+	var sawStreamStarted, sawStreamStopped bool
+	deadline := time.After(2 * time.Second)
+	for !sawStreamStopped {
+		select {
+		case ev := <-events:
+			switch e := ev.(type) {
+			case *runtime.UserMessageEvent:
+				userMessages = append(userMessages, e.Message)
+			case *runtime.StreamStartedEvent:
+				sawStreamStarted = true
+			case *runtime.StreamStoppedEvent:
+				sawStreamStopped = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for StreamStopped")
+		}
+	}
+
+	assert.True(t, sawStreamStarted, "StreamStarted should be forwarded")
+	// The pre-StreamStarted re-emission is dropped; the post-StreamStarted
+	// (steered) user message is kept.
+	assert.Equal(t, []string{"steered"}, userMessages,
+		"only the post-StreamStarted user message should be forwarded")
+}
+
 // stubSnapshotController is a tiny SnapshotController used by the app
 // tests to drive /undo without spinning up a real shadow-git
 // repository. enabled gates SnapshotsEnabled(), and the (files, ok,

@@ -619,10 +619,20 @@ func (a *App) processInlineAttachment(att messages.Attachment, textBuilder *stri
 // user message. It is used to resume the conversation after an error: the
 // session already holds the messages exchanged so far, so RunStream picks up
 // from where it left off.
+//
+// RunStream re-emits a UserMessageEvent for the trailing session message at
+// startup (before StreamStarted) whenever SendUserMessage is set. On retry
+// that message is already displayed, so forwarding the re-emission would
+// duplicate the user bubble — or, when the tail is a tool/assistant message,
+// render non-user content inside a spurious user bubble. We suppress any
+// UserMessageEvent observed before StreamStarted to drop exactly that
+// re-emission; genuine user messages injected mid-run (steer / follow-up)
+// arrive after StreamStarted and are forwarded normally.
 func (a *App) Retry(ctx context.Context, cancel context.CancelFunc) {
 	a.cancel = cancel
 
 	go func() { //nolint:gosec // background processing intentionally continues after request ctx ends; uses context.Background() only to forward StreamStoppedEvent
+		streamStarted := false
 		for event := range a.runtime.RunStream(ctx, a.session) {
 			// If context is cancelled, continue draining but don't forward events
 			// — except StreamStoppedEvent, which must always propagate so the
@@ -632,6 +642,15 @@ func (a *App) Retry(ctx context.Context, cancel context.CancelFunc) {
 					a.sendEvent(context.Background(), event)
 				}
 				continue
+			}
+
+			switch event.(type) {
+			case *runtime.StreamStartedEvent:
+				streamStarted = true
+			case *runtime.UserMessageEvent:
+				if !streamStarted {
+					continue
+				}
 			}
 
 			if _, ok := event.(*runtime.SessionTitleEvent); ok {
