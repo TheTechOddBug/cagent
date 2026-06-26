@@ -39,7 +39,7 @@ agents:
     use_commands: [list] # Optional: names of top-level commands groups to merge into this agent
     use_skills: [list] # Optional: names of top-level skills groups to merge into this agent
     commands: # Optional: named prompts
-      name: "prompt text" # or {instruction: "prompt", agent: "sub_agent_name"}
+      name: "prompt text" # or {instruction: "prompt", agent: "sub_agent_name"} or {url: "https://..."} (TUI only)
     welcome_message: string # Optional: message shown at session start
     handoffs: [list] # Optional: agent names this agent can hand off to
     force_handoff: string # Optional: agent that always receives the conversation when this agent stops
@@ -96,7 +96,7 @@ agents:
 | `max_old_tool_call_tokens`  | int     | ✗        | Maximum number of tokens to keep from old tool call arguments and results. Older tool calls beyond this budget have their content replaced with a placeholder, saving context space. Tokens are approximated as `len/4`. Truncation is disabled by default; set a positive value to enable it. Set to `-1` to disable truncation (unlimited). |
 | `num_history_items`         | int     | ✗        | Limit the number of conversation history messages sent to the model. Useful for managing context window size with long conversations. Default: unlimited (all messages sent). |
 | `skills`                    | bool/array | ✗     | Enable automatic skill discovery. `true` loads all discovered local skills, `false` disables them. A list can mix skill sources (`local` or `https://…` URLs) and skill names to include — see [Skills]({{ '/features/skills/' | relative_url }}).                                                     |
-| `commands`                  | object  | ✗        | Named prompts that can be run with `docker agent run config.yaml /command_name`. Can be simple strings or objects with `instruction` and/or `agent` fields for agent switching. See [Named Commands](#named-commands) below. |
+| `commands`                  | object  | ✗        | Named prompts that can be run with `docker agent run config.yaml /command_name`. Can be simple strings or objects with `instruction` and/or `agent` fields for agent switching, or a `url` field to open a link in the browser (TUI only). See [Named Commands](#named-commands) below. |
 | `use_commands`              | list of string | ✗   | Names of top-level `commands` groups to merge into this agent. Inline `commands` entries take precedence on name conflicts. Default: `[]`. |
 | `use_skills`                | list of string | ✗   | Names of top-level `skills` groups to merge into this agent. Inline skills are deduplicated by name against merged entries. Default: `[]`. |
 | `use_toolsets`              | list of string | ✗   | Names of top-level `toolsets` groups to merge into this agent. See [Reusable Toolsets]({{ '/configuration/overview/#reusable-toolsets-toolsets' | relative_url }}). Default: `[]`. |
@@ -268,7 +268,7 @@ agents:
 
 ## Named Commands
 
-Define reusable prompt shortcuts that can send prompts to the current agent or switch to a different sub-agent:
+Define reusable prompt shortcuts that can send prompts to the current agent, switch to a different sub-agent, or open a URL in the browser:
 
 > **Note:** Named slash commands execute immediately, even while the agent is processing another message. Unlike regular chat messages (which are queued), slash commands interrupt or direct the agent even while it is mid-response.
 
@@ -291,12 +291,17 @@ agents:
       # Agent switching without instruction - forwards remaining text as prompt
       review:
         agent: reviewer  # Any text after /review is sent to the reviewer agent
+
+      # URL command - opens a link in the browser instead of messaging the agent
+      docs:
+        description: "Open the documentation"
+        url: https://docs.docker.com/
 ```
 
 
 ### Command Formats
 
-Commands support two formats:
+Commands support three formats:
 
 1. **Simple string format**: The string becomes the instruction sent to the current agent
    ```yaml
@@ -309,6 +314,13 @@ Commands support two formats:
      agent: planner           # Required: name of sub-agent to switch to
      instruction: "Plan: $1"  # Optional: prompt to send after switching
      description: "Switch to planning mode"  # Optional: shown in help text
+   ```
+
+3. **URL format**: Opens a link in the browser instead of messaging the agent
+   ```yaml
+   docs:
+     url: https://docs.docker.com/          # Required: URL to open
+     description: "Open the documentation"  # Optional: shown in help text
    ```
 
 When `agent` is set without `instruction`, any text typed after the slash command (e.g., `/plan build a web app`) is forwarded as a prompt to the target agent. The target agent must be listed in the current agent's `sub_agents` array.
@@ -373,6 +385,34 @@ Commands use JavaScript template literal syntax (`${env.VAR}`) for environment v
 The same syntax is also expanded in agent and toolset instructions: `agents.<name>.instruction` and `toolsets[*].instruction` support `${env.X}` placeholders (with optional `||` defaults and ternary expressions). `agents.<name>.description` and `agents.<name>.welcome_message` also support it.
 
 Note that path-like fields (`working_dir`, `path`) primarily use a shell-style syntax (`$VAR`, `${VAR}`, `~`), and also accept `${env.X}` as an alias (though not richer JS expressions). See [Variable Expansion in Config Fields]({{ '/configuration/overview/#variable-expansion-in-config-fields' | relative_url }}) for the full table.
+
+### URL Commands
+
+A command with a `url` field opens that URL in the user's default browser instead of sending a prompt to the agent. Any URI scheme the OS knows how to dispatch works — both standard web URLs and custom schemes such as `docker-desktop://` for deep links. URL commands are TUI-only — they have no effect when run from the CLI.
+
+```yaml
+agents:
+  root:
+    model: openai/gpt-5
+    description: An agent with handy URL shortcuts.
+    instruction: You are a helpful assistant.
+    commands:
+      feedback:
+        description: "Open the feedback site for this session"
+        url: https://example.com/feedback?session={{session_id}}
+      docs:
+        description: "Open the documentation"
+        url: https://docs.docker.com/
+      desktop:
+        description: "Open this session in Docker Desktop"
+        url: docker-desktop://dashboard/session/{{session_id}}
+```
+
+The `{{session_id}}` token is replaced at invocation time with the current session ID (URL-query-escaped so it can't break the URL or inject extra query parameters), letting a command deep-link to something scoped to the conversation. This token deliberately uses `{{...}}` rather than the `${...}` JS-expansion syntax, since the session ID is only known at dispatch time.
+
+URLs are validated before being handed to the OS opener: a parseable URL with a non-empty scheme is required, and flag-like inputs (those starting with `-`) are rejected to prevent argument injection.
+
+See [`examples/url_commands.yaml`](https://github.com/docker/docker-agent/blob/main/examples/url_commands.yaml) for a complete example.
 
 ## Read-Only Agents
 

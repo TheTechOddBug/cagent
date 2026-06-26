@@ -375,23 +375,19 @@ func builtInSettingsCommands() []Item {
 func builtInFeedbackCommands() []Item {
 	return []Item{
 		{
-			ID:           "feedback.feedback",
-			Label:        "Give Feedback",
-			SlashCommand: "/feedback",
-			Description:  "Provide feedback about docker agent",
-			Category:     "Feedback",
-			Immediate:    true,
+			ID:          "feedback.feedback",
+			Label:       "Give Feedback",
+			Description: "Provide feedback about docker agent",
+			Category:    "Feedback",
 			Execute: func(string) tea.Cmd {
 				return core.CmdHandler(messages.OpenURLMsg{URL: feedback.Link})
 			},
 		},
 		{
-			ID:           "feedback.bug",
-			Label:        "Report Bug",
-			SlashCommand: "/bug",
-			Description:  "Report a bug or issue",
-			Category:     "Feedback",
-			Immediate:    true,
+			ID:          "feedback.bug",
+			Label:       "Report Bug",
+			Description: "Report a bug or issue",
+			Category:    "Feedback",
 			Execute: func(string) tea.Cmd {
 				return core.CmdHandler(messages.OpenURLMsg{URL: "https://github.com/docker/docker-agent/issues/new/choose"})
 			},
