@@ -820,6 +820,10 @@ func (s *RemoteSessionStore) AddSummary(context.Context, string, string, int) er
 	return fmt.Errorf("add summary: %w", ErrUnsupported)
 }
 
+func (s *RemoteSessionStore) AddError(context.Context, string, *session.Error) error {
+	return fmt.Errorf("add error: %w", ErrUnsupported)
+}
+
 func (s *RemoteSessionStore) UpdateSessionTokens(context.Context, string, int64, int64, float64) error {
 	return fmt.Errorf("update session tokens: %w", ErrUnsupported)
 }

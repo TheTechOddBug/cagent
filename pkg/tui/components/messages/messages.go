@@ -1383,6 +1383,11 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 	}
 
 	for pos, item := range sess.Messages {
+		if item.IsError() {
+			errMsg := types.Error(item.Error.Message)
+			appendSessionMessage(errMsg, m.createMessageView(errMsg))
+			continue
+		}
 		if !item.IsMessage() {
 			continue
 		}

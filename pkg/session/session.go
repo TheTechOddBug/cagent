@@ -31,13 +31,18 @@ const (
 	toolContentPlaceholder = "[content truncated]"
 )
 
-// Item represents either a message or a sub-session
+// Item represents a message, a sub-session, a summary, or a recorded error.
 type Item struct {
 	// Message holds a regular conversation message
 	Message *Message `json:"message,omitempty"`
 
 	// SubSession holds a complete sub-session from task transfers
 	SubSession *Session `json:"sub_session,omitempty"`
+
+	// Error holds a recorded agent failure. Persisting failures lets the
+	// error survive a session reload and travel with a shared JSON export
+	// for diagnostics.
+	Error *Error `json:"error,omitempty"`
 
 	// Summary is a summary of the session up until this point
 	Summary string `json:"summary,omitempty"`
@@ -62,6 +67,26 @@ func (si *Item) IsMessage() bool {
 // IsSubSession returns true if this item contains a sub-session
 func (si *Item) IsSubSession() bool {
 	return si.SubSession != nil
+}
+
+// IsError returns true if this item contains a recorded error
+func (si *Item) IsError() bool {
+	return si.Error != nil
+}
+
+// Error records an agent failure that occurred during a run. It is stored as
+// a session item so the error is visible when the session is reopened and is
+// included in a shared JSON session export for diagnostics.
+type Error struct {
+	// Message is the human-readable error message.
+	Message string `json:"message"`
+	// Code classifies the error (see runtime.ErrorCode* constants). Empty
+	// when the error was emitted without a code.
+	Code string `json:"code,omitempty"`
+	// AgentName is the agent that was running when the error occurred.
+	AgentName string `json:"agent_name,omitempty"`
+	// CreatedAt is the RFC3339 timestamp of the failure.
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // Session represents the agent's state including conversation history and variables
@@ -253,6 +278,11 @@ func NewMessageItem(msg *Message) Item {
 // NewSubSessionItem creates a SessionItem containing a sub-session
 func NewSubSessionItem(subSession *Session) Item {
 	return Item{SubSession: subSession}
+}
+
+// NewErrorItem creates a SessionItem containing a recorded error
+func NewErrorItem(e *Error) Item {
+	return Item{Error: e}
 }
 
 // EvalResult contains the evaluation scoring outcome for a session.
@@ -486,6 +516,14 @@ func (s *Session) ApplyCompaction(inputTokens, outputTokens int64, item Item) {
 func (s *Session) AddSubSession(subSession *Session) {
 	s.mu.Lock()
 	s.Messages = append(s.Messages, NewSubSessionItem(subSession))
+	s.mu.Unlock()
+}
+
+// AddError appends a recorded error to the session so it survives reload and
+// JSON export.
+func (s *Session) AddError(e *Error) {
+	s.mu.Lock()
+	s.Messages = append(s.Messages, NewErrorItem(e))
 	s.mu.Unlock()
 }
 

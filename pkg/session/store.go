@@ -115,6 +115,10 @@ type Store interface {
 	// firstKeptEntry is the index of the first message kept verbatim during compaction.
 	AddSummary(ctx context.Context, sessionID, summary string, firstKeptEntry int) error
 
+	// AddError appends a recorded error item to a session at the next position.
+	// Persisting failures lets them survive a reload and travel with a JSON export.
+	AddError(ctx context.Context, sessionID string, e *Error) error
+
 	// === Granular metadata updates ===
 
 	// UpdateSessionTokens updates only token/cost fields
@@ -336,6 +340,20 @@ func (s *InMemorySessionStore) AddSummary(_ context.Context, sessionID, summary 
 	session.mu.Lock()
 	session.Messages = append(session.Messages, Item{Summary: summary, FirstKeptEntry: firstKeptEntry})
 	session.mu.Unlock()
+	return nil
+}
+
+// AddError appends a recorded error item to a session at the next position.
+func (s *InMemorySessionStore) AddError(_ context.Context, sessionID string, e *Error) error {
+	if sessionID == "" {
+		return ErrEmptyID
+	}
+	session, exists := s.sessions.Load(sessionID)
+	if !exists {
+		return ErrNotFound
+	}
+	errCopy := *e
+	session.AddError(&errCopy)
 	return nil
 }
 
@@ -762,6 +780,15 @@ func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, se
 
 		case "summary":
 			items = append(items, Item{Summary: row.summaryText.String, FirstKeptEntry: row.firstKeptEntry})
+
+		case "error":
+			var e Error
+			if row.messageJSON.Valid && row.messageJSON.String != "" {
+				if err := json.Unmarshal([]byte(row.messageJSON.String), &e); err != nil {
+					return nil, fmt.Errorf("unmarshaling error at position %d: %w", row.position, err)
+				}
+			}
+			items = append(items, Item{Error: &e})
 		}
 	}
 
@@ -1155,6 +1182,17 @@ func (s *SQLiteSessionStore) addItemTx(ctx context.Context, tx *sql.Tx, sessionI
 			sessionID, position, item.Summary, item.FirstKeptEntry)
 		return err
 
+	case item.Error != nil:
+		errJSON, err := json.Marshal(item.Error)
+		if err != nil {
+			return fmt.Errorf("marshaling error: %w", err)
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO session_items (session_id, position, item_type, message_json)
+			 VALUES (?, ?, 'error', ?)`,
+			sessionID, position, string(errJSON))
+		return err
+
 	default:
 		return nil // Empty item, skip
 	}
@@ -1175,6 +1213,26 @@ func (s *SQLiteSessionStore) AddSummary(ctx context.Context, sessionID, summary 
 	}
 
 	return nil
+}
+
+// AddError appends a recorded error item to a session at the next position.
+// The error payload is stored as JSON in the message_json column, reusing the
+// existing schema (item_type discriminates the row).
+func (s *SQLiteSessionStore) AddError(ctx context.Context, sessionID string, e *Error) error {
+	if sessionID == "" {
+		return ErrEmptyID
+	}
+
+	errJSON, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshaling error: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO session_items (session_id, position, item_type, message_json)
+		 VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'error', ?)`,
+		sessionID, sessionID, string(errJSON))
+	return err
 }
 
 // UpdateSessionTokens updates only token/cost fields.

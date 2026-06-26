@@ -854,6 +854,64 @@ func TestMigration_ExistingMessagesToSessionItems(t *testing.T) {
 	assert.Equal(t, "legacy-agent", retrieved.Messages[1].Message.AgentName)
 }
 
+func TestAddError_SQLiteRoundTrip(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_add_error.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	session := &Session{ID: "error-session", CreatedAt: time.Now()}
+	require.NoError(t, store.AddSession(t.Context(), session))
+
+	_, err = store.AddMessage(t.Context(), "error-session", UserMessage("do something"))
+	require.NoError(t, err)
+
+	err = store.AddError(t.Context(), "error-session", &Error{
+		Message:   "model stream failed",
+		Code:      "model_error",
+		AgentName: "root",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+
+	retrieved, err := store.GetSession(t.Context(), "error-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 2)
+
+	errItem := retrieved.Messages[1]
+	require.True(t, errItem.IsError())
+	assert.Equal(t, "model stream failed", errItem.Error.Message)
+	assert.Equal(t, "model_error", errItem.Error.Code)
+	assert.Equal(t, "root", errItem.Error.AgentName)
+
+	// Errors are not conversation messages, so GetAllMessages skips them.
+	assert.Len(t, retrieved.GetAllMessages(), 1)
+}
+
+func TestAddError_InMemoryRoundTrip(t *testing.T) {
+	store := NewInMemorySessionStore()
+
+	session := &Session{ID: "error-session", CreatedAt: time.Now()}
+	require.NoError(t, store.AddSession(t.Context(), session))
+
+	err := store.AddError(t.Context(), "error-session", &Error{Message: "boom", Code: "tool_failed"})
+	require.NoError(t, err)
+
+	retrieved, err := store.GetSession(t.Context(), "error-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 1)
+	require.True(t, retrieved.Messages[0].IsError())
+	assert.Equal(t, "boom", retrieved.Messages[0].Error.Message)
+	assert.Equal(t, "tool_failed", retrieved.Messages[0].Error.Code)
+}
+
+func TestAddError_NotFound(t *testing.T) {
+	store := NewInMemorySessionStore()
+	err := store.AddError(t.Context(), "missing", &Error{Message: "boom"})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestIsRelativeSessionRef(t *testing.T) {
 	assert.True(t, IsRelativeSessionRef("-1"))
 	assert.True(t, IsRelativeSessionRef("-10"))

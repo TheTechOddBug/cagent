@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/session"
@@ -132,6 +133,26 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 	case *SessionTitleEvent:
 		if err := p.store.UpdateSessionTitle(ctx, sess.ID, e.Title); err != nil {
 			slog.WarnContext(ctx, "Failed to persist session title", "session_id", sess.ID, "error", err)
+		}
+
+	case *ErrorEvent:
+		// Persist agent failures so they survive a session reload and travel
+		// with a shared JSON export for diagnostics. Reset the streaming state
+		// so any in-flight assistant row is finalised in place and the error is
+		// recorded as a distinct trailing item.
+		p.streaming = streamingState{}
+		ts := e.Timestamp
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		errItem := &session.Error{
+			Message:   e.Error,
+			Code:      e.Code,
+			AgentName: e.AgentName,
+			CreatedAt: ts.Format(time.RFC3339),
+		}
+		if err := p.store.AddError(ctx, sess.ID, errItem); err != nil {
+			slog.WarnContext(ctx, "Failed to persist error", "session_id", sess.ID, "error", err)
 		}
 	}
 }
