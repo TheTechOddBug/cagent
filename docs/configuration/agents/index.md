@@ -39,7 +39,7 @@ agents:
     use_commands: [list] # Optional: names of top-level commands groups to merge into this agent
     use_skills: [list] # Optional: names of top-level skills groups to merge into this agent
     commands: # Optional: named prompts
-      name: "prompt text" # or {instruction: "prompt", agent: "sub_agent_name"}
+      name: "prompt text" # or {instruction: "prompt", agent: "sub_agent_name"} or {url: "https://..."} (TUI only)
     welcome_message: string # Optional: message shown at session start
     handoffs: [list] # Optional: agent names this agent can hand off to
     force_handoff: string # Optional: agent that always receives the conversation when this agent stops
@@ -96,7 +96,7 @@ agents:
 | `max_old_tool_call_tokens`  | int     | ✗        | Maximum number of tokens to keep from old tool call arguments and results. Older tool calls beyond this budget have their content replaced with a placeholder, saving context space. Tokens are approximated as `len/4`. Truncation is disabled by default; set a positive value to enable it. Set to `-1` to disable truncation (unlimited). |
 | `num_history_items`         | int     | ✗        | Limit the number of conversation history messages sent to the model. Useful for managing context window size with long conversations. Default: unlimited (all messages sent). |
 | `skills`                    | bool/array | ✗     | Enable automatic skill discovery. `true` loads all discovered local skills, `false` disables them. A list can mix skill sources (`local` or `https://…` URLs) and skill names to include — see [Skills]({{ '/features/skills/' | relative_url }}).                                                     |
-| `commands`                  | object  | ✗        | Named prompts that can be run with `docker agent run config.yaml /command_name`. Can be simple strings or objects with `instruction` and/or `agent` fields for agent switching, or a `url` field to open a link in the browser. See [Named Commands](#named-commands) below. |
+| `commands`                  | object  | ✗        | Named prompts that can be run with `docker agent run config.yaml /command_name`. Can be simple strings or objects with `instruction` and/or `agent` fields for agent switching, or a `url` field to open a link in the browser (TUI only). See [Named Commands](#named-commands) below. |
 | `use_commands`              | list of string | ✗   | Names of top-level `commands` groups to merge into this agent. Inline `commands` entries take precedence on name conflicts. Default: `[]`. |
 | `use_skills`                | list of string | ✗   | Names of top-level `skills` groups to merge into this agent. Inline skills are deduplicated by name against merged entries. Default: `[]`. |
 | `use_toolsets`              | list of string | ✗   | Names of top-level `toolsets` groups to merge into this agent. See [Reusable Toolsets]({{ '/configuration/overview/#reusable-toolsets-toolsets' | relative_url }}). Default: `[]`. |
@@ -373,9 +373,22 @@ agents:
 
 See [`examples/agent_switching_commands.yaml`](https://github.com/docker/docker-agent/blob/main/examples/agent_switching_commands.yaml) for a complete example.
 
+```bash
+# Run commands from the CLI
+$ docker agent run agent.yaml /df
+$ docker agent run agent.yaml /greet
+$ PROJECT_NAME=myapp ENV=production docker agent run agent.yaml /deploy
+```
+
+Commands use JavaScript template literal syntax (`${env.VAR}`) for environment variable interpolation. Undefined variables expand to empty strings.
+
+The same syntax is also expanded in agent and toolset instructions: `agents.<name>.instruction` and `toolsets[*].instruction` support `${env.X}` placeholders (with optional `||` defaults and ternary expressions). `agents.<name>.description` and `agents.<name>.welcome_message` also support it.
+
+Note that path-like fields (`working_dir`, `path`) primarily use a shell-style syntax (`$VAR`, `${VAR}`, `~`), and also accept `${env.X}` as an alias (though not richer JS expressions). See [Variable Expansion in Config Fields]({{ '/configuration/overview/#variable-expansion-in-config-fields' | relative_url }}) for the full table.
+
 ### URL Commands
 
-A command with a `url` field opens that URL in the user's default browser instead of sending a prompt to the agent. Any URI scheme the OS knows how to dispatch works — both standard web URLs and custom schemes such as `docker-desktop://` for deep links.
+A command with a `url` field opens that URL in the user's default browser instead of sending a prompt to the agent. Any URI scheme the OS knows how to dispatch works — both standard web URLs and custom schemes such as `docker-desktop://` for deep links. URL commands are TUI-only — they have no effect when run from the CLI.
 
 ```yaml
 agents:
@@ -397,24 +410,11 @@ agents:
 
 The `{{session_id}}` token is replaced at invocation time with the current session ID (URL-query-escaped so it can't break the URL or inject extra query parameters), letting a command deep-link to something scoped to the conversation. This token deliberately uses `{{...}}` rather than the `${...}` JS-expansion syntax, since the session ID is only known at dispatch time.
 
-URLs are validated before being handed to the OS opener: a parseable URL with a non-empty scheme is required, and flag-like inputs (those starting with `-`) are rejected to prevent argument injection. URL commands are TUI-only.
+URLs are validated before being handed to the OS opener: a parseable URL with a non-empty scheme is required, and flag-like inputs (those starting with `-`) are rejected to prevent argument injection.
 
 The `/feedback` and `/bug` built-in slash commands work the same way — they open the docker-agent feedback site and the issue tracker, respectively. See [Slash Commands]({{ '/features/tui/#slash-commands' | relative_url }}).
 
 See [`examples/url_commands.yaml`](https://github.com/docker/docker-agent/blob/main/examples/url_commands.yaml) for a complete example.
-
-```bash
-# Run commands from the CLI
-$ docker agent run agent.yaml /df
-$ docker agent run agent.yaml /greet
-$ PROJECT_NAME=myapp ENV=production docker agent run agent.yaml /deploy
-```
-
-Commands use JavaScript template literal syntax (`${env.VAR}`) for environment variable interpolation. Undefined variables expand to empty strings.
-
-The same syntax is also expanded in agent and toolset instructions: `agents.<name>.instruction` and `toolsets[*].instruction` support `${env.X}` placeholders (with optional `||` defaults and ternary expressions). `agents.<name>.description` and `agents.<name>.welcome_message` also support it.
-
-Note that path-like fields (`working_dir`, `path`) primarily use a shell-style syntax (`$VAR`, `${VAR}`, `~`), and also accept `${env.X}` as an alias (though not richer JS expressions). See [Variable Expansion in Config Fields]({{ '/configuration/overview/#variable-expansion-in-config-fields' | relative_url }}) for the full table.
 
 ## Read-Only Agents
 
