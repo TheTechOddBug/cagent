@@ -74,6 +74,11 @@ commands:
     deploy: "Deploy the application"
 skills:
   base: [local, git]
+
+# 10. Toolsets — reusable, named toolset definitions shared across agents (optional)
+toolsets:
+  fs:
+    type: filesystem
 ```
 
 ## Minimal Config
@@ -366,6 +371,39 @@ agents:
 ```
 
 An `mcps` entry accepts every field a regular `type: mcp` toolset accepts (command/args/env, `remote` with `url`/`transport_type`/`headers`/`oauth`, `tools` filter, `instruction`, `defer`, …) — the `type: mcp` is implicit. See the [Tool Config]({{ '/configuration/tools/' | relative_url }}) page for all options and the [Remote MCP Servers]({{ '/features/remote-mcp/' | relative_url }}) guide for remote setups.
+
+## Reusable Toolsets (`toolsets:`)
+
+The top-level `toolsets:` map defines named toolset configurations that agents can reference by name through `use_toolsets:`. This avoids repeating the same toolset definition across multiple agents — the same pattern as `mcps:` for MCP servers and `commands:` / `skills:` for reusable prompt groups.
+
+Any toolset type is supported, including ones that reference MCP or RAG definitions. Shared toolsets are resolved before the MCP/RAG pass, so they can contain `{type: mcp, ref: <name>}` references.
+
+```yaml
+toolsets:
+  fs:               # a named shared toolset
+    type: filesystem
+  docs:
+    type: fetch
+    allowed_domains:
+      - docker.com
+
+agents:
+  root:
+    model: openai/gpt-5
+    # Pull in shared toolsets by name; inline toolsets come first.
+    use_toolsets: [fs, docs]
+    toolsets:
+      - type: think
+
+  reviewer:
+    model: openai/gpt-5
+    # Reuse the same filesystem toolset without copying its definition.
+    use_toolsets: [fs]
+```
+
+Inline `toolsets:` entries listed directly on the agent take precedence in ordering (they come first) and are always included alongside referenced ones.
+
+See [`examples/shared-toolsets.yaml`](https://github.com/docker/docker-agent/blob/main/examples/shared-toolsets.yaml) for a complete example.
 
 ## Reusable Commands & Skills (`commands:` / `skills:`)
 
