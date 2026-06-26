@@ -412,8 +412,6 @@ The `{{session_id}}` token is replaced at invocation time with the current sessi
 
 URLs are validated before being handed to the OS opener: a parseable URL with a non-empty scheme is required, and flag-like inputs (those starting with `-`) are rejected to prevent argument injection.
 
-The `/feedback` and `/bug` built-in slash commands work the same way — they open the docker-agent feedback site and the issue tracker, respectively. See [Slash Commands]({{ '/features/tui/#slash-commands' | relative_url }}).
-
 See [`examples/url_commands.yaml`](https://github.com/docker/docker-agent/blob/main/examples/url_commands.yaml) for a complete example.
 
 ## Read-Only Agents

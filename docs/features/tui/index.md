@@ -90,8 +90,6 @@ Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<k
 | `/permissions`     | Inspect and edit tool permission rules                                               |
 | `/split-diff`      | Toggle split-diff view for file edits                                                |
 | `/speak`           | Voice input via system speech-to-text (macOS only)                                   |
-| `/feedback`        | Open the docker-agent feedback site in your browser                                  |
-| `/bug`             | Open the docker-agent issue tracker in your browser                                  |
 | `/exit`            | Exit the application (aliases: `/quit`, `/q`)                                        |
 
 Slash commands (both built-in and named) execute immediately when entered. Regular chat messages are queued and processed in order. This means you can invoke a slash command to interrupt or direct the agent even while it is mid-response.
