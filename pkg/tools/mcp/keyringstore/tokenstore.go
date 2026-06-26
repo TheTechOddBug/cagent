@@ -140,18 +140,29 @@ var defaultStore = sync.OnceValue(func() mcp.OAuthTokenStore {
 	if testing.Testing() {
 		return mcp.NewInMemoryTokenStore()
 	}
-	configDir := paths.GetConfigDir()
-	ring, err := openKeyring()
+	return buildDefaultStore(paths.GetConfigDir(), openKeyring, openFileKeyring)
+})
+
+// buildDefaultStore resolves the token store backend in order of preference:
+// the OS-native keyring, then a file-backed keyring under configDir, then an
+// in-memory store. The keyring openers are injected so the fallback ordering
+// can be exercised in tests without touching a real OS credential store.
+func buildDefaultStore(
+	configDir string,
+	openNative func() (keyring.Keyring, error),
+	openFallback func(string) (keyring.Keyring, error),
+) mcp.OAuthTokenStore {
+	ring, err := openNative()
 	if err != nil {
 		slog.Warn("OS keyring not available, falling back to file-based OAuth token store", "error", err)
-		ring, err = openFileKeyring(filepath.Join(configDir, fallbackKeyringDir))
+		ring, err = openFallback(filepath.Join(configDir, fallbackKeyringDir))
 		if err != nil {
 			slog.Warn("File-based keyring not available, falling back to in-memory token store", "error", err)
 			return mcp.NewInMemoryTokenStore()
 		}
 	}
 	return newKeyringTokenStore(ring, filepath.Join(configDir, tokenFileName))
-})
+}
 
 // Register installs the keyring-backed token store as the default for MCP
 // OAuth. The CLI calls this during startup; embedders that don't need

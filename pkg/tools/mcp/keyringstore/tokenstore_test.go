@@ -701,6 +701,68 @@ func TestFileKeyringBackedStore_PersistsAcrossReload(t *testing.T) {
 	}
 }
 
+// TestBuildDefaultStore_PrefersNativeKeyring verifies the native keyring is
+// used when it opens successfully, without ever consulting the fallback.
+func TestBuildDefaultStore_PrefersNativeKeyring(t *testing.T) {
+	native := keyring.NewArrayKeyring(nil)
+	fallbackCalled := false
+
+	store := buildDefaultStore(t.TempDir(),
+		func() (keyring.Keyring, error) { return native, nil },
+		func(string) (keyring.Keyring, error) {
+			fallbackCalled = true
+			return nil, errors.New("should not be called")
+		},
+	)
+
+	if _, ok := store.(*KeyringTokenStore); !ok {
+		t.Fatalf("expected *KeyringTokenStore, got %T", store)
+	}
+	if fallbackCalled {
+		t.Error("fallback keyring must not be opened when the native keyring succeeds")
+	}
+}
+
+// TestBuildDefaultStore_FallsBackToFileKeyring verifies that when the native
+// keyring is unavailable (as inside a sandbox), the file-backed keyring is
+// used — the regression path for issue #3037.
+func TestBuildDefaultStore_FallsBackToFileKeyring(t *testing.T) {
+	fallback := keyring.NewArrayKeyring(nil)
+	var gotDir string
+
+	store := buildDefaultStore(t.TempDir(),
+		func() (keyring.Keyring, error) { return nil, errors.New("no OS keyring") },
+		func(dir string) (keyring.Keyring, error) {
+			gotDir = dir
+			return fallback, nil
+		},
+	)
+
+	ks, ok := store.(*KeyringTokenStore)
+	if !ok {
+		t.Fatalf("expected *KeyringTokenStore, got %T", store)
+	}
+	if ks.ring != fallback {
+		t.Error("expected the store to be backed by the fallback keyring")
+	}
+	if filepath.Base(gotDir) != fallbackKeyringDir {
+		t.Errorf("fallback dir = %q, want basename %q", gotDir, fallbackKeyringDir)
+	}
+}
+
+// TestBuildDefaultStore_FallsBackToMemory verifies the last-resort in-memory
+// store is used when neither keyring backend can be opened.
+func TestBuildDefaultStore_FallsBackToMemory(t *testing.T) {
+	store := buildDefaultStore(t.TempDir(),
+		func() (keyring.Keyring, error) { return nil, errors.New("no OS keyring") },
+		func(string) (keyring.Keyring, error) { return nil, errors.New("no file keyring") },
+	)
+
+	if _, ok := store.(*KeyringTokenStore); ok {
+		t.Fatal("expected in-memory store, got *KeyringTokenStore")
+	}
+}
+
 // TestKeyringTokenStore_ConcurrentAccess verifies that concurrent reads and
 // writes to the token store are safe and don't cause data races.
 func TestKeyringTokenStore_ConcurrentAccess(t *testing.T) {
