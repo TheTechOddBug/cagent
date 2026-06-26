@@ -507,6 +507,16 @@ func aggregate(results []hookResult, event EventType) *Result {
 				// blank a leaky tool's output entirely can do so.
 				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
+			if event == EventPermissionRequest && len(hso.Metadata) > 0 {
+				// Metadata from every matching hook is merged so multiple
+				// hooks can each contribute keys. On a key clash the last
+				// hook in config order wins (results is iterated in
+				// registration order).
+				if final.Metadata == nil {
+					final.Metadata = make(map[string]string)
+				}
+				maps.Copy(final.Metadata, hso.Metadata)
+			}
 			if hso.AdditionalContext != "" {
 				contexts = append(contexts, hso.AdditionalContext)
 			}

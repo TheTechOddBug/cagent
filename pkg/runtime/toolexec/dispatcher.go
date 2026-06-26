@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -74,7 +75,7 @@ type Emitter interface {
 	EmitToolCall(toolCall tools.ToolCall, tool tools.Tool, agentName string)
 	EmitToolCallOutput(toolCallID string, tool tools.Tool, output, agentName string)
 	EmitToolCallResponse(toolCallID string, tool tools.Tool, result *tools.ToolCallResult, output, agentName string)
-	EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string)
+	EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string, metadata map[string]string)
 	EmitHookBlocked(toolCall tools.ToolCall, tool tools.Tool, message, agentName string)
 	EmitMessageAdded(sessionID string, msg *session.Message, agentName string)
 }
@@ -506,12 +507,13 @@ func denySourceForChecker(checkerSource string) string {
 // with an explicit allow or deny verdict; returning nothing falls
 // through to the interactive confirmation.
 func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutcome {
-	if outcome, handled := c.runPermissionRequestHook(ctx, runTool); handled {
+	outcome, handled, hookMeta := c.runPermissionRequestHook(ctx, runTool)
+	if handled {
 		return outcome
 	}
 
 	slog.DebugContext(ctx, "Tools not approved, waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
-	c.em.EmitToolCallConfirmation(c.tc, c.tool, c.a.Name())
+	c.em.EmitToolCallConfirmation(c.tc, c.tool, c.a.Name(), c.confirmationMetadata(hookMeta))
 
 	if c.d.Hooks != nil {
 		c.d.Hooks.NotifyUserInput(ctx, c.sess.ID, "tool confirmation")
@@ -534,9 +536,14 @@ func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutc
 // ("allow" or "deny") in hook_specific_output. A bare deny (Decision=
 // "block" without permission_decision) is also honoured. Returning
 // nothing keeps the existing behaviour and asks the user.
-func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() CallOutcome) (CallOutcome, bool) {
+//
+// When the hook does not short-circuit (handled=false) it may still
+// have contributed key/value metadata for the confirmation prompt; that
+// is returned so [call.askUser] can merge it onto the tool's own
+// metadata.
+func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() CallOutcome) (outcome CallOutcome, handled bool, metadata map[string]string) {
 	if c.d.Hooks == nil {
-		return CallOutcome{}, false
+		return CallOutcome{}, false, nil
 	}
 
 	toolName := c.tc.Function.Name
@@ -547,7 +554,7 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 		ToolInput: ParseToolInput(c.tc.Function.Arguments),
 	})
 	if result == nil {
-		return CallOutcome{}, false
+		return CallOutcome{}, false, nil
 	}
 
 	if !result.Allowed {
@@ -563,16 +570,30 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 			rejectMsg += " Reason: " + reason
 		}
 		c.errorResponse(ctx, rejectMsg)
-		return CallOutcome{}, true
+		return CallOutcome{}, true, nil
 	}
 
 	if result.PermissionAllowed {
 		slog.DebugContext(ctx, "Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.AdditionalContext)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourcePermissionRequestHookAllow)
-		return runTool(), true
+		return runTool(), true, nil
 	}
 
-	return CallOutcome{}, false
+	return CallOutcome{}, false, result.Metadata
+}
+
+// confirmationMetadata merges the tool's static metadata (set by the
+// toolset) with the per-call metadata a permission_request hook
+// contributed. Hook keys win on a clash. Returns nil when neither
+// source supplied anything, so the confirmation event stays lean.
+func (c *call) confirmationMetadata(hookMeta map[string]string) map[string]string {
+	if len(c.tool.Metadata) == 0 && len(hookMeta) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(c.tool.Metadata)+len(hookMeta))
+	maps.Copy(merged, c.tool.Metadata)
+	maps.Copy(merged, hookMeta)
+	return merged
 }
 
 // handleResume applies the user's confirmation decision: run the tool

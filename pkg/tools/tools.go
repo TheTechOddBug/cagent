@@ -183,6 +183,11 @@ type Tool struct {
 	// ModelOverride is the per-toolset model for the LLM turn that processes
 	// this tool's results. Set automatically from the toolset "model" field.
 	ModelOverride string `json:"-"`
+	// Metadata carries arbitrary key/value annotations a toolset attaches
+	// to a tool. The runtime forwards it onto the tool-call confirmation
+	// message so clients (TUI, HTTP) can render extra context for the
+	// approval prompt. Empty for tools that don't set any.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type ToolAnnotations mcp.ToolAnnotations

@@ -235,7 +235,7 @@ func TestStreamStopped_TopLevelClearsPendingAndNeedsAttn(t *testing.T) {
 		},
 		{
 			name:    "tool confirmation pending",
-			pending: runtime.ToolCallConfirmation(tools.ToolCall{}, tools.Tool{}, "agent"),
+			pending: runtime.ToolCallConfirmation(tools.ToolCall{}, tools.Tool{}, "agent", nil),
 		},
 		{
 			name:    "max iterations pending",

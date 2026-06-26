@@ -94,8 +94,8 @@ func (e *sinkEmitter) EmitToolCallResponse(toolCallID string, tool tools.Tool, r
 	e.events.Emit(ToolCallResponse(toolCallID, tool, result, output, agentName))
 }
 
-func (e *sinkEmitter) EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
-	e.events.Emit(ToolCallConfirmation(toolCall, tool, agentName))
+func (e *sinkEmitter) EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string, metadata map[string]string) {
+	e.events.Emit(ToolCallConfirmation(toolCall, tool, agentName, metadata))
 }
 
 func (e *sinkEmitter) EmitHookBlocked(toolCall tools.ToolCall, tool tools.Tool, message, agentName string) {

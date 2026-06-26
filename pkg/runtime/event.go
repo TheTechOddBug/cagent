@@ -111,13 +111,19 @@ type ToolCallConfirmationEvent struct {
 	Type           string         `json:"type"`
 	ToolCall       tools.ToolCall `json:"tool_call"`
 	ToolDefinition tools.Tool     `json:"tool_definition"`
+	// Metadata carries arbitrary key/value annotations attached to the
+	// confirmation prompt. Toolsets contribute static metadata via
+	// [tools.Tool.Metadata]; a permission_request hook can enrich it per
+	// call. nil when neither source supplied any.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-func ToolCallConfirmation(toolCall tools.ToolCall, toolDefinition tools.Tool, agentName string) Event {
+func ToolCallConfirmation(toolCall tools.ToolCall, toolDefinition tools.Tool, agentName string, metadata map[string]string) Event {
 	return &ToolCallConfirmationEvent{
 		Type:           "tool_call_confirmation",
 		ToolCall:       toolCall,
 		ToolDefinition: toolDefinition,
+		Metadata:       metadata,
 		AgentContext:   newAgentContext(agentName),
 	}
 }

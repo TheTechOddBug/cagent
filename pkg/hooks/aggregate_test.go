@@ -104,3 +104,48 @@ func TestAggregateDecisionEmptyForNonPreToolUse(t *testing.T) {
 	assert.Equal(t, Decision(""), final.Decision)
 	assert.Empty(t, final.DecisionReason)
 }
+
+// TestAggregateMergesPermissionRequestMetadata pins the metadata
+// contract for permission_request hooks: keys from every matching hook
+// are merged, and on a clash the later hook in config order wins (results
+// is iterated in registration order).
+func TestAggregateMergesPermissionRequestMetadata(t *testing.T) {
+	t.Parallel()
+
+	mk := func(meta map[string]string) hookResult {
+		return hookResult{HandlerResult: HandlerResult{Output: &Output{
+			HookSpecificOutput: &HookSpecificOutput{
+				HookEventName: EventPermissionRequest,
+				Metadata:      meta,
+			},
+		}}}
+	}
+
+	results := []hookResult{
+		mk(map[string]string{"a": "1", "shared": "first"}),
+		mk(map[string]string{"b": "2", "shared": "second"}),
+	}
+
+	final := aggregate(results, EventPermissionRequest)
+	assert.Equal(t, map[string]string{
+		"a":      "1",
+		"b":      "2",
+		"shared": "second",
+	}, final.Metadata)
+}
+
+// TestAggregateIgnoresMetadataForNonPermissionRequest documents that
+// Metadata is only collected for permission_request events.
+func TestAggregateIgnoresMetadataForNonPermissionRequest(t *testing.T) {
+	t.Parallel()
+
+	results := []hookResult{{HandlerResult: HandlerResult{Output: &Output{
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName: EventPreToolUse,
+			Metadata:      map[string]string{"a": "1"},
+		},
+	}}}}
+
+	final := aggregate(results, EventPreToolUse)
+	assert.Nil(t, final.Metadata)
+}

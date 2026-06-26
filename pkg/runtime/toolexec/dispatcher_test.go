@@ -20,13 +20,14 @@ import (
 // channel signals when a confirmation event lands so cancellation tests
 // don't need to busy-wait.
 type captureEmitter struct {
-	calls         []tools.ToolCall
-	outputs       []outputRecord
-	responses     []responseRecord
-	confirmations []tools.ToolCall
-	hookBlocks    []hookBlockRecord
-	messages      []*session.Message
-	confirmed     chan struct{} // optional; closed after the first confirmation event
+	calls            []tools.ToolCall
+	outputs          []outputRecord
+	responses        []responseRecord
+	confirmations    []tools.ToolCall
+	confirmationMeta []map[string]string
+	hookBlocks       []hookBlockRecord
+	messages         []*session.Message
+	confirmed        chan struct{} // optional; closed after the first confirmation event
 }
 
 type outputRecord struct {
@@ -61,8 +62,9 @@ func (e *captureEmitter) EmitToolCallResponse(toolCallID string, _ tools.Tool, r
 	})
 }
 
-func (e *captureEmitter) EmitToolCallConfirmation(tc tools.ToolCall, _ tools.Tool, _ string) {
+func (e *captureEmitter) EmitToolCallConfirmation(tc tools.ToolCall, _ tools.Tool, _ string, metadata map[string]string) {
 	e.confirmations = append(e.confirmations, tc)
+	e.confirmationMeta = append(e.confirmationMeta, metadata)
 	if e.confirmed != nil {
 		select {
 		case <-e.confirmed:
@@ -570,4 +572,113 @@ func TestDispatcher_ToolResponseTransformAppliesToErrorResponse(t *testing.T) {
 	assert.True(t, em.responses[0].IsError)
 	assert.Equal(t, rewritten, em.responses[0].Output,
 		"synthesised error response must also flow through the transform")
+}
+
+// TestDispatcher_ConfirmationCarriesToolMetadata verifies that a
+// toolset's static [tools.Tool.Metadata] reaches the tool-call
+// confirmation event when the user is prompted.
+func TestDispatcher_ConfirmationCarriesToolMetadata(t *testing.T) {
+	a := newAgent()
+	sess := session.New()
+
+	tool := tools.Tool{
+		Name:     "shell",
+		Metadata: map[string]string{"danger": "high", "category": "exec"},
+		Handler:  func(context.Context, tools.ToolCall) (*tools.ToolCallResult, error) { panic("must not run") },
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeReject}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	require.Len(t, em.confirmations, 1)
+	require.Len(t, em.confirmationMeta, 1)
+	assert.Equal(t, map[string]string{"danger": "high", "category": "exec"}, em.confirmationMeta[0])
+}
+
+// TestDispatcher_ConfirmationMergesHookMetadata verifies that a
+// permission_request hook can enrich the confirmation metadata and that
+// hook keys win over the toolset's own keys on a clash.
+func TestDispatcher_ConfirmationMergesHookMetadata(t *testing.T) {
+	a := newAgent()
+	sess := session.New()
+
+	tool := tools.Tool{
+		Name:     "shell",
+		Metadata: map[string]string{"danger": "high", "source": "toolset"},
+		Handler:  func(context.Context, tools.ToolCall) (*tools.ToolCallResult, error) { panic("must not run") },
+	}
+
+	// Hook allows the prompt to proceed (no short-circuit) but contributes
+	// metadata, overriding the toolset's "source" key.
+	hd := &stubHookDispatcher{
+		on: map[hooks.EventType]*hooks.Result{
+			hooks.EventPermissionRequest: {
+				Allowed:  true,
+				Metadata: map[string]string{"source": "hook", "reason": "policy-x"},
+			},
+		},
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Hooks:    hd,
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeReject}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	require.Len(t, em.confirmationMeta, 1)
+	assert.Equal(t, map[string]string{
+		"danger": "high",
+		"source": "hook",
+		"reason": "policy-x",
+	}, em.confirmationMeta[0])
+}
+
+// TestDispatcher_ConfirmationMetadataNilWhenNoneSupplied verifies that
+// the confirmation event carries nil metadata when neither the toolset
+// nor a hook contributed any, keeping the wire payload lean.
+func TestDispatcher_ConfirmationMetadataNilWhenNoneSupplied(t *testing.T) {
+	a := newAgent()
+	sess := session.New()
+
+	tool := tools.Tool{
+		Name:    "shell",
+		Handler: func(context.Context, tools.ToolCall) (*tools.ToolCallResult, error) { panic("must not run") },
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeReject}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	require.Len(t, em.confirmationMeta, 1)
+	assert.Nil(t, em.confirmationMeta[0])
 }

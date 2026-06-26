@@ -83,7 +83,7 @@ func TestToolConfirmationReplacesRunningTool(t *testing.T) {
 	m.upsertTool("root", tv.message.ToolCall, tv.message.ToolDefinition, tuitypes.ToolStatusRunning)
 	require.Len(t, m.toolOrder, 1)
 
-	event := runtime.ToolCallConfirmation(tv.message.ToolCall, tv.message.ToolDefinition, "root")
+	event := runtime.ToolCallConfirmation(tv.message.ToolCall, tv.message.ToolDefinition, "root", nil)
 	m.handleEvent(t.Context(), event)
 
 	assert.Empty(t, m.toolOrder)

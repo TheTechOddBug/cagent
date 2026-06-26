@@ -473,6 +473,15 @@ type HookSpecificOutput struct {
 	// return rewrites concurrently — see aggregate(). Compose multiple
 	// rewriters into a single hook if you need them to chain.
 	UpdatedToolResponse *string `json:"updated_tool_response,omitempty"`
+
+	// Metadata is a set of key/value annotations a
+	// [EventPermissionRequest] hook contributes to the tool-call
+	// confirmation prompt. The runtime merges it onto the tool's own
+	// metadata before emitting the confirmation event, so clients (TUI,
+	// HTTP) can render extra per-call context. Keys from multiple hooks
+	// are merged; on a key clash the last hook in config order wins (see
+	// aggregate()). Ignored on every other event.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Result is the aggregated outcome of dispatching one event.
@@ -512,6 +521,12 @@ type Result struct {
 	// the next LLM call. Pointer-typed so callers can distinguish
 	// "explicitly cleared" (empty string) from "no rewrite" (nil).
 	UpdatedToolResponse *string
+
+	// Metadata aggregates the key/value annotations contributed by
+	// [EventPermissionRequest] hooks. The runtime merges it onto the
+	// tool's own metadata when emitting the tool-call confirmation
+	// event. nil when no hook supplied any.
+	Metadata map[string]string
 
 	// Decision is the most-restrictive PreToolUse verdict reported by
 	// any matching hook in the chain ("" when no hook produced one).
