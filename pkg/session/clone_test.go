@@ -215,3 +215,19 @@ func TestClone_PreservesItemValueFields(t *testing.T) {
 	assert.InEpsilon(t, 0.5, clone.Messages[0].Cost, 1e-9)
 	assert.Equal(t, 3, clone.Messages[0].FirstKeptEntry)
 }
+
+// TestClone_DeepCopiesErrorItem guards against the clone sharing the *Error
+// pointer with the original, which would let a mutation on one leak into the
+// other.
+func TestClone_DeepCopiesErrorItem(t *testing.T) {
+	orig := New()
+	orig.AddError(&Error{Message: "boom", Code: "model_error", AgentName: "root"})
+
+	clone := orig.Clone()
+	require.Len(t, clone.Messages, 1)
+	require.True(t, clone.Messages[0].IsError())
+	assert.Equal(t, "boom", clone.Messages[0].Error.Message)
+
+	clone.Messages[0].Error.Message = "mutated"
+	assert.Equal(t, "boom", orig.Messages[0].Error.Message, "Error must be deep-copied")
+}

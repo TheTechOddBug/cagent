@@ -115,6 +115,10 @@ func (s *Session) Clone() *Session {
 		if item.SubSession != nil {
 			clone.Messages[i].SubSession = item.SubSession.Clone()
 		}
+		if item.Error != nil {
+			errCopy := *item.Error
+			clone.Messages[i].Error = &errCopy
+		}
 	}
 	return clone
 }
@@ -135,6 +139,9 @@ func cloneSessionItem(item Item) (Item, error) {
 		return Item{SubSession: clonedSub}, nil
 	case item.Summary != "":
 		return Item{Summary: item.Summary, Cost: item.Cost}, nil
+	case item.Error != nil:
+		errCopy := *item.Error
+		return Item{Error: &errCopy}, nil
 	default:
 		return Item{}, errors.New("cannot clone empty session item")
 	}

@@ -164,6 +164,18 @@ func TestCloneSessionItem(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "test summary", cloned.Summary)
 	})
+
+	t.Run("error item clones into a distinct pointer", func(t *testing.T) {
+		item := NewErrorItem(&Error{Message: "boom", Code: "model_error"})
+		cloned, err := cloneSessionItem(item)
+		require.NoError(t, err)
+		require.NotNil(t, cloned.Error)
+		assert.Equal(t, "boom", cloned.Error.Message)
+		assert.Equal(t, "model_error", cloned.Error.Code)
+		// Mutating the clone must not affect the original item.
+		cloned.Error.Message = "mutated"
+		assert.Equal(t, "boom", item.Error.Message)
+	})
 }
 
 func TestBranchSession(t *testing.T) {
@@ -191,6 +203,29 @@ func TestBranchSession(t *testing.T) {
 		parent := &Session{Messages: []Item{NewMessageItem(UserMessage("test"))}}
 		_, err := BranchSession(parent, 1)
 		require.NoError(t, err)
+	})
+
+	t.Run("branches across a persisted error item", func(t *testing.T) {
+		// Regression: a session containing a recorded failure must remain
+		// branchable. cloneSessionItem previously errored on error items,
+		// breaking branch/fork for any failed session.
+		parent := &Session{
+			Messages: []Item{
+				NewMessageItem(UserMessage("hi")),
+				NewErrorItem(&Error{Message: "boom", Code: "model_error"}),
+				NewMessageItem(UserMessage("again")),
+			},
+		}
+
+		branched, err := BranchSession(parent, 3)
+		require.NoError(t, err)
+		require.Len(t, branched.Messages, 3)
+		require.True(t, branched.Messages[1].IsError())
+		assert.Equal(t, "boom", branched.Messages[1].Error.Message)
+
+		// Deep copy: mutating the branch must not touch the parent.
+		branched.Messages[1].Error.Message = "mutated"
+		assert.Equal(t, "boom", parent.Messages[1].Error.Message)
 	})
 
 	t.Run("valid branch copies messages up to position", func(t *testing.T) {
