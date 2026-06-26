@@ -86,10 +86,10 @@ func TestAggregateTracksMostRestrictiveDecision(t *testing.T) {
 }
 
 // TestAggregateDecisionEmptyForNonPreToolUse documents that
-// Result.Decision is meaningful only for pre_tool_use events. Other
-// events (turn_start, post_tool_use, ...) MUST leave it empty so a
-// runtime that consults it can't accidentally act on a stale verdict
-// from an unrelated hook.
+// Result.Decision is meaningful only for pre_tool_use and
+// safety_check events. Other events (turn_start, post_tool_use, ...)
+// MUST leave it empty so a runtime that consults it can't accidentally
+// act on a stale verdict from an unrelated hook.
 func TestAggregateDecisionEmptyForNonPreToolUse(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +135,8 @@ func TestAggregateMergesPermissionRequestMetadata(t *testing.T) {
 }
 
 // TestAggregateIgnoresMetadataForNonPermissionRequest documents that
-// Metadata is only collected for permission_request events.
+// Metadata is only collected for permission_request and safety_check
+// events.
 func TestAggregateIgnoresMetadataForNonPermissionRequest(t *testing.T) {
 	t.Parallel()
 
@@ -148,4 +149,82 @@ func TestAggregateIgnoresMetadataForNonPermissionRequest(t *testing.T) {
 
 	final := aggregate(results, EventPreToolUse)
 	assert.Nil(t, final.Metadata)
+}
+
+// TestAggregateSafetyCheck_DenyDeniesAndFlipsAllowed: a Deny verdict
+// from any safety_check hook flips Allowed=false so the dispatcher
+// short-circuits to errorResponse rather than askUser. Mirrors the
+// pre_tool_use deny semantics but applies at the pre-Decide() stage.
+func TestAggregateSafetyCheck_DenyDeniesAndFlipsAllowed(t *testing.T) {
+	t.Parallel()
+
+	mk := func(d Decision, reason string) hookResult {
+		return hookResult{HandlerResult: HandlerResult{Output: &Output{
+			HookSpecificOutput: &HookSpecificOutput{
+				HookEventName:            EventSafetyCheck,
+				PermissionDecision:       d,
+				PermissionDecisionReason: reason,
+			},
+		}}}
+	}
+
+	final := aggregate([]hookResult{
+		mk(DecisionAllow, "first hook says ok"),
+		mk(DecisionDeny, "second hook says no"),
+		mk(DecisionAsk, "third hook would ask"),
+	}, EventSafetyCheck)
+
+	assert.Equal(t, DecisionDeny, final.Decision)
+	assert.Equal(t, "second hook says no", final.DecisionReason)
+	assert.False(t, final.Allowed, "any Deny must flip Allowed=false")
+	assert.Contains(t, final.Message, "second hook says no")
+}
+
+// TestAggregateSafetyCheck_AllowDoesNotFlipAllowed pins the advisory
+// semantics. An Allow verdict from safety_check is informational —
+// the pipeline still proceeds to Decide() / pre_tool_use, so Allowed
+// must stay true (Deny is the only verdict that short-circuits at
+// this stage).
+func TestAggregateSafetyCheck_AllowDoesNotFlipAllowed(t *testing.T) {
+	t.Parallel()
+
+	results := []hookResult{{HandlerResult: HandlerResult{Output: &Output{
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName:      EventSafetyCheck,
+			PermissionDecision: DecisionAllow,
+		},
+	}}}}
+
+	final := aggregate(results, EventSafetyCheck)
+	assert.Equal(t, DecisionAllow, final.Decision)
+	assert.True(t, final.Allowed, "Allow under safety_check is advisory; Allowed stays true")
+}
+
+// TestAggregateSafetyCheck_MergesMetadata pins the merge contract for
+// safety_check metadata: keys from every hook are merged, with later
+// hooks winning on key clashes (same shape as permission_request).
+func TestAggregateSafetyCheck_MergesMetadata(t *testing.T) {
+	t.Parallel()
+
+	mk := func(meta map[string]string) hookResult {
+		return hookResult{HandlerResult: HandlerResult{Output: &Output{
+			HookSpecificOutput: &HookSpecificOutput{
+				HookEventName:      EventSafetyCheck,
+				PermissionDecision: DecisionAsk,
+				Metadata:           meta,
+			},
+		}}}
+	}
+
+	results := []hookResult{
+		mk(map[string]string{"blast_radius": "medium", "category": "fs-modify"}),
+		mk(map[string]string{"blast_radius": "high", "reason": "irreversible"}),
+	}
+
+	final := aggregate(results, EventSafetyCheck)
+	assert.Equal(t, map[string]string{
+		"blast_radius": "high",
+		"category":     "fs-modify",
+		"reason":       "irreversible",
+	}, final.Metadata)
 }

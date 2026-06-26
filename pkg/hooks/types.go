@@ -205,6 +205,19 @@ const (
 	// a hook may abort the run by returning decision="block" (or
 	// continue=false / exit code 2), e.g. when setup fails.
 	EventWorktreeCreate EventType = "worktree_create"
+	// EventSafetyCheck fires once per tool call BEFORE the deterministic
+	// approval pipeline (--yolo, permission patterns, pre_tool_use). It
+	// is the only event whose verdict can preempt --yolo: a deny here
+	// rejects the call regardless of permission allow-rules; an ask here
+	// forces a user confirmation that --yolo would otherwise skip. Hooks
+	// surface structured context (e.g. blast radius, risk category) via
+	// [HookSpecificOutput.Metadata]; the runtime merges that into the
+	// tool-call confirmation event so renderers can highlight destructive
+	// calls. An ALLOW verdict is advisory — the call still flows through
+	// the rest of the approval pipeline. Hook crashes fail closed, same
+	// as [EventPreToolUse]. Builtins should filter by [Input.ToolName]
+	// and return nil for tools they don't classify.
+	EventSafetyCheck EventType = "safety_check"
 )
 
 // Input is the JSON-serializable payload passed to hooks via stdin.

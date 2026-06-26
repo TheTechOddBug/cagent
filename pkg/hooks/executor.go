@@ -106,6 +106,7 @@ func compileEvents(c *Config) map[EventType][]matcher {
 		EventAfterCompaction:            flat(c.AfterCompaction),
 		EventToolResponseTransform:      compileMatchers(c.ToolResponseTransform),
 		EventWorktreeCreate:             flat(c.WorktreeCreate),
+		EventSafetyCheck:                compileMatchers(c.SafetyCheck),
 	}
 }
 
@@ -357,11 +358,12 @@ func parseStdoutJSON(stdout string) *Output {
 }
 
 // failClosed reports whether a hook failure on event must deny the
-// event. Only PreToolUse is a hard security boundary; every other
-// event surfaces failures as warnings unless the hook opts into
-// ErrorPolicyBlock.
+// event. PreToolUse and SafetyCheck are hard security boundaries: a
+// crashed safety hook must not silently allow the call through.
+// Every other event surfaces failures as warnings unless the hook
+// opts into ErrorPolicyBlock.
 func failClosed(event EventType) bool {
-	return event == EventPreToolUse
+	return event == EventPreToolUse || event == EventSafetyCheck
 }
 
 // stdoutAsContext reports whether plain stdout (non-JSON, exit 0)
@@ -448,7 +450,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 			sysMsgs = append(sysMsgs, out.SystemMessage)
 		}
 		if hso := out.HookSpecificOutput; hso != nil {
-			if event == EventPreToolUse && hso.PermissionDecision != "" {
+			if (event == EventPreToolUse || event == EventSafetyCheck) && hso.PermissionDecision != "" {
 				final.Decision, final.DecisionReason = strongerDecision(
 					final.Decision, final.DecisionReason,
 					hso.PermissionDecision, hso.PermissionDecisionReason,
@@ -467,6 +469,19 @@ func aggregate(results []hookResult, event EventType) *Result {
 					}
 					if hso.PermissionDecisionReason != "" {
 						contexts = append(contexts, hso.PermissionDecisionReason)
+					}
+				}
+			}
+			if event == EventSafetyCheck {
+				// SafetyCheck Deny short-circuits the call entirely. Ask is
+				// enforced upstream via Decision (the dispatcher routes Ask
+				// to user confirmation without flipping Allowed). Allow is
+				// advisory — the pipeline still runs Decide(), pre_tool_use,
+				// and the read-only hint.
+				if hso.PermissionDecision == DecisionDeny {
+					final.Allowed = false
+					if hso.PermissionDecisionReason != "" {
+						messages = append(messages, hso.PermissionDecisionReason)
 					}
 				}
 			}
@@ -507,7 +522,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 				// blank a leaky tool's output entirely can do so.
 				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
-			if event == EventPermissionRequest && len(hso.Metadata) > 0 {
+			if (event == EventPermissionRequest || event == EventSafetyCheck) && len(hso.Metadata) > 0 {
 				// Metadata from every matching hook is merged so multiple
 				// hooks can each contribute keys. On a key clash the last
 				// hook in config order wins (results is iterated in

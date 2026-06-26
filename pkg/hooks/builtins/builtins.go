@@ -30,6 +30,13 @@
 //   - limit_large_tool_results
 //     (tool_response_transform) — store oversized tool output in a temp file
 //     and replace it with a bounded tail plus notice
+//   - safer_shell           (safety_check)    — classify destructive
+//     shell commands against an embedded taxonomy
+//     and force user confirmation regardless of
+//     --yolo / permission allow-rules. Filters by
+//     tool name internally; no-op for non-shell
+//     calls. Auto-injected by `safer: true` on a
+//     shell toolset (see ApplyAgentDefaults).
 //   - http_post              (any event)       — POST args[1] to args[0]
 //
 // Reference any of them from a hook YAML entry as
@@ -78,6 +85,7 @@ func Register(r *hooks.Registry) error {
 		r.RegisterBuiltin(MaxIterations, maxIterations),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(LimitLargeToolResults, limitLargeToolResults),
+		r.RegisterBuiltin(SaferShell, saferShell),
 		r.RegisterBuiltin(HTTPPost, httpPost),
 		r.RegisterBuiltin(Unload, unload),
 	)
@@ -96,6 +104,12 @@ type AgentDefaults struct {
 	// makes the auto-injection idempotent against an explicit YAML
 	// entry that already names the same builtin.
 	RedactSecrets bool
+	// SaferShell auto-injects the safer_shell builtin under
+	// safety_check. Equivalent to writing the hook entry by hand. Set
+	// from the shell toolset's `safer: true` flag during agent loading;
+	// the builtin filters by tool name internally so it's a no-op for
+	// agents whose shell toolset doesn't opt in.
+	SaferShell bool
 }
 
 // AutoInjector adds default hooks to an agent's hook configuration.
@@ -153,6 +167,16 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 		cfg.ToolResponseTransform = append(cfg.ToolResponseTransform, hooks.MatcherConfig{
 			Matcher: "*",
 			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
+		})
+	}
+	if d.SaferShell {
+		// Wildcard matcher: the builtin filters by tool name
+		// internally (no-op for non-shell calls). Idempotent against
+		// an explicit YAML `safety_check` entry naming the same
+		// builtin via the dedup in hooks.Executor.hooksFor.
+		cfg.SafetyCheck = append(cfg.SafetyCheck, hooks.MatcherConfig{
+			Matcher: "*",
+			Hooks:   []hooks.Hook{builtinHook(SaferShell)},
 		})
 	}
 	if cfg.IsEmpty() {
