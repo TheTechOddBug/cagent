@@ -205,6 +205,12 @@ When a models gateway is configured (`--models-gateway`) and it exposes an OpenA
 
 Edit any previous user message to branch the conversation. Click on a past message to modify it — the agent will re-process from that point, while the original session history is preserved. This is great for exploring alternative approaches without losing your work.
 
+## Error Recovery
+
+When an agent turn fails (fatal model error, hook block, loop detection, tool-setup failure), the TUI displays the error in the message stream and persists it to the session store. Errors survive a reload and are shown exactly where they occurred, making them visible in shared or remote sessions.
+
+Each error message includes a clickable **↻ retry** button. Clicking it resumes the conversation from the point of failure — without retyping your last message. This lets you recover from transient failures (rate limits, network blips, model API errors) in one click.
+
 ## Session Management
 
 docker-agent automatically saves your sessions. Use `/sessions` to browse past conversations:
