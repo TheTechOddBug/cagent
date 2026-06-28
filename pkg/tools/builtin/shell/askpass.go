@@ -448,6 +448,10 @@ func (h *shellHandler) ensureAskpass(ctx context.Context) *askpassServer {
 	h.askpassStarted = true
 	srv, err := startAskpassServer(ctx, h.currentElicitationHandler)
 	if err != nil {
+		// Reset so a later command retries: this call's ctx may simply have
+		// been cancelled mid-startup; we must not disable askpass for the
+		// whole session because of one cancelled request.
+		h.askpassStarted = false
 		slog.WarnContext(ctx, "Failed to start sudo askpass helper; sudo will run without it", "error", err)
 		return nil
 	}
