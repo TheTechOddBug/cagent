@@ -251,9 +251,10 @@ func (h *commandHandler) Run(ctx context.Context, input []byte) (HandlerResult, 
 // The factory resolves the same working_dir and env overrides honored
 // by command hooks: working_dir repoints the [Input.Cwd] every builtin
 // keys off (the git/listing builtins shell out or stat relative to it),
-// and env is exposed via [HookEnv] so builtins that exec a subprocess
-// can run it with per-hook variables. Both default to the executor's
-// values when the hook leaves them unset, preserving prior behavior.
+// and env is exposed via [EnvFromContext] so builtins that exec a
+// subprocess can run it with per-hook variables. Both default to the
+// executor's values when the hook leaves them unset, preserving prior
+// behavior.
 func (r *Registry) builtinFactory(env HandlerEnv, hook Hook) (Handler, error) {
 	if hook.Command == "" {
 		return nil, errors.New("builtin hook requires a name in command")
