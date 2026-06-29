@@ -424,6 +424,29 @@ func SessionTitle(sessionID, title string) Event {
 
 func (e *SessionTitleEvent) GetSessionID() string { return e.SessionID }
 
+// SessionPlanUpdatedEvent fires when the session_plan toolset writes a plan.
+// Content and Path let a UI render the plan inline without re-reading the file.
+type SessionPlanUpdatedEvent struct {
+	AgentContext
+
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Content   string `json:"content,omitempty"`
+	Path      string `json:"path,omitempty"`
+}
+
+func SessionPlanUpdated(sessionID, content, path, agentName string) Event {
+	return &SessionPlanUpdatedEvent{
+		Type:         "session_plan_updated",
+		SessionID:    sessionID,
+		Content:      content,
+		Path:         path,
+		AgentContext: newAgentContext(agentName),
+	}
+}
+
+func (e *SessionPlanUpdatedEvent) GetSessionID() string { return e.SessionID }
+
 type SessionSummaryEvent struct {
 	AgentContext
 
