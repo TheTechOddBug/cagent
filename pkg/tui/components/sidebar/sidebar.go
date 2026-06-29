@@ -1256,8 +1256,11 @@ func (m *model) agentInfo(contentWidth int) string {
 		agentTitle += " ↔"
 	}
 
+	// Compute the shared column widths once so every entry aligns and the badge
+	// width is not recomputed per agent.
 	glyphOnly := contentWidth < rowGlyphOnlyMinWidth
-	nameWidth := m.agentNameWidth(contentWidth, glyphOnly)
+	badgeWidth := m.badgeColumnWidth(glyphOnly)
+	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-badgeWidth-1-agentShortcutWidth)
 
 	var bodyLines, owners []string
 	add := func(line, owner string) {
@@ -1272,7 +1275,7 @@ func (m *model) agentInfo(contentWidth int) string {
 			add("", "")
 		}
 		current := agent.Name == currentAgent
-		for _, line := range m.renderAgentLine(agent, i, contentWidth, nameWidth, glyphOnly, current) {
+		for _, line := range m.renderAgentLine(agent, i, contentWidth, nameWidth, badgeWidth, glyphOnly, current) {
 			add(line, agent.Name)
 		}
 	}
@@ -1282,11 +1285,11 @@ func (m *model) agentInfo(contentWidth int) string {
 }
 
 // thinkingKind classifies an agent's raw thinking wire label into the badge
-// vocabulary used by the card and roster rows.
+// vocabulary used by the agent lines.
 type thinkingKind int
 
 const (
-	thinkingNone     thinkingKind = iota // empty label: no badge / no card line
+	thinkingNone     thinkingKind = iota // empty label: no badge
 	thinkingOff                          // "off": disabled on a capable model
 	thinkingAdaptive                     // "adaptive": adaptive budget
 	thinkingTokens                       // decimal token count
@@ -1323,11 +1326,11 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-// thinkingBadge returns the styled right-aligned roster badge for an agent's
-// thinking label and the compact single-cell form used in the glyph-only
-// degradation step. Both are empty when the agent has no thinking
-// configuration. The vocabulary carries no ✻ glyph: the effort gauge is the
-// only visual language for thinking.
+// thinkingBadge returns the styled right-aligned badge for an agent's thinking
+// label and the compact single-cell form used in the glyph-only degradation
+// step. Both are empty when the agent has no thinking configuration. The
+// vocabulary carries no ✻ glyph: the effort gauge is the only visual language
+// for thinking.
 func thinkingBadge(label string) (badge, compact string) {
 	kind, tokens := classifyThinking(label)
 	switch kind {
@@ -1371,14 +1374,6 @@ func (m *model) badgeColumnWidth(glyphOnly bool) int {
 	return w
 }
 
-// agentNameWidth returns the width available for the agent name column given the
-// fixed marker, thinking-badge and shortcut columns. Below rowGlyphOnlyMinWidth
-// the badge collapses to a single cell (glyphOnly) so the name keeps room.
-func (m *model) agentNameWidth(contentWidth int, glyphOnly bool) int {
-	badgeWidth := m.badgeColumnWidth(glyphOnly)
-	return max(1, contentWidth-agentMarkerWidth-minGap-badgeWidth-1-agentShortcutWidth)
-}
-
 // padRight pads a (possibly styled) string with trailing spaces to width.
 func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", max(0, width-lipgloss.Width(s)))
@@ -1402,7 +1397,7 @@ func padLeft(s string, width int) string {
 // the names stay aligned. Line 2: the indented provider/model, left-truncated
 // so its informative tail survives. The description is omitted. Agents past the
 // 9th have no shortcut.
-func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth, nameWidth int, glyphOnly, current bool) []string {
+func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth, nameWidth, badgeWidth int, glyphOnly, current bool) []string {
 	agentStyle := styles.AgentAccentStyleFor(agent.Name)
 
 	var marker string
@@ -1418,7 +1413,6 @@ func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth,
 	if glyphOnly {
 		badge = compact
 	}
-	badgeWidth := m.badgeColumnWidth(glyphOnly)
 
 	var shortcut string
 	if index >= 0 && index < 9 {
