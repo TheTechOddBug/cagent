@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -217,8 +218,7 @@ type lspSession struct {
 	stdin         io.WriteCloser
 	cmd           *exec.Cmd // captured at construction; never nilled by handler teardown.
 
-	mu     sync.Mutex
-	closed bool
+	closed atomic.Bool
 
 	waitOnce sync.Once
 	waitErr  error
@@ -246,10 +246,7 @@ func (s *lspSession) startWait() {
 			// An *exec.ExitError after a signal-induced shutdown
 			// (Close → cancel) is expected; treat it as a clean exit
 			// so the supervisor only restarts on real crashes.
-			s.mu.Lock()
-			closed := s.closed
-			s.mu.Unlock()
-			if closed {
+			if s.closed.Load() {
 				return
 			}
 			s.waitErr = fmt.Errorf("%w: %w", lifecycle.ErrServerCrashed, err)
@@ -260,13 +257,9 @@ func (s *lspSession) startWait() {
 // Close performs the LSP shutdown handshake and tears down the process.
 // Idempotent; safe to call concurrently with Wait.
 func (s *lspSession) Close(ctx context.Context) error {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	s.closed = true
-	s.mu.Unlock()
 
 	slog.DebugContext(ctx, "Stopping LSP server")
 
