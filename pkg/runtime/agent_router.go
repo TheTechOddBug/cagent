@@ -2,7 +2,7 @@ package runtime
 
 import (
 	"log/slog"
-	"sync"
+	"sync/atomic"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
@@ -19,32 +19,34 @@ import (
 //
 // All methods are safe for concurrent use.
 type agentRouter struct {
-	mu      sync.RWMutex
-	team    *team.Team
-	current string
+	team *team.Team
+	// current is the only mutable field; team is set once at construction
+	// and read-only after, so an atomic pointer suffices to guard it.
+	current atomic.Pointer[string]
 }
 
 // newAgentRouter builds an agentRouter with team t and an initial current
 // agent name. Callers are responsible for pre-validating that the initial
 // name exists in t (NewLocalRuntime does this).
 func newAgentRouter(t *team.Team, initial string) *agentRouter {
-	return &agentRouter{team: t, current: initial}
+	r := &agentRouter{team: t}
+	r.current.Store(&initial)
+	return r
 }
 
 // Name returns the name of the currently active agent.
 func (r *agentRouter) Name() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.current
+	if name := r.current.Load(); name != nil {
+		return *name
+	}
+	return ""
 }
 
 // Set replaces the current agent name without validating that it exists
 // in the team. Used from agent_delegation.go where the validation has
 // already been performed against the team's transfer/handoff lists.
 func (r *agentRouter) Set(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.current = name
+	r.current.Store(&name)
 }
 
 // SetValidated checks that name exists in the team, then sets it as the
