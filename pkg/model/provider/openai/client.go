@@ -218,25 +218,60 @@ func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) [
 	// Coalesce consecutive same-role (system/user) messages into one for generic
 	// OpenAI-compatible endpoints. docker-agent emits a separate system message
 	// per source (the agent instruction plus each toolset's instructions), but
-	// some such backends silently return an empty stream when a request carries
-	// more than one system message. The DMR client already applies this merge
-	// for the same reason. Apply it to explicit openai_chatcompletions configs
-	// and built-in OpenAI-compatible endpoints (Baseten, OVHcloud) that do not
-	// set api_type in ProviderOpts.
+	// some such backends reject a request that carries more than one system
+	// message. Two failure modes have been observed: OVHcloud's Qwen3.5 returns
+	// an empty stream (#3145), while vLLM serving Qwen 3.5/3.6 fails hard with
+	// "HTTP 400: System message must be at the beginning" (#2327, #3344) because
+	// the model's Jinja chat template only allows a system message at index 0.
+	// The DMR client already applies this merge for the same reason.
 	if shouldMergeConsecutiveMessages(&c.ModelConfig) {
 		return oaistream.MergeConsecutiveMessages(converted)
 	}
 	return converted
 }
 
+// openModelHostProviders are built-in OpenAI-compatible aliases that front
+// arbitrary open-weight models (Qwen, GLM, Llama, DeepSeek, ...) whose
+// server-side chat templates may reject a request with more than one system
+// message. First-party APIs with a fixed, vendor-controlled model lineup
+// (openai, mistral, xai, minimax, github-copilot, opencode) tolerate multiple
+// system messages and are deliberately absent so their behavior is unchanged.
+var openModelHostProviders = map[string]bool{
+	"baseten":    true,
+	"ovhcloud":   true,
+	"openrouter": true,
+	"nebius":     true,
+}
+
+// shouldMergeConsecutiveMessages reports whether the chat-completions request
+// should coalesce consecutive same-role messages before sending.
+//
+// docker-agent emits one system message per source (the agent instruction plus
+// each toolset's instructions). Some OpenAI-compatible backends reject more than
+// one system message because the served model's Jinja chat template only allows
+// a system message at index 0 (Qwen 3.5/3.6 on vLLM, #2327/#3344), or return an
+// empty stream (OVHcloud Qwen3.5, #3145). Merging is a safe normalization
+// (same-role content is concatenated), and the DMR client already does it.
+//
+// It is scoped to endpoints that plausibly front such models: explicit
+// chat-completions custom providers, a self-hosted server reached by pointing
+// the openai provider at a custom base_url (vLLM/SGLang), and the open-model
+// host aliases above. The official OpenAI API and other first-party APIs are
+// left untouched.
 func shouldMergeConsecutiveMessages(cfg *latest.ModelConfig) bool {
-	if getAPIType(cfg) == "openai_chatcompletions" {
-		return true
-	}
 	if cfg == nil {
 		return false
 	}
-	return cfg.Provider == "baseten" || cfg.Provider == "ovhcloud"
+	// Custom providers pin the chat-completions api_type in ProviderOpts.
+	if getAPIType(cfg) == "openai_chatcompletions" {
+		return true
+	}
+	// A custom base_url on the openai provider means a self-hosted or
+	// third-party OpenAI-compatible server (e.g. vLLM), not api.openai.com.
+	if cfg.Provider == "openai" && cfg.BaseURL != "" {
+		return true
+	}
+	return openModelHostProviders[cfg.Provider]
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
