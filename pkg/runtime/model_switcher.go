@@ -708,6 +708,20 @@ func isEmbeddingModel(family, name string) bool {
 	return strings.Contains(familyLower, "embed") || strings.Contains(nameLower, "embed")
 }
 
+// aliasBaseURLResolvable reports whether every environment variable referenced
+// by a (possibly templated) alias base URL is set. Aliases like Cloudflare's
+// account/gateway-scoped endpoints need extra vars beyond their token; without
+// them the alias would resolve to a broken URL, so it must not be advertised as
+// an available provider (mirrors the preflight check in config.gather).
+func aliasBaseURLResolvable(ctx context.Context, baseURL string, env environment.Provider) bool {
+	for _, name := range environment.Refs(baseURL) {
+		if v, _ := env.Get(ctx, name); v == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // getAvailableProviders returns a map of provider names that the user has credentials for.
 func (r *LocalRuntime) getAvailableProviders(ctx context.Context) map[string]bool {
 	available := make(map[string]bool)
@@ -731,9 +745,16 @@ func (r *LocalRuntime) getAvailableProviders(ctx context.Context) map[string]boo
 		if alias.TokenEnvVar == "" {
 			continue
 		}
-		if key, _ := env.Get(ctx, alias.TokenEnvVar); key != "" {
-			available[name] = true
+		if key, _ := env.Get(ctx, alias.TokenEnvVar); key == "" {
+			continue
 		}
+		// A templated base URL (e.g. Cloudflare's account/gateway-scoped
+		// endpoint) also needs the vars it references; without them the alias
+		// resolves to a broken URL, so don't advertise its catalog models.
+		if !aliasBaseURLResolvable(ctx, alias.BaseURL, env) {
+			continue
+		}
+		available[name] = true
 	}
 
 	// Check core providers with well-known env vars

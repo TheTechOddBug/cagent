@@ -143,6 +143,10 @@
       url: /providers/baseten/
     - title: Cerebras
       url: /providers/cerebras/
+    - title: Cloudflare AI Gateway
+      url: /providers/cloudflare-ai-gateway/
+    - title: Cloudflare Workers AI
+      url: /providers/cloudflare-workers-ai/
     - title: DeepSeek
       url: /providers/deepseek/
     - title: Docker Model Runner

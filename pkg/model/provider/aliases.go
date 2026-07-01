@@ -9,8 +9,11 @@ import (
 
 // Alias defines the configuration for a provider alias.
 type Alias struct {
-	APIType     string // The actual API type to use (openai, anthropic, etc.)
-	BaseURL     string // Default base URL for the provider
+	APIType string // The actual API type to use (openai, anthropic, etc.)
+	// BaseURL is the default base URL for the provider. It may contain
+	// ${VAR}/${env.VAR} references (e.g. ${CLOUDFLARE_ACCOUNT_ID}) that are
+	// resolved from the runtime environment when the provider is built.
+	BaseURL     string
 	TokenEnvVar string // Environment variable name for the API token
 }
 
@@ -117,6 +120,19 @@ var Aliases = map[string]Alias{
 		APIType:     "openai",
 		BaseURL:     "https://ai-gateway.vercel.sh/v1",
 		TokenEnvVar: "AI_GATEWAY_API_KEY",
+	},
+	// Cloudflare endpoints are account-scoped, so their base URLs are templated
+	// with ${CLOUDFLARE_ACCOUNT_ID} (and ${CLOUDFLARE_GATEWAY_ID} for the
+	// gateway), resolved from the environment at provider-build time.
+	"cloudflare-workers-ai": {
+		APIType:     "openai",
+		BaseURL:     "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+		TokenEnvVar: "CLOUDFLARE_API_TOKEN",
+	},
+	"cloudflare-ai-gateway": {
+		APIType:     "openai",
+		BaseURL:     "https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${CLOUDFLARE_GATEWAY_ID}/compat",
+		TokenEnvVar: "CLOUDFLARE_API_TOKEN",
 	},
 	"github-copilot": {
 		APIType:     "openai",

@@ -176,6 +176,12 @@ func addEnvVarsForModelConfig(ctx context.Context, model *latest.ModelConfig, cu
 		if alias.TokenEnvVar != "" {
 			requiredEnv[alias.TokenEnvVar] = true
 		}
+		// A templated alias base URL (e.g. Cloudflare's account/gateway-scoped
+		// endpoint) references env vars that must resolve when the provider is
+		// built, so surface them in the preflight check too.
+		for _, name := range environment.Refs(alias.BaseURL) {
+			requiredEnv[name] = true
+		}
 	} else {
 		addEnvVarsForCoreProvider(ctx, model.Provider, model, requiredEnv, env)
 	}

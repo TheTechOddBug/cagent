@@ -40,6 +40,12 @@ type openAIAliasProvider struct {
 	// system messages to be coalesced into a single leading one (issue #3344).
 	// First-party APIs with a fixed model lineup leave them untouched.
 	mergesSystemMessages bool
+
+	// extraLiveEnvVars lists additional env vars (beyond envVar) that must be set
+	// for the live API test to run. Aliases with a templated base URL (e.g.
+	// Cloudflare's account/gateway-scoped endpoints) need these to resolve a real
+	// URL; the hermetic end-to-end test overrides the base URL so it ignores them.
+	extraLiveEnvVars []string
 }
 
 var openAIAliasProviders = []openAIAliasProvider{
@@ -102,6 +108,31 @@ var openAIAliasProviders = []openAIAliasProvider{
 		model:                "openai/gpt-5",
 		greeting:             "Hello from Vercel",
 		mergesSystemMessages: true,
+	},
+	{
+		// Cloudflare Workers AI serves open-weight models from the edge, so its
+		// per-source system messages are coalesced like the other open-model
+		// hosts (issue #3344). Its base URL is account-scoped, so the live test
+		// additionally needs CLOUDFLARE_ACCOUNT_ID.
+		provider:             "cloudflare-workers-ai",
+		envVar:               "CLOUDFLARE_API_TOKEN",
+		testKey:              "cf-test-workers-ai-key",
+		model:                "@cf/meta/llama-3.1-8b-instruct",
+		greeting:             "Hello from Cloudflare Workers AI",
+		mergesSystemMessages: true,
+		extraLiveEnvVars:     []string{"CLOUDFLARE_ACCOUNT_ID"},
+	},
+	{
+		// Cloudflare AI Gateway is a multi-provider router that can front
+		// open-weight models, coalesced like Vercel/OpenRouter. Its base URL is
+		// account- and gateway-scoped, so the live test needs both ids.
+		provider:             "cloudflare-ai-gateway",
+		envVar:               "CLOUDFLARE_API_TOKEN",
+		testKey:              "cf-test-ai-gateway-key",
+		model:                "workers-ai/@cf/meta/llama-3.1-8b-instruct",
+		greeting:             "Hello from Cloudflare AI Gateway",
+		mergesSystemMessages: true,
+		extraLiveEnvVars:     []string{"CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"},
 	},
 }
 
@@ -244,6 +275,13 @@ func TestOpenAIAliasProvider_LiveAPI(t *testing.T) {
 			apiKey := os.Getenv(p.envVar)
 			if apiKey == "" {
 				t.Skipf("%s not set; skipping live %s API test", p.envVar, p.provider)
+			}
+			// Templated-base-URL aliases (e.g. Cloudflare) also need their
+			// account/gateway ids to resolve a real endpoint.
+			for _, e := range p.extraLiveEnvVars {
+				if os.Getenv(e) == "" {
+					t.Skipf("%s not set; skipping live %s API test", e, p.provider)
+				}
 			}
 
 			// No BaseURL/TokenKey: both come from the built-in alias, so this
