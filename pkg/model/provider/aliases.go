@@ -98,6 +98,16 @@ var Aliases = map[string]Alias{
 		BaseURL:     "https://api.cerebras.ai/v1",
 		TokenEnvVar: "CEREBRAS_API_KEY",
 	},
+	"together": {
+		APIType:     "openai",
+		BaseURL:     "https://api.together.xyz/v1",
+		TokenEnvVar: "TOGETHER_API_KEY",
+	},
+	"huggingface": {
+		APIType:     "openai",
+		BaseURL:     "https://router.huggingface.co/v1",
+		TokenEnvVar: "HF_TOKEN",
+	},
 	"github-copilot": {
 		APIType:     "openai",
 		BaseURL:     "https://api.githubcopilot.com",

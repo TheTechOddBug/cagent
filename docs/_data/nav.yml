@@ -155,6 +155,8 @@
       url: /providers/google/
     - title: Groq
       url: /providers/groq/
+    - title: Hugging Face
+      url: /providers/huggingface/
     - title: Local Models
       url: /providers/local/
     - title: MiniMax
@@ -173,6 +175,8 @@
       url: /providers/openrouter/
     - title: OVHcloud
       url: /providers/ovhcloud/
+    - title: Together AI
+      url: /providers/together/
     - title: "xAI (Grok)"
       url: /providers/xai/
     - title: Provider Definitions
