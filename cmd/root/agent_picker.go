@@ -196,6 +196,7 @@ func (m *agentPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case key.Matches(msg, agentPickerKeys.Quit), key.Matches(msg, agentPickerKeys.Details):
 				m.showDetails = false
+				m.resetClickTracking()
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -315,11 +316,20 @@ func (m *agentPickerModel) openDetails() {
 	if m.cursor < 0 || m.cursor >= len(m.choices) {
 		return
 	}
+	m.resetClickTracking()
 	m.resizeDetails()
 	m.details.SetContent(m.detailsContent(m.choices[m.cursor]))
 	m.details.GotoTop()
 	m.syncDetailsBar()
 	m.showDetails = true
+}
+
+// resetClickTracking clears double-click state so an unrelated later click
+// can't be paired with a stale earlier one (e.g. across opening/closing the
+// details dialog).
+func (m *agentPickerModel) resetClickTracking() {
+	m.lastClickIndex = -1
+	m.lastClickTime = time.Time{}
 }
 
 // detailsContent returns the text shown in the YAML dialog for a choice.
@@ -452,9 +462,7 @@ func (m *agentPickerModel) cardWidth() int {
 // are stacked with no gaps below the title/subtitle. The bool is false when
 // the point is outside every card.
 func (m *agentPickerModel) cardAt(x, y int) (int, bool) {
-	// Measure the real panel so the hit zones track the rendered layout even
-	// when the subtitle or help line is wider than the cards.
-	panelWidth, panelHeight := lipgloss.Size(m.render())
+	panelWidth, panelHeight := m.panelSize()
 	originX := max((m.width-panelWidth)/2, 0)
 	originY := max((m.height-panelHeight)/2, 0)
 
@@ -471,18 +479,33 @@ func (m *agentPickerModel) cardAt(x, y int) (int, bool) {
 	return i, true
 }
 
-func (m *agentPickerModel) render() string {
-	title := styles.HighlightWhiteStyle.Render("Choose an agent to run")
-	subtitle := styles.MutedStyle.Render("Pick the agent you want to start a session with, or double-click a card.")
+// panelSize returns the outer dimensions of the rendered picker panel without
+// rendering every card. cardAt relies on it to place hit zones, and it is
+// called on every mouse-motion event, so it must stay cheap: cards all share
+// cardWidth, so only the (variable-width) header lines need measuring.
+func (m *agentPickerModel) panelSize() (w, h int) {
+	title, subtitle, help := m.headerText()
+	contentWidth := max(
+		m.cardWidth(),
+		lipgloss.Width(title),
+		lipgloss.Width(subtitle),
+		lipgloss.Width(help),
+	)
+	// Horizontal chrome: border (1) + padding (3) on each side.
+	w = contentWidth + 2*(1+3)
+	// Content rows: title + subtitle + blank + cards + blank + help.
+	rows := 3 + len(m.choices)*agentPickerCardHeight + 2
+	// Vertical chrome: border (2) + padding (2).
+	h = rows + 4
+	return w, h
+}
 
-	cards := make([]string, 0, len(m.choices))
-	cardWidth := m.cardWidth()
-	for i, choice := range m.choices {
-		cards = append(cards, m.renderCard(choice, cardWidth, i == m.cursor))
-	}
-	list := lipgloss.JoinVertical(lipgloss.Left, cards...)
-
-	help := styles.MutedStyle.Render(
+// headerText returns the (styled) title, subtitle, and help lines shared by
+// render and panelSize so their layout math can't drift apart.
+func (m *agentPickerModel) headerText() (title, subtitle, help string) {
+	title = styles.HighlightWhiteStyle.Render("Choose an agent to run")
+	subtitle = styles.MutedStyle.Render("Pick the agent you want to start a session with, or double-click a card.")
+	help = styles.MutedStyle.Render(
 		strings.Join([]string{
 			"↑↓ move",
 			"double-click select",
@@ -491,6 +514,18 @@ func (m *agentPickerModel) render() string {
 			agentPickerKeys.Quit.Help().Key + " " + agentPickerKeys.Quit.Help().Desc,
 		}, "   "),
 	)
+	return title, subtitle, help
+}
+
+func (m *agentPickerModel) render() string {
+	title, subtitle, help := m.headerText()
+
+	cards := make([]string, 0, len(m.choices))
+	cardWidth := m.cardWidth()
+	for i, choice := range m.choices {
+		cards = append(cards, m.renderCard(choice, cardWidth, i == m.cursor))
+	}
+	list := lipgloss.JoinVertical(lipgloss.Left, cards...)
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -566,10 +601,11 @@ func (m *agentPickerModel) renderCard(choice agentChoice, cardWidth int, selecte
 	header := marker + nameStyle.Render(toolcommon.TruncateText(choice.ref, cardWidth-6))
 
 	// Descriptions and load errors can come from arbitrary (including
-	// remote) configs, so collapse them to a single line and truncate to
-	// the card width to keep the layout intact. The detail sits inside the
-	// card's 2-space indent and 1-column horizontal padding on each side.
-	detailWidth := cardWidth - 4
+	// remote) configs, so collapse them to a single line and truncate to fit
+	// the card. The detail sits behind a 2-space indent and inside the card's
+	// border (1) + padding (1) on each side, matching the header's budget of
+	// cardWidth-6.
+	detailWidth := cardWidth - 6
 	var detail string
 	switch {
 	case choice.err != nil:
