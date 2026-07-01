@@ -246,6 +246,11 @@ var openModelHostProviders = map[string]bool{
 	"together":    true,
 	"huggingface": true,
 	"vercel":      true,
+	// Cloudflare Workers AI serves open-weight models directly; the AI Gateway
+	// fronts them (and other providers) through one endpoint. Both plausibly
+	// reach models with strict single-system-message chat templates.
+	"cloudflare-workers-ai": true,
+	"cloudflare-ai-gateway": true,
 }
 
 // shouldMergeConsecutiveMessages reports whether the chat-completions request

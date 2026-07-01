@@ -516,6 +516,73 @@ func TestGetAvailableProviders(t *testing.T) {
 	}
 }
 
+// TestGetAvailableProviders_TemplatedAlias verifies that an alias with a
+// templated base URL (Cloudflare's account/gateway-scoped endpoints) is only
+// advertised once every env var its URL references is set, not on the token
+// alone. Otherwise the picker would surface catalog models that cannot be
+// selected (they fail at build time on the missing account/gateway id).
+func TestGetAvailableProviders_TemplatedAlias(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		envVars     map[string]string
+		wantPresent []string
+		wantAbsent  []string
+	}{
+		{
+			name:       "token alone does not advertise Cloudflare",
+			envVars:    map[string]string{"CLOUDFLARE_API_TOKEN": "cf-test"},
+			wantAbsent: []string{"cloudflare-workers-ai", "cloudflare-ai-gateway"},
+		},
+		{
+			name: "token and account id advertise workers-ai but not the gateway",
+			envVars: map[string]string{
+				"CLOUDFLARE_API_TOKEN":  "cf-test",
+				"CLOUDFLARE_ACCOUNT_ID": "acc-123",
+			},
+			wantPresent: []string{"cloudflare-workers-ai"},
+			wantAbsent:  []string{"cloudflare-ai-gateway"},
+		},
+		{
+			name: "token, account and gateway ids advertise both",
+			envVars: map[string]string{
+				"CLOUDFLARE_API_TOKEN":  "cf-test",
+				"CLOUDFLARE_ACCOUNT_ID": "acc-123",
+				"CLOUDFLARE_GATEWAY_ID": "gw-9",
+			},
+			wantPresent: []string{"cloudflare-workers-ai", "cloudflare-ai-gateway"},
+		},
+		{
+			name:        "static-URL alias is still advertised on its token alone",
+			envVars:     map[string]string{"AI_GATEWAY_API_KEY": "vck-test"},
+			wantPresent: []string{"vercel"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := &LocalRuntime{
+				modelSwitcherCfg: &ModelSwitcherConfig{
+					ProviderRegistry: testProviderRegistry(),
+					EnvProvider:      environment.NewMapEnvProvider(tt.envVars),
+				},
+			}
+
+			got := r.getAvailableProviders(t.Context())
+
+			for _, want := range tt.wantPresent {
+				assert.True(t, got[want], "expected provider %s to be available", want)
+			}
+			for _, absent := range tt.wantAbsent {
+				assert.False(t, got[absent], "expected provider %s to NOT be available", absent)
+			}
+		})
+	}
+}
+
 // TestGetAvailableProviders_AnthropicWIF verifies that a workspace configured
 // with Workload Identity Federation surfaces the anthropic provider in the
 // model picker even without ANTHROPIC_API_KEY in the env.

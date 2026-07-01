@@ -73,8 +73,10 @@ docker-agent also includes built-in aliases for these providers:
 | Cerebras       | `cerebras`       | `CEREBRAS_API_KEY`                  |
 | Together AI    | `together`       | `TOGETHER_API_KEY`                  |
 | Hugging Face   | `huggingface`    | `HF_TOKEN`                          |
+| Cloudflare Workers AI | `cloudflare-workers-ai` | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | Moonshot AI    | `moonshot`       | `MOONSHOT_API_KEY`                  |
 | Vercel AI Gateway | `vercel`      | `AI_GATEWAY_API_KEY`                |
+| Cloudflare AI Gateway | `cloudflare-ai-gateway` | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
 | Requesty       | `requesty`       | `REQUESTY_API_KEY`                  |
 | OpenRouter     | `openrouter`     | `OPENROUTER_API_KEY`                |
 | Azure OpenAI   | `azure`          | `AZURE_API_KEY` + `base_url`        |

@@ -62,6 +62,38 @@ func TestCatalogAliases(t *testing.T) {
 	}
 }
 
+// TestCloudflareAliases asserts the two Cloudflare aliases resolve to their
+// account/gateway-scoped, env-templated base URLs. Unlike the static aliases
+// above, their BaseURL carries ${...} references that are expanded at
+// provider-build time (see cloudflare_alias_test.go for the resolution path).
+func TestCloudflareAliases(t *testing.T) {
+	t.Parallel()
+
+	expected := map[string]Alias{
+		"cloudflare-workers-ai": {
+			APIType:     "openai",
+			BaseURL:     "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			TokenEnvVar: "CLOUDFLARE_API_TOKEN",
+		},
+		"cloudflare-ai-gateway": {
+			APIType:     "openai",
+			BaseURL:     "https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${CLOUDFLARE_GATEWAY_ID}/compat",
+			TokenEnvVar: "CLOUDFLARE_API_TOKEN",
+		},
+	}
+
+	for name, want := range expected {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			alias, ok := LookupAlias(name)
+			require.True(t, ok)
+			assert.Equal(t, want, alias)
+			assert.True(t, IsKnownProvider(name))
+		})
+	}
+}
+
 func TestEachAlias(t *testing.T) {
 	t.Parallel()
 

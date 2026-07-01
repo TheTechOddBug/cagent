@@ -19,13 +19,15 @@ import (
 // are not expected to exist in the remote models.dev catalog. The test
 // skips models.dev lookups for these to avoid false failures.
 var modelsDevAbsentProviders = map[string]bool{
-	"dmr":          true, // Docker Model Runner (local, not in catalog)
-	"opencode-zen": true, // not yet registered in models.dev
-	"ovhcloud":     true, // OVHcloud AI Endpoints (not yet in models.dev)
-	"fireworks":    true, // models.dev catalogs Fireworks under the "fireworks-ai" id, not "fireworks"
-	"together":     true, // models.dev catalogs Together AI under the "togetherai" id, not "together"
-	"moonshot":     true, // models.dev catalogs Moonshot AI under the "moonshotai" id, not "moonshot"
-	"vercel":       true, // Vercel AI Gateway is a multi-provider router, not a models.dev catalog id
+	"dmr":                   true, // Docker Model Runner (local, not in catalog)
+	"opencode-zen":          true, // not yet registered in models.dev
+	"ovhcloud":              true, // OVHcloud AI Endpoints (not yet in models.dev)
+	"fireworks":             true, // models.dev catalogs Fireworks under the "fireworks-ai" id, not "fireworks"
+	"together":              true, // models.dev catalogs Together AI under the "togetherai" id, not "together"
+	"moonshot":              true, // models.dev catalogs Moonshot AI under the "moonshotai" id, not "moonshot"
+	"vercel":                true, // Vercel AI Gateway is a multi-provider router, not a models.dev catalog id
+	"cloudflare-workers-ai": true, // example uses an @cf/... model id not present in the models.dev snapshot (only variant ids like -fp8 are listed)
+	"cloudflare-ai-gateway": true, // multi-provider router; example model ids use the gateway's provider/model form, not guaranteed to match a models.dev id
 }
 
 func collectExamples(t *testing.T) []string {
