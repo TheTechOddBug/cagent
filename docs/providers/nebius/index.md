@@ -2,9 +2,8 @@
 title: "Nebius"
 description: "Use Nebius AI models with docker-agent."
 keywords: docker agent, ai agents, model providers, llm, nebius
+weight: 190
 ---
-
-# Nebius
 
 _Use Nebius AI models with docker-agent._
 

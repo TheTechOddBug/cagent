@@ -2,9 +2,8 @@
 title: "Permissions"
 description: "Control which tools can execute automatically, require confirmation, or are blocked entirely."
 keywords: docker agent, ai agents, configuration, yaml, permissions
+weight: 70
 ---
-
-# Permissions
 
 _Control which tools can execute automatically, require confirmation, or are blocked entirely._
 

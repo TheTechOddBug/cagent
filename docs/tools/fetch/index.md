@@ -2,9 +2,9 @@
 title: "Fetch Tool"
 description: "Read content from HTTP/HTTPS URLs."
 keywords: docker agent, ai agents, tools, toolsets, fetch tool
+linkTitle: "Fetch"
+weight: 50
 ---
-
-# Fetch Tool
 
 _Read content from HTTP/HTTPS URLs._
 

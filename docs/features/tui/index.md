@@ -2,9 +2,9 @@
 title: "Terminal UI (TUI)"
 description: "docker-agent's default interface is a rich, interactive terminal UI with file attachments, themes, session management, and more."
 keywords: docker agent, ai agents, features, terminal ui (tui)
+linkTitle: "Terminal UI"
+weight: 10
 ---
-
-# Terminal UI (TUI)
 
 _docker-agent's default interface is a rich, interactive terminal UI with file attachments, themes, session management, and more._
 

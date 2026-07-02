@@ -2,9 +2,9 @@
 title: "User Prompt Tool"
 description: "Ask the user questions and collect interactive input during agent execution."
 keywords: docker agent, ai agents, tools, toolsets, user prompt tool
+linkTitle: "User Prompt"
+weight: 190
 ---
-
-# User Prompt Tool
 
 _Ask the user questions and collect interactive input during agent execution._
 

@@ -2,9 +2,9 @@
 title: "Model Configuration"
 description: "Complete reference for defining models with providers, parameters, and reasoning settings."
 keywords: docker agent, ai agents, configuration, yaml, model configuration
+linkTitle: "Model Config"
+weight: 40
 ---
-
-# Model Configuration
 
 _Complete reference for defining models with providers, parameters, and reasoning settings._
 

@@ -2,9 +2,10 @@
 title: "A2A Protocol"
 description: "Expose docker-agent agents via Google's Agent-to-Agent (A2A) protocol for interoperability with other agent frameworks."
 keywords: docker agent, ai agents, features, a2a protocol
+weight: 60
+aliases:
+  - /ai/docker-agent/integrations/a2a/
 ---
-
-# A2A Protocol
 
 _Expose docker-agent agents via Google's Agent-to-Agent (A2A) protocol for interoperability with other agent frameworks._
 

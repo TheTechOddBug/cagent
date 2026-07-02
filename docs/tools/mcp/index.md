@@ -2,9 +2,11 @@
 title: "MCP Tool"
 description: "Extend agents with external tools via the Model Context Protocol."
 keywords: docker agent, ai agents, tools, toolsets, mcp tool
+linkTitle: "MCP"
+weight: 130
+aliases:
+  - /ai/docker-agent/integrations/mcp/
 ---
-
-# MCP Tool
 
 _Extend agents with external tools via the Model Context Protocol (MCP)._
 

@@ -2,9 +2,9 @@
 title: "Model Picker Tool"
 description: "Let the agent pick between several models per turn."
 keywords: docker agent, ai agents, tools, toolsets, model picker tool
+linkTitle: "Model Picker"
+weight: 200
 ---
-
-# Model Picker Tool
 
 _Let the agent pick between several models per turn._
 

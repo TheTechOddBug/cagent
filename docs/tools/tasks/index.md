@@ -2,9 +2,9 @@
 title: "Tasks Tool"
 description: "Persistent task database with priorities and dependencies, shared across sessions."
 keywords: docker agent, ai agents, tools, toolsets, tasks tool
+linkTitle: "Tasks"
+weight: 180
 ---
-
-# Tasks Tool
 
 _Persistent task database with priorities and dependencies, shared across sessions._
 

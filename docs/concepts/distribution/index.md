@@ -2,9 +2,10 @@
 title: "Agent Distribution"
 description: "Package, share, and run agents via OCI-compatible registries — just like container images."
 keywords: docker agent, ai agents, concepts, agent distribution
+weight: 50
+aliases:
+  - /ai/docker-agent/sharing-agents/
 ---
-
-# Agent Distribution
 
 _Package, share, and run agents via OCI-compatible registries — just like container images._
 

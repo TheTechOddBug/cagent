@@ -2,9 +2,9 @@
 title: "Plan Tool"
 description: "Shared persistent scratchpad for multi-agent collaboration."
 keywords: docker agent, ai agents, tools, toolsets, plan tool
+linkTitle: "Plan"
+weight: 150
 ---
-
-# Plan Tool
 
 _Shared persistent scratchpad for multi-agent collaboration._
 

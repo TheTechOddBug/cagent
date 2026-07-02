@@ -2,9 +2,9 @@
 title: "Transfer Task Tool"
 description: "Delegate tasks to sub-agents in multi-agent setups."
 keywords: docker agent, ai agents, tools, toolsets, transfer task tool
+linkTitle: "Transfer Task"
+weight: 80
 ---
-
-# Transfer Task Tool
 
 _Delegate tasks to sub-agents in multi-agent setups._
 

@@ -2,9 +2,8 @@
 title: "Managing Secrets"
 description: "How to securely provide API keys and credentials to docker-agent using environment variables, env files, Docker Compose secrets, macOS Keychain, pass, and 1Password references."
 keywords: docker agent, ai agents, guides, managing secrets
+weight: 30
 ---
-
-# Managing Secrets
 
 _How to securely provide API keys and credentials to docker-agent._
 

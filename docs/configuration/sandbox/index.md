@@ -2,9 +2,8 @@
 title: "Sandbox Mode"
 description: "Run agents in an isolated Docker sandbox VM for enhanced security."
 keywords: docker agent, ai agents, configuration, yaml, sandbox mode
+weight: 80
 ---
-
-# Sandbox Mode
 
 _Run agents in an isolated Docker sandbox VM for enhanced security._
 

@@ -2,9 +2,8 @@
 title: "Moonshot AI"
 description: "Use Moonshot AI (Kimi) models with docker-agent."
 keywords: docker agent, ai agents, model providers, llm, moonshot ai
+weight: 180
 ---
-
-# Moonshot AI
 
 _Use Moonshot AI (Kimi) models with docker-agent._
 

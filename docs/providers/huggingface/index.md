@@ -2,9 +2,8 @@
 title: "Hugging Face"
 description: "Use Hugging Face Inference Providers with docker-agent."
 keywords: docker agent, ai agents, model providers, llm, hugging face
+weight: 140
 ---
-
-# Hugging Face
 
 _Use Hugging Face Inference Providers with docker-agent._
 

@@ -2,9 +2,9 @@
 title: "Memory Tool"
 description: "Persistent key-value storage backed by SQLite for cross-session recall."
 keywords: docker agent, ai agents, tools, toolsets, memory tool
+linkTitle: "Memory"
+weight: 100
 ---
-
-# Memory Tool
 
 _Persistent key-value storage backed by SQLite for cross-session recall._
 

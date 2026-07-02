@@ -2,9 +2,9 @@
 title: "Handoff Tool"
 description: "Hand off the active conversation to another local agent defined in the same config."
 keywords: docker agent, ai agents, tools, toolsets, handoff tool
+linkTitle: "Handoff"
+weight: 70
 ---
-
-# Handoff Tool
 
 _Hand off the active conversation to another local agent defined in the same config._
 

@@ -2,9 +2,9 @@
 title: "OpenAPI Tool"
 description: "Automatically generate tools from an OpenAPI specification."
 keywords: docker agent, ai agents, tools, toolsets, openapi tool
+linkTitle: "OpenAPI"
+weight: 230
 ---
-
-# OpenAPI Tool
 
 _Automatically generate tools from an OpenAPI specification._
 

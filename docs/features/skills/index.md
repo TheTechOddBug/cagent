@@ -2,9 +2,8 @@
 title: "Skills"
 description: "Skills provide specialized instructions that agents can load on demand when a task matches a skill's description."
 keywords: docker agent, ai agents, features, skills
+weight: 110
 ---
-
-# Skills
 
 _Skills provide specialized instructions that agents can load on demand when a task matches a skill's description._
 

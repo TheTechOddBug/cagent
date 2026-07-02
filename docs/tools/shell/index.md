@@ -2,9 +2,9 @@
 title: "Shell Tool"
 description: "Execute arbitrary shell commands in the user's environment."
 keywords: docker agent, ai agents, tools, toolsets, shell tool
+linkTitle: "Shell"
+weight: 20
 ---
-
-# Shell Tool
 
 _Execute arbitrary shell commands in the user's environment._
 

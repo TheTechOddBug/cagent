@@ -2,9 +2,8 @@
 title: "HCL Configuration"
 description: "Write docker-agent configs in HCL instead of YAML, using labeled blocks, heredocs, and the same underlying schema."
 keywords: docker agent, ai agents, configuration, yaml, hcl configuration
+weight: 20
 ---
-
-# HCL Configuration
 
 _Write docker-agent configs in HCL instead of YAML. It maps to the same docker-agent schema and validation rules._
 

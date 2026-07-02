@@ -2,9 +2,9 @@
 title: "MCP Catalog Tool"
 description: "Let the agent discover and activate remote MCP servers from the Docker MCP Catalog on demand."
 keywords: docker agent, ai agents, tools, toolsets, mcp catalog tool
+linkTitle: "MCP Catalog"
+weight: 120
 ---
-
-# MCP Catalog Tool
 
 _Let the agent discover and activate remote MCP servers from the Docker MCP Catalog on demand._
 

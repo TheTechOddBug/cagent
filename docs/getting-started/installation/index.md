@@ -2,9 +2,8 @@
 title: "Installation"
 description: "Get docker-agent running on your system in minutes."
 keywords: docker agent, ai agents, getting started, installation
+weight: 20
 ---
-
-# Installation
 
 _Get docker-agent running on your system in minutes._
 

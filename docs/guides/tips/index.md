@@ -2,9 +2,10 @@
 title: "Tips & Best Practices"
 description: "Expert guidance for building effective, efficient, and secure agents."
 keywords: docker agent, ai agents, guides, tips & best practices
+weight: 10
+aliases:
+  - /ai/docker-agent/best-practices/
 ---
-
-# Tips & Best Practices
 
 _Expert guidance for building effective, efficient, and secure agents._
 

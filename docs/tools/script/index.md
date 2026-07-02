@@ -2,9 +2,9 @@
 title: "Script Tool"
 description: "Define custom shell scripts as named tools with typed parameters."
 keywords: docker agent, ai agents, tools, toolsets, script tool
+linkTitle: "Script"
+weight: 30
 ---
-
-# Script Tool
 
 _Define custom shell scripts as named tools with typed parameters._
 
