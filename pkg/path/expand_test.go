@@ -108,3 +108,64 @@ func TestExpandPath(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandEnvRefs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		envSetup map[string]string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "strict js env ref",
+			input:    "Bearer ${env.MY_TEST_TOKEN}",
+			envSetup: map[string]string{"MY_TEST_TOKEN": "secret"},
+			expected: "Bearer secret",
+		},
+		{
+			name:     "shell forms are kept literal",
+			input:    "$MY_TEST_TOKEN and ${MY_TEST_TOKEN}",
+			envSetup: map[string]string{"MY_TEST_TOKEN": "secret"},
+			expected: "$MY_TEST_TOKEN and ${MY_TEST_TOKEN}",
+		},
+		{
+			name:     "literal dollar untouched",
+			input:    "pa$$word${",
+			expected: "pa$$word${",
+		},
+		{
+			name:     "rich js expression untouched",
+			input:    "${env.MY_TEST_TOKEN || 'fallback'}",
+			envSetup: map[string]string{"MY_TEST_TOKEN": "secret"},
+			expected: "${env.MY_TEST_TOKEN || 'fallback'}",
+		},
+		{
+			name:     "undefined var expands to empty",
+			input:    "x${env.MY_TEST_UNDEFINED}y",
+			expected: "xy",
+		},
+		{
+			name:     "multiple refs",
+			input:    "${env.MY_TEST_A}:${env.MY_TEST_B}",
+			envSetup: map[string]string{"MY_TEST_A": "1", "MY_TEST_B": "2"},
+			expected: "1:2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.envSetup {
+				t.Setenv(k, v)
+			}
+			result := ExpandEnvRefs(tt.input)
+			if result != tt.expected {
+				t.Errorf("ExpandEnvRefs(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

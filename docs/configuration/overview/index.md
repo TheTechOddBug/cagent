@@ -210,6 +210,8 @@ Applies to:
 - `agents.<name>.toolsets[*].working_dir` (MCP, LSP)
 - `agents.<name>.toolsets[*].path` (memory, tasks)
 - `agents.<name>.toolsets[*].env` values (MCP, shell, script, LSP)
+- `agents.<name>.toolsets[*].shell.<tool>.working_dir` (script tools)
+- `agents.<name>.hooks.*.working_dir`
 - The `~` prefix is also accepted in any path-like field documented as such.
 
 ```yaml
@@ -224,6 +226,21 @@ agents:
 ```
 
 Unlike the JS-templated fields above, these accept only a plain variable reference: richer JS expressions (e.g. `${env.VAR || 'default'}`) are **not** evaluated here, and the legacy `$VAR` / `${VAR}` forms keep working for backward compatibility.
+
+Hook and script-tool `env` values expand only the strict `${env.VAR}` form; a bare `$VAR` or `${VAR}` is passed through **literally**, so values that legitimately contain `$` (passwords, templates) are never mangled:
+
+```yaml
+agents:
+  root:
+    hooks:
+      session_start:
+        - type: command
+          command: ./notify.sh
+          working_dir: "~/scripts"                # ~, $VAR, ${VAR}, ${env.VAR} all work
+          env:
+            API_TOKEN: "${env.NOTIFY_TOKEN}"      # expanded
+            PASSWORD: "pa$$word"                  # kept literal
+```
 
 Model definitions follow the same rule. The `models.<name>.model` and `models.<name>.base_url` fields are expanded when the provider is built, accepting both `${env.VAR}` and `${VAR}`. This is useful when the model id or endpoint is injected by the environment (for example a Docker Compose / DMR setup that exports the model reference as a variable):
 
@@ -246,10 +263,11 @@ models:
 | `commands.*`                                  |     ✓      |       ✗       |  ✗  |
 | `headers`, `remote.headers`, `api_config.headers` |     ✓      |       ✗       |  ✗  |
 | `models.*.model`, `models.*.base_url`         |     ✓      |       ✓       |  ✗  |
-| `working_dir`, `path`                         |     ✓      |       ✓       |  ✓  |
-| `env` values                                  |     ✓      |       ✓       |  ✗  |
+| `working_dir`, `path` (toolset, script tool, hook) |     ✓      |       ✓       |  ✓  |
+| `env` values (toolset)                        |     ✓      |       ✓       |  ✗  |
+| `env` values (hook, script tool)              |     ✓      |   literal     |  ✗  |
 
-The `~` prefix is meaningful only in path-like fields (`working_dir`, `path`).
+The `~` prefix is meaningful only in path-like fields (`working_dir`, `path`). In hook and script-tool `env` values, "literal" means a bare `$X` / `${X}` is passed to the process unchanged — only `${env.X}` is substituted there, so values containing `$` survive intact.
 
 Prefer `${env.X}` everywhere. The bare `$X` / `${X}` and `~` forms are accepted only in path and `env` value fields, where they remain supported for backward compatibility.
 

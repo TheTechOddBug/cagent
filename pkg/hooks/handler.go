@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/concurrent"
+	"github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 )
@@ -157,7 +158,12 @@ func newCommandFactory() HandlerFactory {
 // executor runs before the process has chdir'd into it — e.g. the
 // CLI-dispatched worktree_create event, whose working dir is the freshly
 // created worktree.
+//
+// The override accepts ~, $VAR, ${VAR} and ${env.VAR} like every other
+// working_dir field (issue #2615); expansion runs before the absolute
+// check so ~/... overrides win.
 func hookWorkingDir(base, override string) string {
+	override = path.ExpandPath(override)
 	if filepath.IsAbs(override) {
 		return override
 	}
@@ -170,6 +176,9 @@ func hookWorkingDir(base, override string) string {
 	return filepath.Join(base, override)
 }
 
+// hookEnv layers the hook's env overrides onto the executor's env. Only
+// the strict ${env.X} form is expanded in override values; $X and ${X}
+// stay literal because env values may legitimately contain $ (issue #2615).
 func hookEnv(base []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {
 		return base
@@ -188,7 +197,7 @@ func hookEnv(base []string, overrides map[string]string) []string {
 	}
 
 	for key, value := range overrides {
-		entry := key + "=" + value
+		entry := key + "=" + path.ExpandEnvRefs(value)
 		if i, ok := index[key]; ok {
 			env[i] = entry
 		} else {

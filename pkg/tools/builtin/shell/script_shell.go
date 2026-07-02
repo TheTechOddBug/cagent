@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -69,12 +70,17 @@ func validateConfig(toolName string, tool latest.ScriptShellToolConfig) error {
 		}
 	}
 
-	// Check for typos in args
+	// Check for typos in args. Keys of the per-tool env are legitimate
+	// references too, since they are set on the spawned process.
 	var missingArgs []string
 	os.Expand(tool.Cmd, func(varName string) string {
-		if _, ok := tool.Args[varName]; !ok {
-			missingArgs = append(missingArgs, varName)
+		if _, ok := tool.Args[varName]; ok {
+			return ""
 		}
+		if _, ok := tool.Env[varName]; ok {
+			return ""
+		}
+		missingArgs = append(missingArgs, varName)
 		return ""
 	})
 	if len(missingArgs) > 0 {
@@ -185,6 +191,10 @@ func (t *ScriptToolSet) execute(ctx context.Context, toolConfig *latest.ScriptSh
 		}
 	}
 
+	// working_dir accepts ~, $VAR, ${VAR} and ${env.VAR} like every other
+	// working_dir field (issue #2615).
+	workingDir := path.ExpandPath(toolConfig.WorkingDir)
+
 	// Stamp the script_shell call shape onto the active span. Cmd
 	// ships unconditionally for the same reason as shell.RunShell —
 	// see that comment for the redact-at-collector guidance.
@@ -192,14 +202,14 @@ func (t *ScriptToolSet) execute(ctx context.Context, toolConfig *latest.ScriptSh
 		span.SetAttributes(
 			attribute.String("cagent.tool.script_shell.tool_name", toolCall.Function.Name),
 			attribute.String("cagent.tool.script_shell.cmd", toolConfig.Cmd),
-			attribute.String("cagent.tool.script_shell.cwd", cmp.Or(toolConfig.WorkingDir, ".")),
+			attribute.String("cagent.tool.script_shell.cwd", cmp.Or(workingDir, ".")),
 		)
 	}
 
 	shell, argsPrefix := shellpath.DetectShell()
 
 	cmd := exec.CommandContext(ctx, shell, append(argsPrefix, toolConfig.Cmd)...)
-	cmd.Dir = toolConfig.WorkingDir
+	cmd.Dir = workingDir
 	// Per-call clone: appending onto t.env would mutate the shared
 	// backing array under concurrent calls. Expand nil to os.Environ()
 	// so a nil t.env still inherits the parent env (a non-nil empty
@@ -208,8 +218,15 @@ func (t *ScriptToolSet) execute(ctx context.Context, toolConfig *latest.ScriptSh
 	if base == nil {
 		base = os.Environ()
 	}
-	envCopy := make([]string, len(base), len(base)+len(toolConfig.Args))
+	envCopy := make([]string, len(base), len(base)+len(toolConfig.Env)+len(toolConfig.Args))
 	copy(envCopy, base)
+	// Per-tool env overrides the toolset-level env (exec.Cmd dedupes with
+	// last-wins). Only the strict ${env.X} form is expanded; $X and ${X}
+	// stay literal because env values may legitimately contain $ (issue
+	// #2615).
+	for _, key := range slices.Sorted(maps.Keys(toolConfig.Env)) {
+		envCopy = append(envCopy, key+"="+path.ExpandEnvRefs(toolConfig.Env[key]))
+	}
 	for key, value := range params {
 		if value == nil {
 			continue

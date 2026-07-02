@@ -3,6 +3,7 @@ package shell
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -198,6 +199,71 @@ func TestScriptShellTool_DropsUndeclaredArgs(t *testing.T) {
 	assert.False(t, result.IsError, "unexpected error: %s", result.Output)
 	assert.Contains(t, result.Output, "name=alice")
 	assert.NotContains(t, result.Output, "LD_PRELOAD")
+}
+
+func TestScriptShellTool_PerToolEnvAndWorkingDir(t *testing.T) {
+	workDir := t.TempDir()
+	t.Setenv("SCRIPT_TEST_TOKEN", "tok")
+	t.Setenv("SCRIPT_TEST_DIR", workDir)
+
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"show_env": {
+			Cmd: `printf '%s|%s|%s' "$TOOL_VALUE" "$TOOL_LITERAL" "$(pwd)"`,
+			Env: map[string]string{
+				// Strict ${env.X} expands; $X stays literal (issue #2615).
+				"TOOL_VALUE":   "v-${env.SCRIPT_TEST_TOKEN}",
+				"TOOL_LITERAL": "pa$$word",
+			},
+			WorkingDir: "${env.SCRIPT_TEST_DIR}",
+		},
+	}
+
+	tool, err := NewScript(shellTools, nil)
+	require.NoError(t, err)
+
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+	require.Len(t, allTools, 1)
+
+	result, err := allTools[0].Handler(t.Context(), tools.ToolCall{
+		Function: tools.FunctionCall{Arguments: `{}`},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "unexpected error: %s", result.Output)
+
+	parts := strings.Split(result.Output, "|")
+	require.Len(t, parts, 3)
+	assert.Equal(t, "v-tok", parts[0])
+	assert.Equal(t, "pa$$word", parts[1])
+	got, err := filepath.EvalSymlinks(parts[2])
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(workDir)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestScriptShellTool_PerToolEnvOverridesToolsetEnv(t *testing.T) {
+	t.Parallel()
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"show_env": {
+			Cmd: `printf '%s' "$SHARED"`,
+			Env: map[string]string{"SHARED": "per-tool"},
+		},
+	}
+
+	tool, err := NewScript(shellTools, []string{"SHARED=toolset"})
+	require.NoError(t, err)
+
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+	require.Len(t, allTools, 1)
+
+	result, err := allTools[0].Handler(t.Context(), tools.ToolCall{
+		Function: tools.FunctionCall{Arguments: `{}`},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "unexpected error: %s", result.Output)
+	assert.Equal(t, "per-tool", result.Output)
 }
 
 func TestScriptShellTool_RejectsNULInValue(t *testing.T) {

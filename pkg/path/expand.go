@@ -3,6 +3,7 @@ package path
 import (
 	"os"
 	"regexp"
+	"strings"
 )
 
 // jsEnvRef matches the JS-template form `${env.VAR}` (optional surrounding
@@ -22,6 +23,21 @@ var jsEnvRef = regexp.MustCompile(`\$\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}`)
 // untouched; see jsEnvRef.
 func NormalizeEnvRefs(s string) string {
 	return jsEnvRef.ReplaceAllString(s, "${$1}")
+}
+
+// ExpandEnvRefs resolves only the strict `${env.VAR}` form against the OS
+// environment, leaving every other `$`-shaped substring (including `$VAR`
+// and `${VAR}`) untouched. Use it for fields whose values may legitimately
+// contain literal `$` (e.g. env values forwarded to subprocesses), where a
+// full os.Expand pass would mangle them (issue #2615). Unset variables
+// expand to the empty string, matching the JS-template semantics.
+func ExpandEnvRefs(s string) string {
+	if !strings.Contains(s, "${") {
+		return s
+	}
+	return jsEnvRef.ReplaceAllStringFunc(s, func(m string) string {
+		return os.Getenv(jsEnvRef.FindStringSubmatch(m)[1])
+	})
 }
 
 // ExpandPath expands shell-like patterns in a file path:
