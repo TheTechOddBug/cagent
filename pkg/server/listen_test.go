@@ -14,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fdOwnershipPin keeps os.Files whose descriptor was handed to
+// Listen("fd://...") reachable for the life of the test process. Listen
+// adopts and closes the descriptor, so closing the os.File as well —
+// explicitly or via its GC cleanup — would close the same fd number a second
+// time after the OS has recycled it for another parallel test's socket,
+// corrupting that test's connection.
+var fdOwnershipPin []*os.File
+
 func TestListen_FD(t *testing.T) {
 	t.Parallel()
 
@@ -24,7 +32,8 @@ func TestListen_FD(t *testing.T) {
 
 	file, err := orig.(*net.TCPListener).File()
 	require.NoError(t, err)
-	defer file.Close()
+	// Ownership of file's fd passes to Listen; see fdOwnershipPin.
+	fdOwnershipPin = append(fdOwnershipPin, file)
 
 	ln, err := Listen(t.Context(), fmt.Sprintf("fd://%d", file.Fd()))
 	require.NoError(t, err)
