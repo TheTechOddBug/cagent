@@ -1,8 +1,11 @@
 package path
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -167,6 +170,31 @@ func TestExpandEnvRefs(t *testing.T) {
 				t.Errorf("ExpandEnvRefs(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestExpandEnvRefsLogsUnset(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Unset variable: expands to empty and logs at debug level.
+	if got := ExpandEnvRefs("${env.MY_TEST_UNSET_LOGGED}"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+	if !strings.Contains(buf.String(), "MY_TEST_UNSET_LOGGED") {
+		t.Errorf("expected debug log naming the unset variable, got: %s", buf.String())
+	}
+
+	// Set-but-empty variable: no log, it resolved as configured.
+	buf.Reset()
+	t.Setenv("MY_TEST_EMPTY", "")
+	if got := ExpandEnvRefs("${env.MY_TEST_EMPTY}"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log for a set-but-empty variable, got: %s", buf.String())
 	}
 }
 

@@ -32,13 +32,22 @@ func NormalizeEnvRefs(s string) string {
 // may legitimately contain literal `$` (e.g. env values forwarded to
 // subprocesses), where a full os.Expand pass would mangle them (issue
 // #2615). Unset variables expand to the empty string, matching the
-// JS-template semantics.
+// JS-template semantics; a debug log makes that observable since the
+// resulting value is otherwise indistinguishable from a legitimate "".
 func ExpandEnvRefs(s string) string {
 	if !strings.Contains(s, "${") {
 		return s
 	}
 	return jsEnvRef.ReplaceAllStringFunc(s, func(m string) string {
-		return os.Getenv(jsEnvRef.FindStringSubmatch(m)[1])
+		name := jsEnvRef.FindStringSubmatch(m)[1]
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			slog.Debug("${env.X} reference resolves to an empty string: variable is unset",
+				"variable", name,
+				"see", "https://github.com/docker/docker-agent/issues/2615",
+			)
+		}
+		return value
 	})
 }
 

@@ -180,6 +180,10 @@ func hookWorkingDir(base, override string) string {
 // the plain ${env.X} form is expanded (against the OS environment) in
 // override values; $X and ${X}
 // stay literal because env values may legitimately contain $ (issue #2615).
+//
+// Expansion is per-invocation, not config-load: factories run inside
+// [Executor.runHook] each time a hook fires, so ${env.X} reflects the OS
+// environment at fire time (matching script_shell's per-call expansion).
 func hookEnv(base []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {
 		return base
