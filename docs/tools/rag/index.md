@@ -2,9 +2,11 @@
 title: "RAG Tool"
 description: "Give your agents access to document knowledge bases with background indexing, multiple retrieval strategies, and hybrid search."
 keywords: docker agent, ai agents, tools, toolsets, rag tool
+linkTitle: "RAG"
+weight: 110
+aliases:
+  - /ai/docker-agent/rag/
 ---
-
-# RAG Tool
 
 _Give your agents access to document knowledge bases with background indexing, multiple retrieval strategies, and hybrid search._
 

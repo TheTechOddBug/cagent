@@ -2,9 +2,10 @@
 title: "Quick Start"
 description: "Get up and running with Docker Agent in under 5 minutes. Pick whichever path suits you best."
 keywords: docker agent, ai agents, getting started, quick start
+weight: 30
+aliases:
+  - /ai/docker-agent/tutorial/
 ---
-
-# Quick Start
 
 _Get up and running with Docker Agent in under 5 minutes. Pick whichever path suits you best._
 

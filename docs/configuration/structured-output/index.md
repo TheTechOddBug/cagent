@@ -2,9 +2,8 @@
 title: "Structured Output"
 description: "Force the agent to respond with JSON matching a specific schema."
 keywords: docker agent, ai agents, configuration, yaml, structured output
+weight: 90
 ---
-
-# Structured Output
 
 _Force the agent to respond with JSON matching a specific schema._
 

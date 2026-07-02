@@ -2,9 +2,8 @@
 title: "Chat Server"
 description: "Expose your agents through an OpenAI-compatible Chat Completions API so any tool that already speaks OpenAI can drive a docker-agent agent."
 keywords: docker agent, ai agents, features, chat server
+weight: 90
 ---
-
-# Chat Server
 
 _Expose your agents through an OpenAI-compatible Chat Completions API so any tool that already speaks OpenAI can drive a docker-agent agent._
 

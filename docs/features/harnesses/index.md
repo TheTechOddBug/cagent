@@ -2,9 +2,8 @@
 title: "Coding Harnesses"
 description: "Delegate coding tasks to external AI coding CLIs (Claude Code, Codex, opencode) as sub-agents."
 keywords: docker agent, ai agents, features, coding harnesses
+weight: 50
 ---
-
-# Coding Harnesses
 
 _Delegate coding tasks to external AI coding CLIs (Claude Code, Codex, opencode) as sub-agents._
 

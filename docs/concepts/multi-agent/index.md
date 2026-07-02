@@ -2,9 +2,9 @@
 title: "Multi-Agent Systems"
 description: "Build teams of specialized agents that collaborate and delegate tasks to each other."
 keywords: docker agent, ai agents, concepts, multi-agent systems
+linkTitle: "Multi-Agent"
+weight: 40
 ---
-
-# Multi-Agent Systems
 
 _Build teams of specialized agents that collaborate and delegate tasks to each other._
 

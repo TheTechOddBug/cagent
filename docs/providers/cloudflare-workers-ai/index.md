@@ -2,9 +2,8 @@
 title: "Cloudflare Workers AI"
 description: "Use Cloudflare Workers AI models with docker-agent."
 keywords: docker agent, ai agents, model providers, llm, cloudflare workers ai
+weight: 70
 ---
-
-# Cloudflare Workers AI
 
 _Use Cloudflare Workers AI models with docker-agent._
 

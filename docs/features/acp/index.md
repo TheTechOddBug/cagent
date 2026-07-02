@@ -2,9 +2,11 @@
 title: "ACP (Agent Client Protocol)"
 description: "Expose docker-agent agents via the Agent Client Protocol for integration with ACP-compatible hosts like VS Code, IDEs, and other developer tools."
 keywords: docker agent, ai agents, features, acp (agent client protocol)
+linkTitle: "ACP"
+weight: 70
+aliases:
+  - /ai/docker-agent/integrations/acp/
 ---
-
-# ACP (Agent Client Protocol)
 
 _Expose docker-agent agents via the Agent Client Protocol for integration with ACP-compatible hosts like VS Code, IDEs, and other developer tools._
 

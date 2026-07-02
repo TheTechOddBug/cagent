@@ -2,9 +2,9 @@
 title: "LSP Tool"
 description: "Connect to Language Server Protocol servers for code intelligence."
 keywords: docker agent, ai agents, tools, toolsets, lsp tool
+linkTitle: "LSP"
+weight: 220
 ---
-
-# LSP Tool
 
 _Connect to Language Server Protocol servers for code intelligence._
 

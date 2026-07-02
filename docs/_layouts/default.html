@@ -85,6 +85,11 @@
         The stable documentation lives at
         <a href="https://docs.docker.com/ai/docker-agent/">docs.docker.com</a>.
       </div>
+      {% comment %}
+        Pages no longer carry a body H1: like docs.docker.com, the layout
+        renders the front matter title. The homepage has its own hero.
+      {% endcomment %}
+      {% if page.title and page.url != '/' %}<h1>{{ page.title }}</h1>{% endif %}
       {{ content }}
       {% unless page.url == '/' %}{% include page-nav.html %}{% endunless %}
     </div>

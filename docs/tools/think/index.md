@@ -2,9 +2,9 @@
 title: "Think Tool"
 description: "Step-by-step reasoning scratchpad for planning and decision-making."
 keywords: docker agent, ai agents, tools, toolsets, think tool
+linkTitle: "Think"
+weight: 140
 ---
-
-# Think Tool
 
 _Step-by-step reasoning scratchpad for planning and decision-making._
 

@@ -2,9 +2,8 @@
 title: "API Server"
 description: "Expose your agents via an HTTP API for programmatic access, web frontends, and integrations."
 keywords: docker agent, ai agents, features, api server
+weight: 80
 ---
-
-# API Server
 
 _Expose your agents via an HTTP API for programmatic access, web frontends, and integrations._
 

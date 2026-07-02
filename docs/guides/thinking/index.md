@@ -2,9 +2,8 @@
 title: "Thinking / Reasoning"
 description: "Control how much a model reasons before responding. Works across OpenAI, Anthropic, Google Gemini, AWS Bedrock, and Docker Model Runner."
 keywords: docker agent, ai agents, guides, thinking / reasoning
+weight: 20
 ---
-
-# Thinking / Reasoning
 
 _Control how much a model reasons before responding. Works across OpenAI, Anthropic, Google Gemini, AWS Bedrock, and Docker Model Runner._
 

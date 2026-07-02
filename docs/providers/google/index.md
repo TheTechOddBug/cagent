@@ -2,9 +2,8 @@
 title: "Google Gemini"
 description: "Use Gemini 2.5 Flash, Gemini 3 Pro, and other Google models with docker-agent."
 keywords: docker agent, ai agents, model providers, llm, google gemini
+weight: 120
 ---
-
-# Google Gemini
 
 _Use Gemini 2.5 Flash, Gemini 3 Pro, and other Google models with docker-agent._
 
