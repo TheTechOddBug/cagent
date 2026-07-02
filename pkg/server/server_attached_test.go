@@ -587,7 +587,8 @@ func TestAttachedServer_DeleteEmitsSessionExited(t *testing.T) {
 
 	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
 	sm.AttachRuntime(t.Context(), sess.ID, &fakeRuntime{}, sess)
-	sm.RegisterEventSource(sess.ID, func(ctx context.Context, _ func(any)) {
+	sm.RegisterEventSource(sess.ID, func(ctx context.Context, send func(any)) {
+		send(map[string]string{"type": "hello"})
 		<-ctx.Done()
 	})
 
@@ -603,15 +604,15 @@ func TestAttachedServer_DeleteEmitsSessionExited(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Wait for the SSE handler to register, then delete the session; the
-	// event log replays missed events, so ordering past this point is safe.
-	require.Eventually(t, func() bool {
-		return sm.HasEventSource(sess.ID)
-	}, 2*time.Second, time.Millisecond)
+	// Read the first event so we know the SSE handler has subscribed to the
+	// event log; deleting before that could drop the log from the registry
+	// and close the stream without a session_exited event.
+	_, types := readSSE(t, resp.Body, 1)
+	require.Equal(t, []string{"hello"}, types)
 	require.NoError(t, sm.DeleteSession(ctx, sess.ID))
 
 	// The client must receive a terminal session_exited event.
-	_, types := readSSE(t, resp.Body, 1)
+	_, types = readSSE(t, resp.Body, 1)
 	assert.Equal(t, []string{"session_exited"}, types)
 }
 
