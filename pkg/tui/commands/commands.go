@@ -383,6 +383,22 @@ func builtInSettingsCommands() []Item {
 	}
 }
 
+func builtInHelpCommands() []Item {
+	return []Item{
+		{
+			ID:           "help.getting-started",
+			Label:        "Getting Started Tour",
+			SlashCommand: "/getting-started",
+			Description:  "Learn docker agent by doing — a 2-minute interactive tour",
+			Category:     "Help",
+			Immediate:    true,
+			Execute: func(string) tea.Cmd {
+				return core.CmdHandler(messages.StartTourMsg{})
+			},
+		},
+	}
+}
+
 func builtInFeedbackCommands() []Item {
 	return []Item{
 		{
@@ -590,11 +606,15 @@ func BuildCommandCategories(ctx context.Context, application *app.App) []Categor
 		})
 	}
 
-	// Settings and Feedback are always last, in that order.
+	// Settings, Help, and Feedback are always last, in that order.
 	categories = append(categories,
 		Category{
 			Name:     "Settings",
 			Commands: builtInSettingsCommands(),
+		},
+		Category{
+			Name:     "Help",
+			Commands: builtInHelpCommands(),
 		},
 		Category{
 			Name:     "Feedback",

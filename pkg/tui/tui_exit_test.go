@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/completion"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
+	"github.com/docker/docker-agent/pkg/tui/components/tour"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -148,6 +149,7 @@ func newTestModel(tb testing.TB) (*appModel, *mockEditor) {
 		notification:            notification.New(),
 		dialogMgr:               dialog.New(),
 		completions:             completion.New(),
+		tour:                    tour.New(),
 	}
 	return m, ed
 }

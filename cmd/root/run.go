@@ -34,6 +34,7 @@ import (
 	"github.com/docker/docker-agent/pkg/teamloader"
 	loaderdefaults "github.com/docker/docker-agent/pkg/teamloader/defaults"
 	"github.com/docker/docker-agent/pkg/telemetry"
+	"github.com/docker/docker-agent/pkg/tour"
 	"github.com/docker/docker-agent/pkg/tui"
 	"github.com/docker/docker-agent/pkg/tui/recorder"
 	"github.com/docker/docker-agent/pkg/tui/styles"
@@ -65,6 +66,7 @@ type runExecFlags struct {
 	cpuProfile        string
 	memProfile        string
 	forceTUI          bool
+	tour              bool
 	sandbox           bool
 	sandboxTemplate   string
 	sbx               bool
@@ -162,6 +164,8 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	_ = cmd.PersistentFlags().MarkHidden("memprofile")
 	cmd.PersistentFlags().BoolVar(&flags.forceTUI, "force-tui", false, "Force TUI mode even when not in a terminal")
 	_ = cmd.PersistentFlags().MarkHidden("force-tui")
+	cmd.PersistentFlags().BoolVar(&flags.tour, "tour", false, "Start the interactive getting-started tour in the TUI")
+	_ = cmd.PersistentFlags().MarkHidden("tour")
 	cmd.PersistentFlags().BoolVar(&flags.lean, "lean", false, "Use a simplified TUI with minimal chrome")
 	cmd.PersistentFlags().StringVar(&flags.appName, "app-name", "", "Application name shown in the TUI in place of \"docker agent\"")
 	cmd.PersistentFlags().StringSliceVar(&flags.disabledCommands, "disable-commands", nil, "Comma-separated list of slash commands to hide and disable in the TUI (e.g. /cost,/eval,/model)")
@@ -476,9 +480,9 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 				rec = recorder.New(m)
 				return rec
 			}
-			return runTUIWrapped(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), wrap, opts...)
+			return runTUIWrapped(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(args), wrap, opts...)
 		}
-		return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
+		return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(args), opts...)
 	}()
 	if rec != nil && rec.HasInput() {
 		writeGeneratedTUITest(ctx, out, rec, cassettePath, agentFileName)
@@ -523,7 +527,9 @@ func (f *runExecFlags) applyUserSettings(ctx context.Context, userSettings *user
 		f.autoApprove = true
 		slog.DebugContext(ctx, "Applying user settings", "YOLO", true)
 	}
-	if userSettings.Lean && !f.leanChanged && !f.lean {
+	// The tour needs the full TUI's overlay support, so a lean default from
+	// user config is not applied when the tour was requested.
+	if userSettings.Lean && !f.leanChanged && !f.lean && !f.tour {
 		f.lean = true
 		slog.DebugContext(ctx, "Applying user settings", "lean", true)
 	}
@@ -889,8 +895,9 @@ func readInitialMessage(args []string) (*string, error) {
 	return &args[1], nil
 }
 
-// tuiOpts returns the TUI options derived from the current flags.
-func (f *runExecFlags) tuiOpts() []tui.Option {
+// tuiOpts returns the TUI options derived from the current flags. args are
+// the run command's positional arguments, used to detect an initial message.
+func (f *runExecFlags) tuiOpts(args []string) []tui.Option {
 	var opts []tui.Option
 	if f.lean {
 		opts = append(opts, tui.WithLeanMode())
@@ -904,7 +911,30 @@ func (f *runExecFlags) tuiOpts() []tui.Option {
 	if !f.sidebar {
 		opts = append(opts, tui.WithHideSidebar())
 	}
+	switch {
+	case f.tour:
+		opts = append(opts, tui.WithTourStart())
+	case f.shouldOfferTour(args):
+		opts = append(opts, tui.WithTourOffer(telemetry.GetTelemetryEnabled()))
+	}
 	return opts
+}
+
+// shouldOfferTour reports whether this interactive run should show the
+// first-run dialog offering the getting-started tour. Automation and
+// replay/record contexts never see the offer, and neither does a run that
+// already carries an initial message (the user clearly has a task in mind);
+// DOCKER_AGENT_NO_TOUR=1 suppresses it for scripted environments. The
+// explicit --tour flag (or the getting-started command) bypasses the offer
+// and starts the tour directly.
+func (f *runExecFlags) shouldOfferTour(args []string) bool {
+	if f.lean || f.exitAfterResponse || f.sessionReadOnly || f.recordPath != "" || f.fakeResponses != "" {
+		return false
+	}
+	if len(args) > 1 {
+		return false
+	}
+	return tour.ShouldOffer(os.Getenv)
 }
 
 // runLeanTUI builds the App and drives the standalone lean TUI, used when
