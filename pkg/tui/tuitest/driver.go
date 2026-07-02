@@ -191,7 +191,9 @@ func (d *Driver) stop() {
 // the program's goroutine. It relies on the message loop being FIFO: a
 // barrier sentinel sent right after msg is only handled once msg's Update —
 // and thus its frame capture — has completed. Counting frames instead would
-// race with frames produced by startup or internal messages.
+// race with frames produced by startup or internal messages. The sentinel is
+// sent separately rather than wrapping msg so the program still applies its
+// internal handling of special messages (window size, quit, ...).
 func (d *Driver) sendSync(msg tea.Msg) {
 	d.tb.Helper()
 
@@ -200,6 +202,8 @@ func (d *Driver) sendSync(msg tea.Msg) {
 	d.program.Send(syncMsg{done: done})
 	select {
 	case <-done:
+	case <-d.runDone:
+		// msg quit the program; there is no later frame to wait for.
 	case <-time.After(d.waitTimeout):
 		d.tb.Fatalf("tuitest: timed out after %s waiting for %T to be processed", d.waitTimeout, msg)
 	}
