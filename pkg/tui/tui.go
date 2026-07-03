@@ -33,6 +33,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/statusbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tabbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
+	"github.com/docker/docker-agent/pkg/tui/components/tour"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/internal/editorname"
@@ -208,6 +209,19 @@ type appModel struct {
 	// leanMode enables a simplified TUI with minimal chrome.
 	leanMode bool
 
+	// tour is the interactive getting-started overlay. Always non-nil;
+	// inactive until started via an option, /getting-started, or the
+	// first-run offer.
+	tour *tour.Model
+
+	// tourMode selects what happens at startup: nothing, offer the tour,
+	// or start it immediately.
+	tourMode tourMode
+
+	// tourShowTelemetryNotice folds the telemetry notice into the tour
+	// offer dialog when telemetry is enabled.
+	tourShowTelemetryNotice bool
+
 	// hideSidebar hides the sidebar and disables the ctrl+b toggle.
 	hideSidebar bool
 
@@ -250,6 +264,34 @@ func WithLeanMode() Option {
 func WithHideSidebar() Option {
 	return func(m *appModel) {
 		m.hideSidebar = true
+	}
+}
+
+// tourMode selects the getting-started tour behavior at startup.
+type tourMode int
+
+const (
+	tourModeNone tourMode = iota
+	tourModeOffer
+	tourModeStart
+)
+
+// WithTourStart starts the interactive getting-started tour as soon as the
+// TUI launches. Ignored in lean mode, which has no overlay support.
+func WithTourStart() Option {
+	return func(m *appModel) {
+		m.tourMode = tourModeStart
+	}
+}
+
+// WithTourOffer shows the first-run dialog offering the getting-started
+// tour when the TUI launches. showTelemetryNotice folds the telemetry
+// notice into the offer so it never stacks with the stderr banner. Ignored
+// in lean mode, which has no overlay support.
+func WithTourOffer(showTelemetryNotice bool) Option {
+	return func(m *appModel) {
+		m.tourMode = tourModeOffer
+		m.tourShowTelemetryNotice = showTelemetryNotice
 	}
 }
 
@@ -390,6 +432,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		notification:                  notification.New(),
 		dialogMgr:                     dialog.New(),
 		completions:                   completion.New(),
+		tour:                          tour.New(),
 		transcriber:                   transcribe.New(os.Getenv("OPENAI_API_KEY")),
 		workingSpinner:                spinner.New(spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle),
 		focusedPanel:                  PanelEditor,
@@ -561,6 +604,29 @@ func (m *appModel) contextShutdownCmd() tea.Cmd {
 
 // Init initializes the model.
 func (m *appModel) Init() tea.Cmd {
+	return tea.Batch(m.init(), m.tourStartupCmd())
+}
+
+// tourStartupCmd applies the configured startup tour mode: start the tour
+// right away or open the first-run offer dialog. Lean mode has no overlay
+// support, so the tour is disabled there.
+func (m *appModel) tourStartupCmd() tea.Cmd {
+	if m.leanMode {
+		return nil
+	}
+	switch m.tourMode {
+	case tourModeStart:
+		return core.CmdHandler(messages.StartTourMsg{})
+	case tourModeOffer:
+		return core.CmdHandler(dialog.OpenDialogMsg{
+			Model: dialog.NewTourOfferDialog(m.tourShowTelemetryNotice),
+		})
+	default:
+		return nil
+	}
+}
+
+func (m *appModel) init() tea.Cmd {
 	shutdownCmd := m.contextShutdownCmd()
 	// If a different tab should be active on startup, switch to it directly.
 	// The initial tab's pending restore stays lazy — it will be loaded via
@@ -606,8 +672,18 @@ func (m *appModel) Init() tea.Cmd {
 	)
 }
 
-// Update handles messages.
+// Update handles messages. It wraps update so the getting-started tour can
+// observe every message that flows through the TUI (to detect completed
+// steps) without ever consuming it.
 func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if obs := m.tour.Observe(msg); obs != nil {
+		cmd = tea.Batch(cmd, obs)
+	}
+	return model, cmd
+}
+
+func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// In lean mode, silently drop messages for features that don't exist.
 	if m.leanMode {
 		switch msg.(type) {
@@ -831,6 +907,17 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	// --- Getting-started tour ---
+
+	case messages.StartTourMsg:
+		return m.handleStartTour()
+
+	case messages.TourFinishedMsg:
+		return m.handleTourFinished(msg.Completed)
+
+	case dialog.TourOfferResultMsg:
+		return m.handleTourOfferResult(msg.Choice)
 
 	// --- Terminal bell ---
 
@@ -1782,6 +1869,8 @@ func (m *appModel) resizeAll() tea.Cmd {
 	// Full mode: update overlay components
 	cmds = append(cmds, m.updateDialogCmd(tea.WindowSizeMsg{Width: width, Height: height}))
 
+	m.tour.SetSize(width, height, m.contentHeight)
+
 	m.completions.SetEditorBottom(editorHeight + m.tabBar.Height())
 	m.completions.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
@@ -2005,6 +2094,12 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// History search is a modal state — capture all remaining keys before normal routing
 	if m.focusedPanel == PanelEditor && m.editor.IsHistorySearchActive() {
 		return m.forwardEditor(msg)
+	}
+
+	// Getting-started tour controls (Esc to quit, Enter on an empty editor
+	// to advance) sit below dialogs and completions but above normal routing.
+	if cmd, handled := m.handleTourKey(msg); handled {
+		return m, cmd
 	}
 
 	switch {
@@ -2513,12 +2608,18 @@ func (m *appModel) View() tea.View {
 	baseView := lipgloss.JoinVertical(lipgloss.Top, viewParts...)
 
 	// Handle overlays
-	hasOverlays := m.dialogMgr.Open() || m.notification.Open() || m.completions.Open()
+	hasOverlays := m.dialogMgr.Open() || m.notification.Open() || m.completions.Open() || m.tour.Active()
 
 	if hasOverlays {
 		baseLayer := lipgloss.NewLayer(baseView)
 		var allLayers []*lipgloss.Layer
 		allLayers = append(allLayers, baseLayer)
+
+		// The tour card sits above the base UI but below dialogs, so the
+		// step it teaches (palette, tool approval…) is never hidden by it.
+		if tourLayer := m.tour.Layer(); tourLayer != nil {
+			allLayers = append(allLayers, tourLayer)
+		}
 
 		if m.dialogMgr.Open() {
 			dialogLayers := m.dialogMgr.GetLayers()
