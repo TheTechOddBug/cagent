@@ -17,9 +17,10 @@ import (
 
 var memoizer = memoize.New[bool](1 * time.Minute)
 
-// NewTransport returns an HTTP transport that uses Docker Desktop proxy if available.
-// If the proxy becomes unavailable during the session, it automatically falls back
-// to direct connections.
+// NewTransport returns an HTTP transport that uses Docker Desktop proxy if
+// available. If the proxy becomes unavailable during the session, it falls
+// back to direct connections and re-probes the proxy after a short cooldown,
+// so a long-lived process recovers automatically once the proxy is back.
 func NewTransport(ctx context.Context) http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -54,15 +55,28 @@ func NewTransport(ctx context.Context) http.RoundTripper {
 	return transport
 }
 
+// proxyRetryCooldown is how long we skip the proxy after a socket failure
+// before probing it again. Keeps the request path cheap when the proxy is
+// down for an extended period (one dial per cooldown rather than per
+// request) while still recovering automatically when the proxy comes back.
+const proxyRetryCooldown = 30 * time.Second
+
 // fallbackTransport wraps a proxy transport and falls back to a direct transport
 // when the proxy socket becomes unavailable (e.g., Docker Desktop proxy dies).
+//
+// Failures are treated as temporary: after a proxy socket error we skip the
+// proxy for proxyRetryCooldown, then probe it again on the next request. This
+// lets a long-lived agent process recover automatically once the proxy is
+// available again, instead of latching into direct mode for the rest of its
+// lifetime.
 type fallbackTransport struct {
 	proxy  *http.Transport
 	direct *http.Transport
 
-	// proxyDisabled is set to true when the proxy socket becomes unavailable.
-	// Once set, all subsequent requests go directly without trying the proxy.
-	proxyDisabled atomic.Bool
+	// disabledUntilUnixNano holds the earliest wall-clock time at which the
+	// proxy may be tried again, encoded as time.Time.UnixNano(). Zero means
+	// the proxy is currently enabled.
+	disabledUntilUnixNano atomic.Int64
 }
 
 // newFallbackTransport creates a transport that tries the proxy first, then falls back to direct.
@@ -80,10 +94,30 @@ func (f *fallbackTransport) DisableCompression() {
 	f.direct.DisableCompression = true
 }
 
+// proxyEnabled reports whether the proxy should be tried on this request. It
+// also clears an expired cooldown so the next caller in the cooldown-expired
+// state re-enters the "enabled" branch cleanly.
+func (f *fallbackTransport) proxyEnabled() bool {
+	until := f.disabledUntilUnixNano.Load()
+	if until == 0 {
+		return true
+	}
+	if time.Now().UnixNano() < until {
+		return false
+	}
+	f.disabledUntilUnixNano.CompareAndSwap(until, 0)
+	return true
+}
+
+// disableProxy marks the proxy as unavailable for proxyRetryCooldown.
+func (f *fallbackTransport) disableProxy() {
+	f.disabledUntilUnixNano.Store(time.Now().Add(proxyRetryCooldown).UnixNano())
+}
+
 // RoundTrip implements http.RoundTripper.
 func (f *fallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// If proxy is already known to be disabled, go direct
-	if f.proxyDisabled.Load() {
+	// If the proxy is currently on cooldown, skip straight to direct.
+	if !f.proxyEnabled() {
 		return f.direct.RoundTrip(req)
 	}
 
@@ -97,10 +131,11 @@ func (f *fallbackTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if isProxySocketError(err) {
 		slog.Warn("Docker Desktop proxy unavailable, falling back to direct connection",
 			"error", err.Error(),
-			"url", req.URL.String())
+			"url", req.URL.String(),
+			"retry_after", proxyRetryCooldown)
 
-		// Disable proxy for future requests
-		f.proxyDisabled.Store(true)
+		// Skip the proxy on subsequent requests until the cooldown expires.
+		f.disableProxy()
 
 		// Clone the request for retry (the body may have been partially read)
 		// For requests without a body or with GetBody set, we can retry

@@ -1,9 +1,12 @@
 package remote
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,4 +145,135 @@ type testError struct {
 
 func (e *testError) Error() string {
 	return e.msg
+}
+
+// countingRoundTripper is a test http.RoundTripper that records how many
+// times it was called and returns a fixed response or error.
+type countingRoundTripper struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (c *countingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.calls.Add(1)
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
+// fakeFallback drives the same enabled/cooldown state machine as
+// fallbackTransport but against http.RoundTripper fakes instead of real
+// *http.Transport instances, so tests don't have to stand up a Unix socket.
+type fakeFallback struct {
+	*fallbackTransport
+
+	fakeProxy  *countingRoundTripper
+	fakeDirect *countingRoundTripper
+}
+
+func (f *fakeFallback) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !f.proxyEnabled() {
+		return f.fakeDirect.RoundTrip(req)
+	}
+	resp, err := f.fakeProxy.RoundTrip(req)
+	if err == nil {
+		return resp, nil
+	}
+	if isProxySocketError(err) {
+		f.disableProxy()
+		return f.fakeDirect.RoundTrip(req)
+	}
+	return nil, err
+}
+
+func newFakeFallback(proxyErr, directErr error) *fakeFallback {
+	return &fakeFallback{
+		fallbackTransport: newFallbackTransport(&http.Transport{}, &http.Transport{}),
+		fakeProxy:         &countingRoundTripper{err: proxyErr},
+		fakeDirect:        &countingRoundTripper{err: directErr},
+	}
+}
+
+func TestFallbackTransport_ProxyRecoversAfterCooldown(t *testing.T) {
+	t.Parallel()
+
+	proxySocketErr := &testError{msg: "proxyconnect tcp: dial unix /path/to/httpproxy.sock: connect: no such file or directory"}
+	ft := newFakeFallback(proxySocketErr, nil)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.invalid/", http.NoBody)
+	require.NoError(t, err)
+
+	// First request: proxy fails with a socket error, falls back to direct.
+	resp, err := ft.RoundTrip(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, int32(1), ft.fakeProxy.calls.Load())
+	require.Equal(t, int32(1), ft.fakeDirect.calls.Load())
+
+	// Second request while still on cooldown: skips the proxy entirely.
+	resp, err = ft.RoundTrip(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, int32(1), ft.fakeProxy.calls.Load(), "proxy should be skipped during cooldown")
+	require.Equal(t, int32(2), ft.fakeDirect.calls.Load())
+
+	// Simulate the cooldown expiring by clearing the disabled marker directly
+	// (equivalent to time.Now() advancing past disabledUntilUnixNano). Also
+	// swap the proxy to a healthy variant so the retry succeeds.
+	ft.disabledUntilUnixNano.Store(0)
+	ft.fakeProxy = &countingRoundTripper{}
+
+	// Third request: cooldown has elapsed, proxy is probed again and succeeds.
+	resp, err = ft.RoundTrip(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, int32(1), ft.fakeProxy.calls.Load(), "healthy proxy should be tried again once cooldown expires")
+	assert.Equal(t, int32(2), ft.fakeDirect.calls.Load(), "direct should not be hit once proxy recovers")
+}
+
+func TestFallbackTransport_NonSocketErrorDoesNotDisableProxy(t *testing.T) {
+	t.Parallel()
+
+	// A non-socket error (e.g. a plain network timeout) must not trip the
+	// cooldown — otherwise a transient upstream problem would look like a
+	// proxy outage and route every subsequent request direct.
+	upstreamErr := &testError{msg: "read tcp 10.0.0.1:443: i/o timeout"}
+	ft := newFakeFallback(upstreamErr, nil)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.invalid/", http.NoBody)
+	require.NoError(t, err)
+
+	resp, err := ft.RoundTrip(req) //nolint:bodyclose // resp is nil on error, checked below
+	require.Error(t, err)
+	require.Nil(t, resp)
+	assert.True(t, errors.Is(err, upstreamErr) || err.Error() == upstreamErr.Error())
+	assert.True(t, ft.proxyEnabled(), "proxy must stay enabled after a non-socket error")
+	assert.Equal(t, int32(0), ft.fakeDirect.calls.Load(), "direct must not be tried on non-socket errors")
+}
+
+func TestFallbackTransport_ProxyEnabledAfterCooldownExpires(t *testing.T) {
+	t.Parallel()
+
+	ft := newFallbackTransport(&http.Transport{}, &http.Transport{})
+
+	// Nothing disabled yet.
+	require.True(t, ft.proxyEnabled())
+
+	// Disable with a past deadline: proxyEnabled must observe the expiry
+	// and clear the marker back to zero.
+	ft.disabledUntilUnixNano.Store(time.Now().Add(-time.Second).UnixNano())
+	require.True(t, ft.proxyEnabled(), "expired cooldown should re-enable the proxy")
+	require.Equal(t, int64(0), ft.disabledUntilUnixNano.Load(), "expired cooldown should be cleared")
+
+	// Disable with a future deadline: proxyEnabled must return false and
+	// leave the marker untouched.
+	future := time.Now().Add(time.Hour).UnixNano()
+	ft.disabledUntilUnixNano.Store(future)
+	require.False(t, ft.proxyEnabled())
+	require.Equal(t, future, ft.disabledUntilUnixNano.Load())
 }
