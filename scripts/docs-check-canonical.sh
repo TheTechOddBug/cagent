@@ -24,7 +24,7 @@ while IFS= read -r file; do
     status=1
   fi
   checked=$((checked + 1))
-done < <(find docs -mindepth 3 -name index.md -not -path 'docs/_site/*' -not -path 'docs/node_modules/*' | sort)
+done < <(find docs -mindepth 3 -name index.md -not -path 'docs/public/*' -not -path 'docs/node_modules/*' | sort)
 
 if [ "$checked" -eq 0 ]; then
   echo "no content pages found under docs/ — wrong working directory?"
