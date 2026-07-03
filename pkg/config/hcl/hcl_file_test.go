@@ -32,6 +32,125 @@ agent "root" {
 	assert.Equal(t, "Line 1\nLine 2\n", root["instruction"])
 }
 
+func TestToYAML_FileFunctionTemplate(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("You are ${name}, level ${level}.\n"), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("prompt.md", { name = "Gopher", level = 3 })
+  model       = "auto"
+}
+`)
+
+	m, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.NoError(t, err)
+
+	items := m["agents"].(yaml.MapSlice)
+	root := items[0].Value.(map[string]any)
+	assert.Equal(t, "You are Gopher, level 3.\n", root["instruction"])
+}
+
+func TestToYAML_FileFunctionTemplateHasNoFunctions(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("${file(\"prompt.md\")}"), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("prompt.md", {})
+  model       = "auto"
+}
+`)
+
+	_, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rendering template")
+}
+
+func TestToYAML_FileFunctionTemplateDirectives(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tmpl := "Rules:\n%{ for rule in rules ~}\n- ${rule}\n%{ endfor ~}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rules.md"), []byte(tmpl), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("rules.md", { rules = ["be brief", "be kind"] })
+  model       = "auto"
+}
+`)
+
+	m, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.NoError(t, err)
+
+	items := m["agents"].(yaml.MapSlice)
+	root := items[0].Value.(map[string]any)
+	assert.Equal(t, "Rules:\n- be brief\n- be kind\n", root["instruction"])
+}
+
+func TestToYAML_FileFunctionTemplateMissingVariable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("Hello ${name} ${missing}"), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("prompt.md", { name = "Gopher" })
+  model       = "auto"
+}
+`)
+
+	_, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rendering template")
+	assert.Contains(t, err.Error(), "missing")
+}
+
+func TestToYAML_FileFunctionTemplateVarsMustBeObject(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("Hello"), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("prompt.md", "nope")
+  model       = "auto"
+}
+`)
+
+	_, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "template variables must be an object")
+}
+
+func TestToYAML_FileFunctionWithoutVarsKeepsInterpolationLiteral(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("Run ${shell({cmd: \"ls\"})}\n"), 0o644))
+
+	src := []byte(`
+agent "root" {
+  instruction = file("prompt.md")
+  model       = "auto"
+}
+`)
+
+	m, err := ToMap(src, filepath.Join(dir, "agent.hcl"))
+	require.NoError(t, err)
+
+	items := m["agents"].(yaml.MapSlice)
+	root := items[0].Value.(map[string]any)
+	assert.Equal(t, "Run ${shell({cmd: \"ls\"})}\n", root["instruction"])
+}
+
 func TestToYAML_FileFunctionMissingFile(t *testing.T) {
 	t.Parallel()
 
