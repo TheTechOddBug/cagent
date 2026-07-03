@@ -1030,23 +1030,30 @@ func (r *LocalRuntime) AgentToolsetStatuses(name string) []tools.ToolsetStatus {
 //   - no toolset matches name (matching uses the same logic as the
 //     /tools dialog: the toolset's Name() if any, otherwise its
 //     description),
-//   - the toolset is not supervisor-backed (no Restartable capability),
+//   - no matching toolset is supervisor-backed (no Restartable capability),
 //   - the supervisor itself returned an error (timeout, classified
 //     transport failure, etc.).
+//
+// Display names are not guaranteed unique (a YAML name: can shadow a
+// built-in), so non-restartable matches are skipped rather than aborting:
+// the first restartable toolset with the given name wins.
 func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
 	a := r.CurrentAgent()
 	if a == nil {
 		return errors.New("no active agent")
 	}
+	found := false
 	for _, ts := range a.ToolSets() {
 		if nameFor(ts, tools.DescribeToolSet(ts)) != name {
 			continue
 		}
-		restartable, ok := tools.As[tools.Restartable](ts)
-		if !ok {
-			return fmt.Errorf("toolset %q does not support restart", name)
+		found = true
+		if restartable, ok := tools.As[tools.Restartable](ts); ok {
+			return restartable.Restart(ctx)
 		}
-		return restartable.Restart(ctx)
+	}
+	if found {
+		return fmt.Errorf("toolset %q does not support restart", name)
 	}
 	return fmt.Errorf("toolset %q not found", name)
 }
