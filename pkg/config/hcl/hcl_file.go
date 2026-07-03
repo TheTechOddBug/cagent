@@ -51,7 +51,7 @@ func fileFunction(baseDir string) function.Function {
 // cannot recursively call file().
 func renderTemplate(data []byte, filename string, vars cty.Value) (cty.Value, error) {
 	t := vars.Type()
-	if vars.IsNull() || (!t.IsObjectType() && !t.IsMapType()) {
+	if vars.IsNull() || !vars.IsKnown() || (!t.IsObjectType() && !t.IsMapType()) {
 		return cty.NilVal, errors.New(`template variables must be an object, e.g. { name = "value" }`)
 	}
 

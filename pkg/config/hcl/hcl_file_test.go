@@ -8,6 +8,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zclconf/go-cty/cty"
 )
 
 func TestToYAML_FileFunction(t *testing.T) {
@@ -110,6 +111,14 @@ agent "root" {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rendering template")
 	assert.Contains(t, err.Error(), "missing")
+}
+
+func TestRenderTemplateRejectsUnknownVars(t *testing.T) {
+	t.Parallel()
+
+	_, err := renderTemplate([]byte("Hello"), "prompt.md", cty.UnknownVal(cty.Map(cty.String)))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "template variables must be an object")
 }
 
 func TestToYAML_FileFunctionTemplateVarsMustBeObject(t *testing.T) {
