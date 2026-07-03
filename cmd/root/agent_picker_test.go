@@ -451,6 +451,94 @@ func TestAgentPickerWheelIgnoredWithoutDetails(t *testing.T) {
 	assert.Equal(t, 0, m.cursor)
 }
 
+func TestAgentPickerLeanCheckboxDefaultsUnticked(t *testing.T) {
+	t.Parallel()
+
+	m := newAgentPickerModel([]agentChoice{{ref: "default"}, {ref: "coder"}})
+	m.width = 120
+	m.height = 40
+
+	assert.False(t, m.leanMode, "lean mode must be off by default")
+	assert.Contains(t, ansi.Strip(m.render()), "[ ] Lean Mode", "checkbox renders unticked by default")
+}
+
+func TestAgentPickerLeanCheckboxSeeded(t *testing.T) {
+	t.Parallel()
+
+	// When the run would already be lean (--lean or user config), the
+	// checkbox must reflect it instead of lying about the run mode.
+	m := newAgentPickerModel([]agentChoice{{ref: "default"}, {ref: "coder"}})
+	m.leanMode = true
+	m.width = 120
+	m.height = 40
+
+	assert.Contains(t, ansi.Strip(m.render()), "[x] Lean Mode")
+}
+
+func TestAgentPickerLeanCheckboxKeyToggle(t *testing.T) {
+	t.Parallel()
+
+	m := newAgentPickerModel([]agentChoice{{ref: "default"}, {ref: "coder"}})
+	m.width = 120
+	m.height = 40
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	assert.Nil(t, cmd)
+	assert.True(t, m.leanMode)
+	assert.Contains(t, ansi.Strip(m.render()), "[x] Lean Mode")
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	assert.False(t, m.leanMode)
+}
+
+func TestAgentPickerLeanCheckboxClickToggle(t *testing.T) {
+	t.Parallel()
+
+	m := newAgentPickerModel([]agentChoice{{ref: "default"}, {ref: "coder"}})
+	m.width = 120
+	m.height = 40
+
+	// Locate the checkbox on the rendered screen and click it. Note:
+	// strings.Index returns a byte offset; convert the prefix to display
+	// columns because border runes (│) are multi-byte.
+	screen := ansi.Strip(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.render()))
+	lines := strings.Split(screen, "\n")
+	var x, y int
+	found := false
+	for row, line := range lines {
+		if prefix, _, ok := strings.Cut(line, "[ ] Lean Mode"); ok {
+			x, y, found = lipgloss.Width(prefix), row, true
+			break
+		}
+	}
+	assert.True(t, found, "checkbox not found on screen")
+	assert.True(t, m.leanCheckboxAt(x, y), "hit zone must match the rendered checkbox")
+
+	// Hit-zone boundaries: both edges are inside; one cell beyond each edge
+	// and the adjacent rows are outside.
+	checkboxWidth := len("[ ] Lean Mode")
+	assert.True(t, m.leanCheckboxAt(x+checkboxWidth-1, y), "right edge must be inside")
+	assert.False(t, m.leanCheckboxAt(x-1, y), "left of the checkbox must miss")
+	assert.False(t, m.leanCheckboxAt(x+checkboxWidth, y), "right of the checkbox must miss")
+	assert.False(t, m.leanCheckboxAt(x, y-1), "row above must miss")
+	assert.False(t, m.leanCheckboxAt(x, y+1), "row below must miss")
+
+	click := tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+	_, cmd := m.Update(click)
+	assert.Nil(t, cmd, "clicking the checkbox must not quit")
+	assert.True(t, m.leanMode)
+
+	// A second click within the double-click threshold toggles back rather
+	// than being treated as a card double-click.
+	_, cmd = m.Update(click)
+	assert.Nil(t, cmd)
+	assert.False(t, m.leanMode)
+
+	// The checkbox row must not hit any card.
+	_, ok := m.cardAt(x, y)
+	assert.False(t, ok, "checkbox row must not resolve to a card")
+}
+
 // firstCardPoint scans the grid for a coordinate that maps to card index want.
 func firstCardPoint(t *testing.T, m *agentPickerModel, want int) (int, int) {
 	t.Helper()
