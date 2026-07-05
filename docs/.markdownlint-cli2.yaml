@@ -1,8 +1,8 @@
 # markdownlint configuration for the docs.
 #
 # Content is portable Markdown (GFM alerts, relative .md links) that
-# renders on GitHub Pages (Jekyll) and docs.docker.com (Hugo module
-# mount). Rules that conflict with the house style are disabled.
+# renders on GitHub Pages and docs.docker.com, both through Hugo.
+# Rules that conflict with the house style are disabled.
 
 config:
   default: true
@@ -46,8 +46,5 @@ globs:
 
 # Files to ignore
 ignores:
-  - "_site/**"
-  - "pages/**"
-  - "DEVELOPMENT.md"
-  - "TODO.md"
+  - "public/**"
   - "node_modules/**"

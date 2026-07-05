@@ -59,9 +59,9 @@ jobs:
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
         with:
           # Verbatim (code block) links are excluded by lychee's defaults.
-          # index.md and 404.md are github.io-only pages that keep Jekyll
-          # Liquid links; the muffet check (task docs-check-links) covers
-          # them on the rendered site.
+          # index.md and 404.md are github.io-only landing pages whose
+          # links are HTML anchors resolved on the rendered site; the
+          # muffet check (task docs-check-links) covers them.
           args: >-
             --offline --no-progress
             --exclude-path docs/index.md --exclude-path docs/404.md

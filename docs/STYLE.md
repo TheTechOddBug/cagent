@@ -41,7 +41,7 @@ A simple rule of thumb:
 
 Callouts are written as portable GitHub-style alerts so the same
 Markdown renders correctly on docs.docker.com (Hugo), GitHub, and this
-site (a small script upgrades them to the styled panels):
+site (a blockquote render hook upgrades them to the styled panels):
 
 ```markdown
 > [!TIP]
@@ -68,10 +68,10 @@ including the `index.md` filename:
 See the [Quick Start](../../getting-started/quickstart/index.md).
 ```
 
-Both Jekyll (`jekyll-relative-links`) and Hugo (docs.docker.com link
-render hook) resolve these to the right URL. Never use Liquid
-(`relative_url`) or absolute `/path/` links in `docs/**` content —
-they break when the page is mounted on docs.docker.com.
+Both this site and docs.docker.com render them through a Hugo link
+render hook that resolves the path to the target page's URL. Never
+use absolute `/path/` links in `docs/**` content — they break when
+the page is mounted on docs.docker.com.
 
 ## Canonical URLs
 
@@ -85,7 +85,7 @@ matter (after `weight:`), derived from its path:
 canonical: https://docs.docker.com/ai/docker-agent/<section>/<page>/
 ```
 
-The Jekyll layout renders it as the page's `rel=canonical` link;
+The github.io layout renders it as the page's `rel=canonical` link;
 docs.docker.com ignores the value and self-canonicalizes. CI
 (`docs-lint` / `scripts/docs-check-canonical.sh`) fails when the
 value is missing or doesn't match the page path — mind it when

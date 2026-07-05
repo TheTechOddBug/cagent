@@ -1,7 +1,7 @@
 <footer class="site-footer" role="contentinfo">
   <div class="site-footer-inner">
     <div class="site-footer-brand">
-      <img src="{{ '/assets/docker-mark.svg' | relative_url }}" alt="" width="28" height="22">
+      <img src="{{ "assets/docker-mark.svg" | relURL }}" alt="" width="28" height="22">
       <div>
         <div class="site-footer-product">Docker Agent</div>
         <div class="site-footer-tagline">Run AI agents like containers.</div>
@@ -39,7 +39,7 @@
     </div>
   </div>
   <div class="site-footer-bottom">
-    <span>&copy; {{ site.time | date: '%Y' }} Docker Inc. All rights reserved.</span>
+    <span>&copy; {{ now.Year }} Docker Inc. All rights reserved.</span>
     <span>Docker Agent is open source under the <a href="https://github.com/docker/docker-agent/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 license</a>.</span>
   </div>
 </footer>
