@@ -502,6 +502,9 @@ func SessionCompaction(sessionID, status, agentName string) Event {
 // SessionCompactionCompleted is the terminal counterpart of a "started"
 // [SessionCompaction] event, carrying the outcome ("applied", "skipped"
 // or "failed") so consumers can render an honest completion signal.
+// A "completed" event may arrive without a preceding "started" when a
+// pre-compaction hook vetoes the operation; consumers replaying the
+// event stream should tolerate the unpaired terminal event.
 func SessionCompactionCompleted(sessionID, outcome, agentName string) Event {
 	return &SessionCompactionEvent{
 		Type:         "session_compaction",

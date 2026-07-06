@@ -202,6 +202,77 @@ func TestComputeFirstKeptEntry(t *testing.T) {
 	})
 }
 
+func TestLastAssistantContentAfter(t *testing.T) {
+	t.Parallel()
+
+	newMsg := func(role chat.MessageRole, content string) session.Item {
+		return session.NewMessageItem(&session.Message{
+			Message: chat.Message{Role: role, Content: content},
+		})
+	}
+
+	tests := []struct {
+		name     string
+		messages []session.Item
+		seedLen  int
+		want     string
+	}{
+		{
+			name:     "no messages after seed",
+			messages: []session.Item{newMsg(chat.MessageRoleAssistant, "seed reply")},
+			seedLen:  1,
+			want:     "",
+		},
+		{
+			name: "seed assistant reply is never picked up",
+			messages: []session.Item{
+				newMsg(chat.MessageRoleAssistant, "stale reply"),
+				newMsg(chat.MessageRoleUser, "summarize"),
+			},
+			seedLen: 2,
+			want:    "",
+		},
+		{
+			name: "summary is trimmed",
+			messages: []session.Item{
+				newMsg(chat.MessageRoleUser, "summarize"),
+				newMsg(chat.MessageRoleAssistant, "  summary \n"),
+			},
+			seedLen: 1,
+			want:    "summary",
+		},
+		{
+			name: "whitespace-only trailing reply does not hide an earlier summary",
+			messages: []session.Item{
+				newMsg(chat.MessageRoleUser, "summarize"),
+				newMsg(chat.MessageRoleAssistant, "real summary"),
+				newMsg(chat.MessageRoleTool, "tool result"),
+				newMsg(chat.MessageRoleAssistant, "\n \t"),
+			},
+			seedLen: 1,
+			want:    "real summary",
+		},
+		{
+			name: "all whitespace-only replies yield no summary",
+			messages: []session.Item{
+				newMsg(chat.MessageRoleUser, "summarize"),
+				newMsg(chat.MessageRoleAssistant, " "),
+				newMsg(chat.MessageRoleAssistant, "\n"),
+			},
+			seedLen: 1,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sess := session.New(session.WithMessages(tt.messages))
+			assert.Equal(t, tt.want, lastAssistantContentAfter(sess, tt.seedLen))
+		})
+	}
+}
+
 func TestGatherCompactionInput_NoPriorSummary(t *testing.T) {
 	t.Parallel()
 

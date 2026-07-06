@@ -348,17 +348,19 @@ func firstKeptSessionIndex(sess *session.Session, sessIndices []int, splitIdx in
 	return sessIndices[splitIdx]
 }
 
-// lastAssistantContentAfter returns the content of the last assistant
-// message appended to sess after the first seedLen items, or "" when
-// the run produced none. sess is the throwaway compaction sub-session,
-// owned exclusively by the caller once RunAgent has returned.
+// lastAssistantContentAfter returns the content of the last non-empty
+// assistant message appended to sess after the first seedLen items, or
+// "" when the run produced none. Whitespace-only replies are skipped
+// so a trailing blank token doesn't hide an earlier valid summary.
+// sess is the throwaway compaction sub-session, owned exclusively by
+// the caller once RunAgent has returned.
 func lastAssistantContentAfter(sess *session.Session, seedLen int) string {
 	for i := len(sess.Messages) - 1; i >= seedLen; i-- {
 		item := sess.Messages[i]
 		if item.IsMessage() && item.Message.Message.Role == chat.MessageRoleAssistant {
-			// Whitespace-only output is no summary; trimming keeps it on
-			// the no-op path.
-			return strings.TrimSpace(item.Message.Message.Content)
+			if trimmed := strings.TrimSpace(item.Message.Message.Content); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	return ""
