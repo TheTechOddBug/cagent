@@ -1,4 +1,4 @@
-package leantui
+package ui
 
 import (
 	"bufio"
@@ -18,7 +18,7 @@ const (
 	seqDisableBracketedPaste = "\x1b[?2004l"
 )
 
-// renderer draws the whole conversation as a single, growing array of lines and
+// Renderer draws the whole conversation as a single, growing array of lines and
 // keeps it in sync with the terminal using minimal, differential updates. It
 // writes to the normal screen buffer (never the alternate screen): content that
 // scrolls off the top becomes immutable terminal scrollback, exactly like a
@@ -29,7 +29,7 @@ const (
 // produces the full set of lines; the renderer diffs them against the previous
 // frame and rewrites only the changed rows within the visible viewport, letting
 // the terminal scroll naturally when content is appended past the bottom.
-type renderer struct {
+type Renderer struct {
 	w *bufio.Writer
 
 	width  int
@@ -42,26 +42,26 @@ type renderer struct {
 	needsRedraw bool
 }
 
-func newRenderer(w *bufio.Writer, width, height int) *renderer {
-	return &renderer{w: w, width: width, height: height}
+func NewRenderer(w *bufio.Writer, width, height int) *Renderer {
+	return &Renderer{w: w, width: width, height: height}
 }
 
-// setSize records a new terminal size and forces a clean repaint on the next
+// SetSize records a new terminal size and forces a clean repaint on the next
 // frame, since wrapping and the viewport both change with the dimensions.
-func (r *renderer) setSize(width, height int) {
+func (r *Renderer) SetSize(width, height int) {
 	r.width = width
 	r.height = height
 	r.needsRedraw = true
 }
 
-// repaint forces the next frame to clear the screen and redraw from scratch.
-func (r *renderer) repaint() {
+// Repaint forces the next frame to clear the screen and redraw from scratch.
+func (r *Renderer) Repaint() {
 	r.needsRedraw = true
 }
 
-// frame reconciles the screen with newLines and places the hardware cursor at
+// Frame reconciles the screen with newLines and places the hardware cursor at
 // (cursorLine, cursorCol), where cursorLine is an index into newLines.
-func (r *renderer) frame(newLines []string, cursorLine, cursorCol int) {
+func (r *Renderer) Frame(newLines []string, cursorLine, cursorCol int) {
 	if len(newLines) == 0 {
 		newLines = []string{""}
 	}
@@ -144,7 +144,7 @@ func (r *renderer) frame(newLines []string, cursorLine, cursorCol int) {
 // fullRedraw repaints every line. When wipe is set it also clears the screen
 // and scrollback first (used on resize); otherwise it assumes a clean line and
 // streams the content out, letting the terminal scroll as needed.
-func (r *renderer) fullRedraw(newLines []string, cursorLine, cursorCol int, wipe bool) {
+func (r *Renderer) fullRedraw(newLines []string, cursorLine, cursorCol int, wipe bool) {
 	var b strings.Builder
 	b.WriteString(seqSyncStart)
 	b.WriteString(seqHideCursor)
@@ -173,10 +173,10 @@ func (r *renderer) fullRedraw(newLines []string, cursorLine, cursorCol int, wipe
 	r.prev = newLines
 }
 
-// eraseBelow drops everything from buffer row `line` downward (the interactive
+// EraseBelow drops everything from buffer row `line` downward (the interactive
 // chrome), leaving the cursor on that now-blank row so the shell prompt returns
 // directly beneath the conversation. Used on exit.
-func (r *renderer) eraseBelow(line int) {
+func (r *Renderer) EraseBelow(line int) {
 	lo := r.viewportTop
 	hi := r.viewportTop + r.height - 1
 	if line < lo {
@@ -200,7 +200,7 @@ func (r *renderer) eraseBelow(line int) {
 
 // moveRow emits a vertical cursor move from buffer row "from" to "to". Both
 // rows are assumed to be within the visible viewport.
-func (r *renderer) moveRow(b *strings.Builder, from, to int) {
+func (r *Renderer) moveRow(b *strings.Builder, from, to int) {
 	switch d := to - from; {
 	case d > 0:
 		b.WriteString(ansi.CursorDown(d))
@@ -211,7 +211,7 @@ func (r *renderer) moveRow(b *strings.Builder, from, to int) {
 
 // moveCursor positions the hardware cursor at (line, col), clamping both the
 // current and target rows to the visible viewport, and returns the row it ended on.
-func (r *renderer) moveCursor(b *strings.Builder, from, line, col int) int {
+func (r *Renderer) moveCursor(b *strings.Builder, from, line, col int) int {
 	lo := r.viewportTop
 	hi := r.viewportTop + r.height - 1
 	if from < lo {
@@ -234,7 +234,11 @@ func (r *renderer) moveCursor(b *strings.Builder, from, line, col int) int {
 	return line
 }
 
-func (r *renderer) write(s string) {
+func (r *Renderer) ViewportTop() int {
+	return r.viewportTop
+}
+
+func (r *Renderer) write(s string) {
 	_, _ = r.w.WriteString(s)
 	_ = r.w.Flush()
 }

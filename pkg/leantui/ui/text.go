@@ -1,4 +1,4 @@
-package leantui
+package ui
 
 import (
 	"strings"
@@ -7,13 +7,13 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// displayWidth returns the rendered cell width of s, ignoring ANSI escape
+// DisplayWidth returns the rendered cell width of s, ignoring ANSI escape
 // sequences.
-func displayWidth(s string) int {
+func DisplayWidth(s string) int {
 	return ansi.StringWidth(s)
 }
 
-func runeWidth(r rune) int {
+func RuneWidth(r rune) int {
 	if r == '\t' {
 		return 1
 	}
@@ -24,30 +24,30 @@ func runeWidth(r rune) int {
 	return w
 }
 
-// truncate shortens s to at most w cells, appending an ellipsis when it had to
+// Truncate shortens s to at most w cells, appending an ellipsis when it had to
 // cut anything.
-func truncate(s string, w int) string {
+func Truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if displayWidth(s) <= w {
+	if DisplayWidth(s) <= w {
 		return s
 	}
 	return ansi.Truncate(s, w, "…")
 }
 
-// padRight pads s with spaces up to w cells. It never truncates.
-func padRight(s string, w int) string {
-	gap := w - displayWidth(s)
+// PadRight pads s with spaces up to w cells. It never Truncates.
+func PadRight(s string, w int) string {
+	gap := w - DisplayWidth(s)
 	if gap <= 0 {
 		return s
 	}
 	return s + strings.Repeat(" ", gap)
 }
 
-// wrapANSI hard-wraps s to width w, keeping ANSI styling intact and returning
+// WrapANSI hard-wraps s to width w, keeping ANSI styling intact and returning
 // one string per physical row. Existing newlines in s start new rows.
-func wrapANSI(s string, w int) []string {
+func WrapANSI(s string, w int) []string {
 	if w < 1 {
 		w = 1
 	}

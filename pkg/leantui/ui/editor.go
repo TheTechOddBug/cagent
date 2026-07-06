@@ -1,4 +1,4 @@
-package leantui
+package ui
 
 import "strings"
 
@@ -9,11 +9,11 @@ type rowSpan struct {
 	end   int
 }
 
-// editor is a multi-line text input. The buffer is a flat rune slice with the
+// Editor is a multi-line text input. The buffer is a flat rune slice with the
 // cursor expressed as an index into it; newlines are stored literally so the
 // same structure handles single-line prompts and pasted multi-line text. All
 // visual wrapping is derived on demand from a given content width.
-type editor struct {
+type Editor struct {
 	value  []rune
 	cursor int
 
@@ -24,27 +24,27 @@ type editor struct {
 	draft     string
 }
 
-func newEditor(placeholder string) *editor {
-	return &editor{placeholder: placeholder, histIndex: 0}
+func NewEditor(placeholder string) *Editor {
+	return &Editor{placeholder: placeholder, histIndex: 0}
 }
 
-func (e *editor) text() string { return string(e.value) }
+func (e *Editor) Text() string { return string(e.value) }
 
-func (e *editor) isEmpty() bool { return len(e.value) == 0 }
+func (e *Editor) IsEmpty() bool { return len(e.value) == 0 }
 
-func (e *editor) reset() {
+func (e *Editor) Reset() {
 	e.value = nil
 	e.cursor = 0
 	e.histIndex = len(e.history)
 	e.draft = ""
 }
 
-func (e *editor) setText(s string) {
+func (e *Editor) SetText(s string) {
 	e.value = []rune(s)
 	e.cursor = len(e.value)
 }
 
-func (e *editor) insert(runes []rune) {
+func (e *Editor) Insert(runes []rune) {
 	if len(runes) == 0 {
 		return
 	}
@@ -64,9 +64,9 @@ func (e *editor) insert(runes []rune) {
 	e.cursor += len(cleaned)
 }
 
-func (e *editor) insertNewline() { e.insert([]rune{'\n'}) }
+func (e *Editor) InsertNewline() { e.Insert([]rune{'\n'}) }
 
-func (e *editor) backspace() {
+func (e *Editor) Backspace() {
 	if e.cursor == 0 {
 		return
 	}
@@ -74,14 +74,14 @@ func (e *editor) backspace() {
 	e.cursor--
 }
 
-func (e *editor) deleteForward() {
+func (e *Editor) DeleteForward() {
 	if e.cursor >= len(e.value) {
 		return
 	}
 	e.value = append(e.value[:e.cursor], e.value[e.cursor+1:]...)
 }
 
-func (e *editor) deleteWordBack() {
+func (e *Editor) DeleteWordBack() {
 	if e.cursor == 0 {
 		return
 	}
@@ -90,38 +90,38 @@ func (e *editor) deleteWordBack() {
 	e.cursor = start
 }
 
-func (e *editor) deleteToLineStart() {
+func (e *Editor) DeleteToLineStart() {
 	start := lineStart(e.value, e.cursor)
 	e.value = append(e.value[:start], e.value[e.cursor:]...)
 	e.cursor = start
 }
 
-func (e *editor) deleteToLineEnd() {
+func (e *Editor) DeleteToLineEnd() {
 	end := lineEnd(e.value, e.cursor)
 	e.value = append(e.value[:e.cursor], e.value[end:]...)
 }
 
-func (e *editor) moveLeft() {
+func (e *Editor) MoveLeft() {
 	if e.cursor > 0 {
 		e.cursor--
 	}
 }
 
-func (e *editor) moveRight() {
+func (e *Editor) MoveRight() {
 	if e.cursor < len(e.value) {
 		e.cursor++
 	}
 }
 
-func (e *editor) moveWordLeft()  { e.cursor = wordStart(e.value, e.cursor) }
-func (e *editor) moveWordRight() { e.cursor = wordEnd(e.value, e.cursor) }
-func (e *editor) moveLineStart() { e.cursor = lineStart(e.value, e.cursor) }
-func (e *editor) moveLineEnd()   { e.cursor = lineEnd(e.value, e.cursor) }
+func (e *Editor) MoveWordLeft()  { e.cursor = wordStart(e.value, e.cursor) }
+func (e *Editor) MoveWordRight() { e.cursor = wordEnd(e.value, e.cursor) }
+func (e *Editor) MoveLineStart() { e.cursor = lineStart(e.value, e.cursor) }
+func (e *Editor) MoveLineEnd()   { e.cursor = lineEnd(e.value, e.cursor) }
 
-// up moves the cursor one visual row up, preserving the column. It reports
+// Up moves the cursor one visual row up, preserving the column. It reports
 // false when the cursor is already on the first row, letting the caller fall
 // back to history navigation.
-func (e *editor) up(termWidth int) bool {
+func (e *Editor) Up(termWidth int) bool {
 	width := contentWidth(termWidth)
 	rows := e.wrapRows(width)
 	row, col := e.cursorPos(rows)
@@ -132,7 +132,7 @@ func (e *editor) up(termWidth int) bool {
 	return true
 }
 
-func (e *editor) down(termWidth int) bool {
+func (e *Editor) Down(termWidth int) bool {
 	width := contentWidth(termWidth)
 	rows := e.wrapRows(width)
 	row, col := e.cursorPos(rows)
@@ -143,8 +143,8 @@ func (e *editor) down(termWidth int) bool {
 	return true
 }
 
-// rememberHistory records a submitted entry and resets the history cursor.
-func (e *editor) rememberHistory(s string) {
+// RememberHistory records a submitted entry and resets the history cursor.
+func (e *Editor) RememberHistory(s string) {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return
@@ -156,59 +156,59 @@ func (e *editor) rememberHistory(s string) {
 	e.draft = ""
 }
 
-func (e *editor) historyPrev() {
+func (e *Editor) HistoryPrev() {
 	if e.histIndex == 0 {
 		return
 	}
 	if e.histIndex == len(e.history) {
-		e.draft = e.text()
+		e.draft = e.Text()
 	}
 	e.histIndex--
-	e.setText(e.history[e.histIndex])
+	e.SetText(e.history[e.histIndex])
 }
 
-func (e *editor) historyNext() {
+func (e *Editor) HistoryNext() {
 	if e.histIndex >= len(e.history) {
 		return
 	}
 	e.histIndex++
 	if e.histIndex == len(e.history) {
-		e.setText(e.draft)
+		e.SetText(e.draft)
 		return
 	}
-	e.setText(e.history[e.histIndex])
+	e.SetText(e.history[e.histIndex])
 }
 
-// layout renders the editor for the given terminal width, returning one styled
+// Layout renders the editor for the given terminal width, returning one styled
 // string per physical row along with the hardware cursor position (row within
 // the returned slice, column in terminal cells).
-func (e *editor) layout(termWidth int) (lines []string, curRow, curCol int) {
+func (e *Editor) Layout(termWidth int) (lines []string, curRow, curCol int) {
 	width := contentWidth(termWidth)
 	rows := e.wrapRows(width)
 
 	if len(e.value) == 0 {
-		line := stAccent().Render(promptText)
+		line := StAccent().Render(PromptText)
 		if e.placeholder != "" {
-			line += stPlaceholder().Render(truncate(e.placeholder, width))
+			line += StPlaceholder().Render(Truncate(e.placeholder, width))
 		}
-		return []string{line}, 0, promptWidth
+		return []string{line}, 0, PromptWidth
 	}
 
 	lines = make([]string, len(rows))
 	for i, rs := range rows {
 		content := string(e.value[rs.start:rs.end])
 		if i == 0 {
-			lines[i] = stAccent().Render(promptText) + content
+			lines[i] = StAccent().Render(PromptText) + content
 		} else {
-			lines[i] = continuation + content
+			lines[i] = Continuation + content
 		}
 	}
 
 	row, col := e.cursorPos(rows)
-	return lines, row, col + promptWidth
+	return lines, row, col + PromptWidth
 }
 
-func (e *editor) wrapRows(width int) []rowSpan {
+func (e *Editor) wrapRows(width int) []rowSpan {
 	if width < 1 {
 		width = 1
 	}
@@ -223,7 +223,7 @@ func (e *editor) wrapRows(width int) []rowSpan {
 			curWidth = 0
 			continue
 		}
-		w := runeWidth(r)
+		w := RuneWidth(r)
 		if curWidth+w > width && curWidth > 0 {
 			rows = append(rows, rowSpan{start, i})
 			start = i
@@ -237,7 +237,7 @@ func (e *editor) wrapRows(width int) []rowSpan {
 	return rows
 }
 
-func (e *editor) cursorPos(rows []rowSpan) (row, col int) {
+func (e *Editor) cursorPos(rows []rowSpan) (row, col int) {
 	row = 0
 	for i, rs := range rows {
 		if rs.start <= e.cursor {
@@ -246,12 +246,12 @@ func (e *editor) cursorPos(rows []rowSpan) (row, col int) {
 	}
 	rs := rows[row]
 	for i := rs.start; i < e.cursor && i < len(e.value); i++ {
-		col += runeWidth(e.value[i])
+		col += RuneWidth(e.value[i])
 	}
 	return row, col
 }
 
-func (e *editor) indexAt(rows []rowSpan, row, col int) int {
+func (e *Editor) indexAt(rows []rowSpan, row, col int) int {
 	if row < 0 {
 		row = 0
 	}
@@ -261,7 +261,7 @@ func (e *editor) indexAt(rows []rowSpan, row, col int) int {
 	rs := rows[row]
 	w := 0
 	for i := rs.start; i < rs.end; i++ {
-		rw := runeWidth(e.value[i])
+		rw := RuneWidth(e.value[i])
 		if w+rw > col {
 			return i
 		}
@@ -271,7 +271,7 @@ func (e *editor) indexAt(rows []rowSpan, row, col int) int {
 }
 
 func contentWidth(termWidth int) int {
-	w := termWidth - promptWidth
+	w := termWidth - PromptWidth
 	if w < 1 {
 		return 1
 	}
