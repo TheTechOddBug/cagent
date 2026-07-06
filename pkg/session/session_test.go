@@ -362,6 +362,57 @@ func TestGetLastUserMessages(t *testing.T) {
 	})
 }
 
+func TestMessageUnmarshalJSONAgentNameCompat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "current key",
+			input: `{"agent_name":"root","message":{"role":"user","content":"hi"}}`,
+			want:  "root",
+		},
+		{
+			name:  "legacy key",
+			input: `{"agentName":"root","message":{"role":"user","content":"hi"}}`,
+			want:  "root",
+		},
+		{
+			name:  "current key wins over legacy",
+			input: `{"agent_name":"new","agentName":"old","message":{"role":"user","content":"hi"}}`,
+			want:  "new",
+		},
+		{
+			name:  "no agent name",
+			input: `{"message":{"role":"user","content":"hi"}}`,
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var msg Message
+			require.NoError(t, json.Unmarshal([]byte(tt.input), &msg))
+			assert.Equal(t, tt.want, msg.AgentName)
+			assert.Equal(t, "hi", msg.Message.Content)
+		})
+	}
+
+	t.Run("marshal emits agent_name", func(t *testing.T) {
+		t.Parallel()
+
+		out, err := json.Marshal(Message{AgentName: "root"})
+		require.NoError(t, err)
+		assert.Contains(t, string(out), `"agent_name":"root"`)
+		assert.NotContains(t, string(out), "agentName")
+	})
+}
+
 func TestEvalCriteriaUnmarshalJSON(t *testing.T) {
 	t.Parallel()
 
