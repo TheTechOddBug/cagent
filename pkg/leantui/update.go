@@ -351,7 +351,7 @@ func (m *model) startSkillFork(ctx context.Context, name, task string) {
 }
 
 func (m *model) refreshCommands(ctx context.Context) {
-	cmds := ui.BuiltinCommands()
+	cmds := builtinCommands()
 	for name, c := range m.app.CurrentAgentCommands(ctx) {
 		if m.disabledCommands[name] {
 			continue

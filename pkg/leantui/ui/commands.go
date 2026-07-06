@@ -20,19 +20,6 @@ type Command struct {
 	Kind CommandKind
 }
 
-// BuiltinCommands are the slash commands the lean TUI handles itself.
-func BuiltinCommands() []Command {
-	return []Command{
-		{Name: "new", Desc: "Start a new session", Kind: CmdBuiltin},
-		{Name: "compact", Desc: "Summarize and compact the conversation", Kind: CmdBuiltin},
-		{Name: "effort", Desc: "Set the model's reasoning effort (usage: /effort <level>)", Kind: CmdBuiltin},
-		{Name: "clear", Desc: "Clear the screen", Kind: CmdBuiltin},
-		{Name: "help", Desc: "Show keyboard shortcuts and commands", Kind: CmdBuiltin},
-		{Name: "exit", Desc: "Exit", Kind: CmdBuiltin},
-		{Name: "quit", Desc: "Exit", Kind: CmdBuiltin},
-	}
-}
-
 // FilterCommands returns the commands whose name has the given prefix, built-in
 // commands first, then agent commands, each group alphabetically sorted.
 func FilterCommands(all []Command, prefix string) []Command {

@@ -27,7 +27,7 @@ func bareModel(height int) *model {
 		width:        width,
 		height:       height,
 		r:            ui.NewRenderer(w, width, height),
-		screen:       ui.NewScreen("/tmp/project", ""),
+		screen:       ui.NewScreen("/tmp/project", "", "type here"),
 		status:       ui.StatusModel{WorkingDir: "/tmp/project"},
 		sessionState: service.NewSessionState(nil),
 		usage:        ui.NewUsageTracker(),

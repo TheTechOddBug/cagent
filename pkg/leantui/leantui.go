@@ -184,7 +184,7 @@ func newModel(term *ui.Terminal, cfg Config) *model {
 		r:                ui.NewRenderer(term.Writer(), w, h),
 		width:            w,
 		height:           h,
-		screen:           ui.NewScreen(cfg.WorkingDir, gitbranch.Current(cfg.WorkingDir)),
+		screen:           ui.NewScreen(cfg.WorkingDir, gitbranch.Current(cfg.WorkingDir), "Type a message, / for commands"),
 		status:           ui.StatusModel{WorkingDir: cfg.WorkingDir, Branch: gitbranch.Current(cfg.WorkingDir)},
 		sessionState:     sessionState,
 		usage:            ui.NewUsageTracker(),

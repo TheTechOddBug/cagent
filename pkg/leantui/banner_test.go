@@ -13,7 +13,7 @@ import (
 
 func TestCommitWelcomePadsBanner(t *testing.T) {
 	t.Parallel()
-	m := &model{screen: ui.NewScreen("", "")}
+	m := &model{screen: ui.NewScreen("", "", "")}
 	m.commitWelcome()
 
 	require.Equal(t, 1, m.screen.Transcript.BlockCount())

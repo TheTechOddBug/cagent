@@ -11,10 +11,10 @@ type Screen struct {
 	Confirm      *ConfirmModel
 }
 
-func NewScreen(workingDir, branch string) *Screen {
+func NewScreen(workingDir, branch, editorPlaceholder string) *Screen {
 	return &Screen{
 		Transcript:   NewTranscript(),
-		Editor:       NewEditor("Type a message, / for commands"),
+		Editor:       NewEditor(editorPlaceholder),
 		Autocomplete: NewAutocomplete(),
 		Status:       StatusModel{WorkingDir: workingDir, Branch: branch},
 	}
