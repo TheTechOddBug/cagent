@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -128,7 +129,7 @@ func TestShiftTabCyclesThinkingLevel(t *testing.T) {
 	m := bareModel(24)
 	m.app = app.New(t.Context(), rt, session.New())
 
-	m.handleKey(t.Context(), key{typ: keyShiftTab})
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyShiftTab})
 
 	assert.Equal(t, 1, rt.cycleCalls)
 	assert.Equal(t, "high", m.status.thinking)
@@ -141,7 +142,7 @@ func TestShiftTabReportsUnsupportedThinkingLevel(t *testing.T) {
 	m := bareModel(24)
 	m.app = app.New(t.Context(), rt, session.New())
 
-	m.handleKey(t.Context(), key{typ: keyShiftTab})
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyShiftTab})
 
 	assert.Equal(t, 1, rt.cycleCalls)
 	assert.Empty(t, m.status.thinking)
@@ -181,7 +182,7 @@ func TestEditorSubmitWhileBusySteersAndRendersAtStreamEnd(t *testing.T) {
 	m.app = app.New(t.Context(), rt, session.New())
 	m.busy = true
 	m.transcript.appendPending(blockAssistant, "assistant is still streaming")
-	m.editor.setText("turn left")
+	m.editor.SetText("turn left")
 
 	m.handleEnter(t.Context())
 

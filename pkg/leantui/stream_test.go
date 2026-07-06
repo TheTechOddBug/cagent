@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
@@ -25,9 +26,9 @@ func bareModel(height int) *model {
 	return &model{
 		width:        width,
 		height:       height,
-		r:            newRenderer(w, width, height),
-		editor:       newEditor("type here"),
-		ac:           newAutocomplete(),
+		r:            ui.NewRenderer(w, width, height),
+		editor:       ui.NewEditor("type here"),
+		ac:           ui.NewAutocomplete(),
 		transcript:   newTranscript(),
 		status:       statusData{workingDir: "/tmp/project"},
 		sessionState: service.NewSessionState(nil),
@@ -45,11 +46,11 @@ func TestStreamingGrowthScrollsAndRendersMarkdown(t *testing.T) {
 	for i := range 40 {
 		m.transcript.pending.text.WriteString("Paragraph " + strconv.Itoa(i) + " with some streamed text.\n\n")
 		lines, cl, cc := m.buildLines()
-		require.NotPanics(t, func() { m.r.frame(lines, cl, cc) })
+		require.NotPanics(t, func() { m.r.Frame(lines, cl, cc) })
 	}
 
 	// Content far exceeds the 10-row viewport, so it must have scrolled.
-	assert.Positive(t, m.r.viewportTop)
+	assert.Positive(t, m.r.ViewportTop())
 
 	// Finalizing the stream turns it into a cached block; the visible output is
 	// unchanged because it was already rendered as markdown live.
@@ -57,20 +58,20 @@ func TestStreamingGrowthScrollsAndRendersMarkdown(t *testing.T) {
 	assert.Len(t, m.transcript.blocks, 1)
 	require.NotPanics(t, func() {
 		lines, cl, cc := m.buildLines()
-		m.r.frame(lines, cl, cc)
+		m.r.Frame(lines, cl, cc)
 	})
 }
 
 func TestBuildLinesPlacesCursorOnInput(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
-	m.editor.setText("hello")
+	m.editor.SetText("hello")
 
 	lines, cursorLine, cursorCol := m.buildLines()
 	require.NotEmpty(t, lines)
 	// The cursor line must point at the input row and the column past the prompt.
 	assert.Contains(t, lines[cursorLine], "hello")
-	assert.Equal(t, promptWidth+5, cursorCol)
+	assert.Equal(t, ui.PromptWidth+5, cursorCol)
 }
 
 func TestConversationLinesShowsSpinnerWhenBusy(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 )
 
@@ -22,7 +23,7 @@ func TestFormatTokens(t *testing.T) {
 func TestComposeLineRightAligns(t *testing.T) {
 	t.Parallel()
 	out := composeLine("left", "right", 20)
-	assert.Equal(t, 20, displayWidth(out))
+	assert.Equal(t, 20, ui.DisplayWidth(out))
 	assert.GreaterOrEqual(t, len(out), len("left")+len("right"))
 	assert.Contains(t, out, "left")
 	assert.Contains(t, out, "right")
@@ -31,16 +32,16 @@ func TestComposeLineRightAligns(t *testing.T) {
 func TestComposeLineTruncatesLeft(t *testing.T) {
 	t.Parallel()
 	out := composeLine("a very long left side that does not fit", "right", 15)
-	assert.LessOrEqual(t, displayWidth(out), 15)
+	assert.LessOrEqual(t, ui.DisplayWidth(out), 15)
 	assert.Contains(t, out, "right")
 }
 
 func TestRenderBarWidth(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, contextBarWidth, displayWidth(renderBar(0.5)))
-	assert.Equal(t, contextBarWidth, displayWidth(renderBar(0)))
-	assert.Equal(t, contextBarWidth, displayWidth(renderBar(1)))
-	assert.Equal(t, contextBarWidth, displayWidth(renderBar(1.5))) // clamped
+	assert.Equal(t, contextBarWidth, ui.DisplayWidth(renderBar(0.5)))
+	assert.Equal(t, contextBarWidth, ui.DisplayWidth(renderBar(0)))
+	assert.Equal(t, contextBarWidth, ui.DisplayWidth(renderBar(1)))
+	assert.Equal(t, contextBarWidth, ui.DisplayWidth(renderBar(1.5))) // clamped
 }
 
 func TestRenderContextShowsZerosBeforeUsage(t *testing.T) {
@@ -78,7 +79,7 @@ func TestRenderStatusFitsWidth(t *testing.T) {
 	assert.Len(t, lines, 2)
 	assert.Contains(t, strings.Join(lines, "\n"), "$0.05")
 	for _, l := range lines {
-		assert.LessOrEqual(t, displayWidth(l), 80)
+		assert.LessOrEqual(t, ui.DisplayWidth(l), 80)
 	}
 }
 

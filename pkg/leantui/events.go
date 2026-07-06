@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -81,20 +82,20 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		m.handleSessionCompaction(ctx, e)
 	case *runtime.ErrorEvent:
 		m.transcript.flushPending()
-		m.addNotice("✗ ", e.Error, stError())
+		m.addNotice("✗ ", e.Error, ui.StError())
 	case *runtime.WarningEvent:
-		m.addNotice("⚠ ", e.Message, stWarning())
+		m.addNotice("⚠ ", e.Message, ui.StWarning())
 	case *runtime.ShellOutputEvent:
 		output := e.Output
 		m.transcript.addBlock(func(w int) []string { return renderToolOutput(output, w) })
 	case *runtime.AgentSwitchingEvent:
 		if e.Switching && e.ToAgent != "" {
-			m.addNotice("→ ", "Switching to "+e.ToAgent, stMuted())
+			m.addNotice("→ ", "Switching to "+e.ToAgent, ui.StMuted())
 		}
 	case *runtime.MaxIterationsReachedEvent:
-		m.addNotice("⚠ ", "Maximum iterations reached.", stWarning())
+		m.addNotice("⚠ ", "Maximum iterations reached.", ui.StWarning())
 	case *runtime.ModelFallbackEvent:
-		m.addNotice("⚠ ", "Model "+e.FailedModel+" failed, falling back to "+e.FallbackModel+".", stWarning())
+		m.addNotice("⚠ ", "Model "+e.FailedModel+" failed, falling back to "+e.FallbackModel+".", ui.StWarning())
 	}
 }
 

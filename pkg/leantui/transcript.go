@@ -3,6 +3,7 @@ package leantui
 import (
 	"strings"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -173,5 +174,5 @@ func (t *transcript) pendingLines(width int) []string {
 
 func spinnerLine(frame int) string {
 	f := spinnerFrames[frame%len(spinnerFrames)]
-	return stAccent().Render(f) + " " + stMuted().Render("Working…")
+	return ui.StAccent().Render(f) + " " + ui.StMuted().Render("Working…")
 }

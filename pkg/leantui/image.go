@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -111,7 +112,7 @@ func renderInlineImage(img inlineImage, width int) []string {
 		label += " (" + img.mime + ")"
 	}
 
-	out := []string{"  " + stMuted().Render("🖼 "+label)}
+	out := []string{"  " + ui.StMuted().Render("🖼 "+label)}
 	out = append(out, "  "+kittyImageSequence(img.pngData, cols, rows))
 	for range rows - 1 {
 		out = append(out, "")

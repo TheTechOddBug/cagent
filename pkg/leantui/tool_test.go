@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/filesystem"
 	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
@@ -43,10 +44,10 @@ func TestRenderToolWrapsCallInBox(t *testing.T) {
 	require.GreaterOrEqual(t, len(lines), 3)
 
 	for _, line := range lines {
-		assert.LessOrEqual(t, displayWidth(line), width)
+		assert.LessOrEqual(t, ui.DisplayWidth(line), width)
 	}
 	assert.Empty(t, strings.TrimSpace(ansi.Strip(lines[0])))
-	assert.Equal(t, width, displayWidth(lines[0]))
+	assert.Equal(t, width, ui.DisplayWidth(lines[0]))
 	assert.True(t, strings.HasPrefix(ansi.Strip(lines[1]), " "))
 	assert.Contains(t, ansi.Strip(strings.Join(lines, "\n")), builtinshell.ToolNameShell)
 }

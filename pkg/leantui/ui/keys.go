@@ -1,4 +1,4 @@
-package leantui
+package ui
 
 import (
 	"bytes"
@@ -7,40 +7,40 @@ import (
 	"unicode/utf8"
 )
 
-type keyType int
+type KeyType int
 
 const (
-	keyNone keyType = iota
-	keyRune
-	keyPaste
-	keyEnter
-	keyAltEnter // insert a literal newline (multi-line input)
-	keyTab
-	keyShiftTab
-	keyBackspace
-	keyDelete
-	keyUp
-	keyDown
-	keyLeft
-	keyRight
-	keyWordLeft
-	keyWordRight
-	keyHome
-	keyEnd
-	keyEsc
-	keyCtrlC
-	keyCtrlD
-	keyCtrlU // delete to start of line
-	keyCtrlK // delete to end of line
-	keyCtrlW // delete word backwards
-	keyCtrlL // redraw
+	KeyNone KeyType = iota
+	KeyRune
+	KeyPaste
+	KeyEnter
+	KeyAltEnter // insert a literal newline (multi-line input)
+	KeyTab
+	KeyShiftTab
+	KeyBackspace
+	KeyDelete
+	KeyUp
+	KeyDown
+	KeyLeft
+	KeyRight
+	KeyWordLeft
+	KeyWordRight
+	KeyHome
+	KeyEnd
+	KeyEsc
+	KeyCtrlC
+	KeyCtrlD
+	KeyCtrlU // delete to start of line
+	KeyCtrlK // delete to end of line
+	KeyCtrlW // delete word backwards
+	KeyCtrlL // redraw
 )
 
-// key is a single decoded keyboard event. For keyRune and keyPaste the decoded
+// Key is a single decoded keyboard event. For KeyRune and KeyPaste the decoded
 // characters are carried in runes; every other key type carries no payload.
-type key struct {
-	typ   keyType
-	runes []rune
+type Key struct {
+	Typ   KeyType
+	Runes []rune
 }
 
 var (
@@ -48,15 +48,15 @@ var (
 	pasteEnd   = []byte("\x1b[201~")
 )
 
-// inputParser turns raw terminal bytes into key events. It is stateful only to
+// InputParser turns raw terminal bytes into key events. It is stateful only to
 // reassemble bracketed-paste payloads, which may span several reads.
-type inputParser struct {
+type InputParser struct {
 	inPaste bool
 	paste   []rune
 }
 
-func (p *inputParser) feed(b []byte) []key {
-	var out []key
+func (p *InputParser) Feed(b []byte) []Key {
+	var out []Key
 	for len(b) > 0 {
 		if p.inPaste {
 			idx := bytes.Index(b, pasteEnd)
@@ -65,7 +65,7 @@ func (p *inputParser) feed(b []byte) []key {
 				return out
 			}
 			p.paste = append(p.paste, []rune(string(b[:idx]))...)
-			out = append(out, key{typ: keyPaste, runes: p.paste})
+			out = append(out, Key{Typ: KeyPaste, Runes: p.paste})
 			p.paste = nil
 			p.inPaste = false
 			b = b[idx+len(pasteEnd):]
@@ -87,54 +87,54 @@ func (p *inputParser) feed(b []byte) []key {
 // parseChunk decodes a run of bytes that contains no bracketed-paste markers.
 // Escape sequences are assumed to arrive atomically within a single read, so a
 // trailing lone ESC is reported as the Escape key.
-func parseChunk(b []byte) []key {
-	var out []key
+func parseChunk(b []byte) []Key {
+	var out []Key
 	for i := 0; i < len(b); {
 		c := b[i]
 		switch {
 		case c == 0x1b:
 			if i == len(b)-1 {
-				out = append(out, key{typ: keyEsc})
+				out = append(out, Key{Typ: KeyEsc})
 				i++
 				continue
 			}
 			n, k := parseEscape(b[i:])
-			if k.typ != keyNone {
+			if k.Typ != KeyNone {
 				out = append(out, k)
 			}
 			i += n
 		case c == '\r' || c == '\n':
-			out = append(out, key{typ: keyEnter})
+			out = append(out, Key{Typ: KeyEnter})
 			i++
 		case c == '\t':
-			out = append(out, key{typ: keyTab})
+			out = append(out, Key{Typ: KeyTab})
 			i++
 		case c == 0x7f, c == 0x08:
-			out = append(out, key{typ: keyBackspace})
+			out = append(out, Key{Typ: KeyBackspace})
 			i++
 		case c == 0x03:
-			out = append(out, key{typ: keyCtrlC})
+			out = append(out, Key{Typ: KeyCtrlC})
 			i++
 		case c == 0x04:
-			out = append(out, key{typ: keyCtrlD})
+			out = append(out, Key{Typ: KeyCtrlD})
 			i++
 		case c == 0x01:
-			out = append(out, key{typ: keyHome})
+			out = append(out, Key{Typ: KeyHome})
 			i++
 		case c == 0x05:
-			out = append(out, key{typ: keyEnd})
+			out = append(out, Key{Typ: KeyEnd})
 			i++
 		case c == 0x15:
-			out = append(out, key{typ: keyCtrlU})
+			out = append(out, Key{Typ: KeyCtrlU})
 			i++
 		case c == 0x0b:
-			out = append(out, key{typ: keyCtrlK})
+			out = append(out, Key{Typ: KeyCtrlK})
 			i++
 		case c == 0x17:
-			out = append(out, key{typ: keyCtrlW})
+			out = append(out, Key{Typ: KeyCtrlW})
 			i++
 		case c == 0x0c:
-			out = append(out, key{typ: keyCtrlL})
+			out = append(out, Key{Typ: KeyCtrlL})
 			i++
 		case c < 0x20:
 			i++ // other control bytes are ignored
@@ -144,16 +144,16 @@ func parseChunk(b []byte) []key {
 				i++
 				continue
 			}
-			out = append(out, key{typ: keyRune, runes: []rune{r}})
+			out = append(out, Key{Typ: KeyRune, Runes: []rune{r}})
 			i += size
 		}
 	}
 	return out
 }
 
-func parseEscape(b []byte) (int, key) {
+func parseEscape(b []byte) (int, Key) {
 	if len(b) < 2 {
-		return 1, key{typ: keyEsc}
+		return 1, Key{Typ: KeyEsc}
 	}
 	switch b[1] {
 	case '[':
@@ -162,28 +162,28 @@ func parseEscape(b []byte) (int, key) {
 		if len(b) >= 3 {
 			switch b[2] {
 			case 'A':
-				return 3, key{typ: keyUp}
+				return 3, Key{Typ: KeyUp}
 			case 'B':
-				return 3, key{typ: keyDown}
+				return 3, Key{Typ: KeyDown}
 			case 'C':
-				return 3, key{typ: keyRight}
+				return 3, Key{Typ: KeyRight}
 			case 'D':
-				return 3, key{typ: keyLeft}
+				return 3, Key{Typ: KeyLeft}
 			case 'H':
-				return 3, key{typ: keyHome}
+				return 3, Key{Typ: KeyHome}
 			case 'F':
-				return 3, key{typ: keyEnd}
+				return 3, Key{Typ: KeyEnd}
 			}
 		}
-		return 2, key{typ: keyEsc}
+		return 2, Key{Typ: KeyEsc}
 	case 'b':
-		return 2, key{typ: keyWordLeft}
+		return 2, Key{Typ: KeyWordLeft}
 	case 'f':
-		return 2, key{typ: keyWordRight}
+		return 2, Key{Typ: KeyWordRight}
 	case 0x7f, 0x08:
-		return 2, key{typ: keyCtrlW} // Alt+Backspace deletes a word
+		return 2, Key{Typ: KeyCtrlW} // Alt+Backspace deletes a word
 	case '\r', '\n':
-		return 2, key{typ: keyAltEnter}
+		return 2, Key{Typ: KeyAltEnter}
 	default:
 		// Unhandled Alt+<key> combinations are swallowed so they do not insert
 		// stray characters into the input.
@@ -191,17 +191,17 @@ func parseEscape(b []byte) (int, key) {
 		if size < 1 {
 			size = 1
 		}
-		return 1 + size, key{typ: keyNone}
+		return 1 + size, Key{Typ: KeyNone}
 	}
 }
 
-func parseCSI(b []byte) (int, key) {
+func parseCSI(b []byte) (int, Key) {
 	j := 2
 	for j < len(b) && (b[j] < 0x40 || b[j] > 0x7e) {
 		j++
 	}
 	if j >= len(b) {
-		return len(b), key{typ: keyNone} // incomplete sequence
+		return len(b), Key{Typ: KeyNone} // incomplete sequence
 	}
 	final := b[j]
 	params := string(b[2:j])
@@ -225,34 +225,34 @@ func parseCSI(b []byte) (int, key) {
 
 	switch final {
 	case 'A':
-		return consumed, key{typ: keyUp}
+		return consumed, Key{Typ: KeyUp}
 	case 'B':
-		return consumed, key{typ: keyDown}
+		return consumed, Key{Typ: KeyDown}
 	case 'C':
 		if wordMod() {
-			return consumed, key{typ: keyWordRight}
+			return consumed, Key{Typ: KeyWordRight}
 		}
-		return consumed, key{typ: keyRight}
+		return consumed, Key{Typ: KeyRight}
 	case 'D':
 		if wordMod() {
-			return consumed, key{typ: keyWordLeft}
+			return consumed, Key{Typ: KeyWordLeft}
 		}
-		return consumed, key{typ: keyLeft}
+		return consumed, Key{Typ: KeyLeft}
 	case 'H':
-		return consumed, key{typ: keyHome}
+		return consumed, Key{Typ: KeyHome}
 	case 'F':
-		return consumed, key{typ: keyEnd}
+		return consumed, Key{Typ: KeyEnd}
 	case 'Z':
-		return consumed, key{typ: keyShiftTab}
+		return consumed, Key{Typ: KeyShiftTab}
 	case '~':
 		switch n, _ := strconv.Atoi(strings.SplitN(params, ";", 2)[0]); n {
 		case 1, 7:
-			return consumed, key{typ: keyHome}
+			return consumed, Key{Typ: KeyHome}
 		case 4, 8:
-			return consumed, key{typ: keyEnd}
+			return consumed, Key{Typ: KeyEnd}
 		case 3:
-			return consumed, key{typ: keyDelete}
+			return consumed, Key{Typ: KeyDelete}
 		}
 	}
-	return consumed, key{typ: keyNone}
+	return consumed, Key{Typ: KeyNone}
 }

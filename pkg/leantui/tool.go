@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	toolcomponent "github.com/docker/docker-agent/pkg/tui/components/tool"
@@ -57,7 +58,7 @@ func renderToolWithState(t *toolView, width, frame int, sessionState service.Ses
 		sessionState = service.StaticSessionState{}
 	}
 
-	boxStyle := stToolBox(width)
+	boxStyle := ui.StToolBox(width)
 	innerWidth := max(width-boxStyle.GetHorizontalFrameSize(), 1)
 
 	view := toolcomponent.New(t.message, sessionState)
@@ -90,7 +91,7 @@ func renderToolBox(content string, width int) string {
 	if content == "" {
 		return ""
 	}
-	return styles.RenderComposite(stToolBox(width), content)
+	return styles.RenderComposite(ui.StToolBox(width), content)
 }
 
 func (t *toolView) shouldKeepLastPendingLines(width int, lines []string) bool {
@@ -110,7 +111,7 @@ func cloneLines(lines []string) []string {
 func totalContentWidth(lines []string) int {
 	total := 0
 	for _, line := range lines {
-		total += displayWidth(strings.TrimRight(ansi.Strip(line), " "))
+		total += ui.DisplayWidth(strings.TrimRight(ansi.Strip(line), " "))
 	}
 	return total
 }
@@ -126,8 +127,8 @@ func splitRenderedTool(rendered string, width int) []string {
 
 	var out []string
 	for line := range strings.SplitSeq(rendered, "\n") {
-		if displayWidth(line) > width {
-			out = append(out, wrapANSI(line, width)...)
+		if ui.DisplayWidth(line) > width {
+			out = append(out, ui.WrapANSI(line, width)...)
 			continue
 		}
 		out = append(out, line)
@@ -141,12 +142,12 @@ func renderToolOutput(output string, width int) []string {
 	var out []string
 	if len(lines) > maxToolOutputLines {
 		hidden := len(lines) - maxToolOutputLines
-		out = append(out, "  "+stMuted().Render(fmt.Sprintf("… (%d earlier lines)", hidden)))
+		out = append(out, "  "+ui.StMuted().Render(fmt.Sprintf("… (%d earlier lines)", hidden)))
 		lines = lines[len(lines)-maxToolOutputLines:]
 	}
 	for _, l := range lines {
-		for _, wl := range wrapANSI(l, width-2) {
-			out = append(out, "  "+stMuted().Render(wl))
+		for _, wl := range ui.WrapANSI(l, width-2) {
+			out = append(out, "  "+ui.StMuted().Render(wl))
 		}
 	}
 	return out

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/docker-agent/pkg/leantui/ui"
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
 )
@@ -30,15 +31,15 @@ type statusData struct {
 //	<working dir>  ⎇ <branch>                          <agent>
 //	<context bar> <pct> · <tokens> · <cost>  <model> · <effort>
 func renderStatus(d statusData, width int) []string {
-	dir := stSecondary().Render(truncate(pathx.ShortenHome(d.workingDir), max(10, width/2)))
+	dir := ui.StSecondary().Render(ui.Truncate(pathx.ShortenHome(d.workingDir), max(10, width/2)))
 	left1 := dir
 	if d.branch != "" {
-		left1 += stMuted().Render("  ⎇ " + d.branch)
+		left1 += ui.StMuted().Render("  ⎇ " + d.branch)
 	}
 
 	right1 := ""
 	if d.agent != "" {
-		right1 = stAccent().Render(d.agent)
+		right1 = ui.StAccent().Render(d.agent)
 	}
 
 	left2 := renderContext(d)
@@ -50,7 +51,7 @@ func renderStatus(d statusData, width int) []string {
 	if d.thinking != "" {
 		rightParts = append(rightParts, d.thinking)
 	}
-	right2 := stMuted().Render(strings.Join(rightParts, " · "))
+	right2 := ui.StMuted().Render(strings.Join(rightParts, " · "))
 
 	return []string{
 		composeLine(left1, right1, width),
@@ -62,9 +63,9 @@ func renderContext(d statusData) string {
 	cost := renderCostSuffix(d)
 	if d.contextLimit <= 0 {
 		if d.tokens > 0 {
-			return stMuted().Render(formatTokens(d.tokens)+" tokens") + cost
+			return ui.StMuted().Render(formatTokens(d.tokens)+" tokens") + cost
 		}
-		return renderBar(0) + stMuted().Render(" 0% · 0/0") + cost
+		return renderBar(0) + ui.StMuted().Render(" 0% · 0/0") + cost
 	}
 
 	pct := float64(d.contextLength) / float64(d.contextLimit)
@@ -77,14 +78,14 @@ func renderContext(d statusData) string {
 		formatTokens(d.contextLength),
 		formatTokens(d.contextLimit),
 	)
-	return bar + stMuted().Render(label) + cost
+	return bar + ui.StMuted().Render(label) + cost
 }
 
 func renderCostSuffix(d statusData) string {
 	if !d.costKnown {
 		return ""
 	}
-	return stMuted().Render(" · ") + stAccent().Render(toolcommon.FormatCostUSD(d.cost))
+	return ui.StMuted().Render(" · ") + ui.StAccent().Render(toolcommon.FormatCostUSD(d.cost))
 }
 
 // contextBarWidth is the cell width of the context-usage gauge.
@@ -92,26 +93,26 @@ const contextBarWidth = 10
 
 func renderBar(pct float64) string {
 	filled := min(int(pct*float64(contextBarWidth)+0.5), contextBarWidth)
-	style := stSuccess()
+	style := ui.StSuccess()
 	switch {
 	case pct >= 0.85:
-		style = stError()
+		style = ui.StError()
 	case pct >= 0.6:
-		style = stWarning()
+		style = ui.StWarning()
 	}
-	return style.Render(strings.Repeat("█", filled)) + stMuted().Render(strings.Repeat("░", contextBarWidth-filled))
+	return style.Render(strings.Repeat("█", filled)) + ui.StMuted().Render(strings.Repeat("░", contextBarWidth-filled))
 }
 
 // composeLine right-aligns right within width, truncating left if necessary.
 func composeLine(left, right string, width int) string {
-	lw := displayWidth(left)
-	rw := displayWidth(right)
+	lw := ui.DisplayWidth(left)
+	rw := ui.DisplayWidth(right)
 	if rw > width {
-		return truncate(right, width)
+		return ui.Truncate(right, width)
 	}
 	if lw+rw+1 > width {
-		left = truncate(left, max(0, width-rw-1))
-		lw = displayWidth(left)
+		left = ui.Truncate(left, max(0, width-rw-1))
+		lw = ui.DisplayWidth(left)
 	}
 	gap := max(1, width-lw-rw)
 	return left + strings.Repeat(" ", gap) + right
