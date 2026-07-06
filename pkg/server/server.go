@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -31,6 +32,11 @@ type Server struct {
 	e         *echo.Echo
 	sm        *SessionManager
 	authToken string
+	// heartbeatInterval is how often an idle /events stream emits an SSE
+	// comment (": ping") so clients can tell a quiet session from a dead
+	// transport. SSE comments are invisible to EventSource clients and carry
+	// no id, so they never interfere with the sequenced stream or its replay.
+	heartbeatInterval time.Duration
 }
 
 func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources, authToken string) (*Server, error) {
@@ -50,7 +56,7 @@ func NewWithManager(sm *SessionManager, authToken string) *Server {
 		e.Use(BearerTokenMiddleware(authToken))
 	}
 
-	s := &Server{e: e, sm: sm, authToken: authToken}
+	s := &Server{e: e, sm: sm, authToken: authToken, heartbeatInterval: defaultEventsHeartbeatInterval}
 	s.registerRoutes()
 	return s
 }
@@ -566,6 +572,9 @@ func (s *Server) steerSession(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
 }
 
+// defaultEventsHeartbeatInterval is the default for [Server.heartbeatInterval].
+const defaultEventsHeartbeatInterval = 15 * time.Second
+
 // sessionEvents streams events for a session as Server-Sent Events. The
 // stream lasts until the client disconnects or the session ends.
 //
@@ -583,6 +592,12 @@ func (s *Server) steerSession(c echo.Context) error {
 // and the stream closes. A client that receives session_exited should stop. A
 // stream that closes WITHOUT a session_exited event indicates a transport
 // drop; the client should reconnect with its last id to replay and continue.
+//
+// Liveness contract: while connected, the stream emits an SSE comment
+// (": ping") every [Server.heartbeatInterval] even when the session is quiet.
+// A client that has seen at least one heartbeat can treat a prolonged silence
+// as a hung transport and reconnect, instead of waiting forever on a
+// connection that will never fail a read (e.g. across a paused VM).
 func (s *Server) sessionEvents(c echo.Context) error {
 	if !s.sm.HasEventSource(c.Param("id")) {
 		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
@@ -596,11 +611,35 @@ func (s *Server) sessionEvents(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
+	// Event writes and heartbeat writes come from different goroutines;
+	// interleaved partial frames would corrupt the stream, so serialize them.
+	var writeMu sync.Mutex
+
+	heartbeatCtx, stopHeartbeat := context.WithCancel(c.Request().Context())
+	defer stopHeartbeat()
+	go func() {
+		ticker := time.NewTicker(s.heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				fmt.Fprint(c.Response(), ": ping\n\n")
+				c.Response().Flush()
+				writeMu.Unlock()
+			}
+		}
+	}()
+
 	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), since, func(seq uint64, event any) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return
 		}
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		// seq 0 marks a per-connection control event (e.g. gap) that is not
 		// part of the sequenced stream, so it carries no id.
 		if seq > 0 {
