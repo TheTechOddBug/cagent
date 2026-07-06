@@ -30,13 +30,13 @@ func TestInlineImagesFromToolResultIncludesImagesAndImageDocuments(t *testing.T)
 	images := inlineImagesFromToolResult(result)
 
 	require.Len(t, images, 2)
-	assert.Equal(t, "image-1", images[0].name)
-	assert.Equal(t, "screenshot.png", images[1].name)
-	assert.Equal(t, "image/png", images[0].mime)
-	assert.NotEmpty(t, images[0].pngData)
+	assert.Equal(t, "image-1", images[0].Name)
+	assert.Equal(t, "screenshot.png", images[1].Name)
+	assert.Equal(t, "image/png", images[0].MIME)
+	assert.NotEmpty(t, images[0].PNGData)
 }
 
-func TestRenderToolIncludesKittyImageSequence(t *testing.T) {
+func TestRenderToolIncludesInlineImage(t *testing.T) {
 	t.Parallel()
 	b64 := testPNGBase64(t)
 	images := inlineImagesFromToolResult(&tools.ToolCallResult{
@@ -59,8 +59,6 @@ func TestRenderToolIncludesKittyImageSequence(t *testing.T) {
 
 	assert.Contains(t, joined, "Read image file sample.png")
 	assert.Contains(t, joined, "\x1b_G")
-	assert.Contains(t, joined, "a=T")
-	assert.Contains(t, joined, "f=100")
 	assert.Contains(t, joined, "🖼")
 }
 

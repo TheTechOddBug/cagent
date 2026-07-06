@@ -20,7 +20,7 @@ import (
 // can delegate the visual representation to pkg/tui/components/tool.
 type toolView struct {
 	message   *tuitypes.Message
-	images    []inlineImage
+	images    []ui.InlineImage
 	lastWidth int
 	lastLines []string
 }
@@ -70,7 +70,7 @@ func renderToolWithState(t *toolView, width, frame int, sessionState service.Ses
 
 	lines := splitRenderedTool(renderToolBox(view.View(), width), width)
 	for _, img := range t.images {
-		lines = append(lines, renderInlineImage(img, width)...)
+		lines = append(lines, ui.RenderInlineImage(img, width)...)
 	}
 
 	if t.shouldKeepLastPendingLines(width, lines) {
