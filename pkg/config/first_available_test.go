@@ -183,6 +183,7 @@ func TestResolveFirstAvailableModels_NoCandidateAvailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "export ANTHROPIC_API_KEY=<value>")
 	assert.Contains(t, err.Error(), "--env-from-file")
 	assert.Contains(t, err.Error(), environment.SecretsDocsURL)
+	assert.Contains(t, err.Error(), environment.ModelSetupDocsURL)
 }
 
 func TestResolveFirstAvailableModels_InvalidCandidate(t *testing.T) {

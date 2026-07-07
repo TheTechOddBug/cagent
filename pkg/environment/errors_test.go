@@ -32,6 +32,7 @@ func TestRequiredEnvError_NamesSecretSources(t *testing.T) {
 
 	// The local-model alternative only applies to model credentials.
 	assert.NotContains(t, msg, "dmr/ai/qwen3")
+	assert.NotContains(t, msg, ModelSetupDocsURL)
 }
 
 func TestRequiredEnvError_SuggestsLocalModelForModelCredentials(t *testing.T) {
@@ -47,4 +48,5 @@ func TestRequiredEnvError_SuggestsLocalModelForModelCredentials(t *testing.T) {
 	assert.Contains(t, msg, "pulled on first use")
 	assert.Contains(t, msg, "docker model ls")
 	assert.Contains(t, msg, "docker agent setup")
+	assert.Contains(t, msg, ModelSetupDocsURL)
 }

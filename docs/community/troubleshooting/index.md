@@ -68,7 +68,7 @@ Provide them using any of these sources:
 See https://docs.docker.com/ai/docker-agent/guides/secrets/ for details.
 ```
 
-Set the variable through any of the listed [secret sources](../../guides/secrets/index.md). When the missing variable is a model-provider API key, the error also suggests running a local model instead (`docker agent run --model dmr/ai/qwen3 ...`), which needs no API key.
+Set the variable through any of the listed [secret sources](../../guides/secrets/index.md). When the missing variable is a model-provider API key, the error also suggests running a local model instead (`docker agent run --model dmr/ai/qwen3 ...`), which needs no API key, and links to the [Set Up a Model](../../getting-started/set-up-a-model/index.md) tutorial.
 
 ### No model available (`auto` selection failed)
 
@@ -86,7 +86,7 @@ To fix this, you can:
     ...
 ```
 
-Either configure a cloud provider API key (see [API keys not set](#api-keys-not-set) below) or pull a local model. Run `docker agent doctor` to see which providers have credentials and whether Docker Model Runner is reachable.
+Either configure a cloud provider API key (see [API keys not set](#api-keys-not-set) below) or pull a local model. The [Set Up a Model](../../getting-started/set-up-a-model/index.md) tutorial walks through both paths. Run `docker agent doctor` to see which providers have credentials and whether Docker Model Runner is reachable.
 
 ### Docker Model Runner model not pulled
 

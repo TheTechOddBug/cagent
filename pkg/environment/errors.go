@@ -9,6 +9,10 @@ import (
 // source and how to configure it.
 const SecretsDocsURL = "https://docs.docker.com/ai/docker-agent/guides/secrets/"
 
+// ModelSetupDocsURL is the step-by-step tutorial for making a model available,
+// covering both the cloud API-key path and the local Docker Model Runner path.
+const ModelSetupDocsURL = "https://docs.docker.com/ai/docker-agent/getting-started/set-up-a-model/"
+
 type RequiredEnvError struct {
 	Missing []string
 
@@ -38,6 +42,7 @@ func (e *RequiredEnvError) Error() string {
 	if e.MissingModelCredentials {
 		msg.WriteString("\nNo API key? Run a local model instead: docker agent run --model dmr/ai/qwen3 ...\n(the model is pulled on first use; `docker model ls` shows models already pulled)\n")
 		msg.WriteString("Or run `docker agent setup` to configure a provider or local model interactively.\n")
+		fmt.Fprintf(&msg, "Step-by-step model setup (API key or local): %s\n", ModelSetupDocsURL)
 	}
 
 	return msg.String()

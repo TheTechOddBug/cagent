@@ -1010,6 +1010,7 @@ func TestAutoModelFallbackError(t *testing.T) {
 		assert.Contains(t, msg, "docker agent setup")
 		assert.Contains(t, msg, "docker model pull")
 		assert.Contains(t, msg, "ANTHROPIC_API_KEY")
+		assert.Contains(t, msg, environment.ModelSetupDocsURL)
 		assert.NotContains(t, msg, "Could not initialize")
 	})
 
