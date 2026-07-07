@@ -70,6 +70,10 @@ type controller struct {
 	// watcher loop — so a user-initiated relaunch can reset it and give the
 	// agent a fresh set of attempts after the cap tripped.
 	launchFailures map[string]int
+	// launchErrors keeps, per card, the last failed relaunch's error. When a
+	// session cannot even be recreated there is no dead pane to attach to and
+	// read, so this is the only record of why the card went red.
+	launchErrors map[string]error
 
 	// relaunchMu serializes session relaunches. A watcher's background
 	// resume and a prompt-bearing relaunch (SendPrompt) can otherwise race:
@@ -93,6 +97,7 @@ func newController(ctx context.Context, store *Store, sessions sessionManager, o
 		watchers:       make(map[string]*watcher),
 		expectTurn:     make(map[string]bool),
 		launchFailures: make(map[string]int),
+		launchErrors:   make(map[string]error),
 	}
 }
 
@@ -157,21 +162,49 @@ func (c *controller) resetLaunchFailures(cardID string) {
 	delete(c.launchFailures, cardID)
 }
 
+func (c *controller) setLaunchError(cardID string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err == nil {
+		delete(c.launchErrors, cardID)
+	} else {
+		c.launchErrors[cardID] = err
+	}
+}
+
+// LaunchError returns the last failed relaunch's error for the card, or nil.
+// It explains why an errored card may have no session left to attach to.
+func (c *controller) LaunchError(cardID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.launchErrors[cardID]
+}
+
 // Stop cancels the card's watcher and waits for it to exit. Waiting matters:
 // it guarantees the watcher cannot relaunch the session after the caller
 // goes on to tear it down (kill the tmux session, remove the worktree),
-// which would otherwise leave an orphaned session.
+// which would otherwise leave an orphaned session. The card's controller
+// state is dropped only after the wait, so a watcher mid-relaunch cannot
+// re-add entries behind the cleanup.
 func (c *controller) Stop(cardID string) {
 	c.mu.Lock()
 	w, ok := c.watchers[cardID]
 	delete(c.watchers, cardID)
-	delete(c.expectTurn, cardID)
-	delete(c.launchFailures, cardID)
 	c.mu.Unlock()
 	if ok {
 		w.cancel()
 		<-w.done
 	}
+	c.forget(cardID)
+}
+
+// forget drops all per-card controller state.
+func (c *controller) forget(cardID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.expectTurn, cardID)
+	delete(c.launchFailures, cardID)
+	delete(c.launchErrors, cardID)
 }
 
 // watch keeps one card mirrored to its control plane: snapshot to resync,
@@ -460,6 +493,7 @@ func (c *controller) relaunch(card *Card, prompt string) error {
 		card.Session, workDir, card.Agent, card.AgentSession,
 		socket, worktreeName, worktreeBase, prompt,
 	)
+	c.setLaunchError(card.ID, err)
 	if err == nil {
 		// The agent is launching again: show it as starting until its
 		// control plane answers and the event stream drives the status.
@@ -477,11 +511,15 @@ func (c *controller) relaunch(card *Card, prompt string) error {
 // Teardown kills the card's tmux session under the relaunch lock, so an
 // in-flight relaunch cannot recreate a session the caller is tearing down.
 // The caller must have removed the card from the store first: that is what
-// makes a later relaunch abort instead of resurrecting the session.
+// makes a later relaunch abort instead of resurrecting the session. The
+// card's controller state is dropped again here: a SendPrompt relaunch runs
+// outside the watcher (so Stop does not wait for it) and may have re-added
+// entries; holding the lock guarantees it has finished.
 func (c *controller) Teardown(card *Card) {
 	c.relaunchMu.Lock()
 	defer c.relaunchMu.Unlock()
 	_ = c.sessions.KillSession(card.Session)
+	c.forget(card.ID)
 }
 
 // sleep waits for d or until ctx is done, reporting whether ctx was done.

@@ -39,21 +39,24 @@ type sessionManager interface {
 	Exists(name string) (bool, error)
 }
 
-// tmuxSocketDir creates and validates, once per process, the per-user
-// directory holding the board's private tmux socket. The checks fail
+// socketDir creates and validates, once per process, the per-user
+// directory holding the board's unix sockets: its private tmux socket and
+// each card's agent control-plane socket. It lives under the system temp
+// dir — never under the data dir: ~/.cagent may be bind-mounted into a
+// docker sandbox, where unix sockets cannot be bound. The checks fail
 // closed: a pre-existing path owned by another user, or not a real
-// directory, must never be used for the socket.
-var tmuxSocketDir = sync.OnceValues(func() (string, error) {
+// directory, must never be used for the sockets.
+var socketDir = sync.OnceValues(func() (string, error) {
 	dir := filepath.Join(os.TempDir(), "cagent-board-"+strconv.Itoa(os.Getuid()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create tmux socket dir: %w", err)
+		return "", fmt.Errorf("create board socket dir: %w", err)
 	}
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", err
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("tmux socket dir %s is not a directory", dir)
+		return "", fmt.Errorf("board socket dir %s is not a directory", dir)
 	}
 	if err := checkOwner(dir, info); err != nil {
 		return "", err
@@ -63,7 +66,7 @@ var tmuxSocketDir = sync.OnceValues(func() (string, error) {
 	// else's directory.
 	if info.Mode().Perm() != 0o700 {
 		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 0700 is the tightest usable mode for a directory
-			return "", fmt.Errorf("tighten tmux socket dir permissions: %w", err)
+			return "", fmt.Errorf("tighten board socket dir permissions: %w", err)
 		}
 	}
 	return dir, nil
@@ -79,7 +82,7 @@ var tmuxSocketDir = sync.OnceValues(func() (string, error) {
 // per-user 0700 directory so other local users cannot pre-create or reach
 // it. The directory is created and validated before tmux binds the socket.
 func TmuxSocketPath() (string, error) {
-	dir, err := tmuxSocketDir()
+	dir, err := socketDir()
 	if err != nil {
 		return "", err
 	}

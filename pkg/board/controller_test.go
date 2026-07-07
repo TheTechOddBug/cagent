@@ -295,7 +295,7 @@ func (s *crashingSessions) Exists(string) (bool, error) { return false, nil }
 
 // watchCrashingCard spins up a watcher for a card whose agent never answers
 // and whose tmux pane is dead, simulating a startup crash.
-func watchCrashingCard(t *testing.T, sessions *crashingSessions) *Store {
+func watchCrashingCard(t *testing.T, sessions *crashingSessions) (*Store, *controller) {
 	t.Helper()
 	store := testStore(t)
 	require.NoError(t, store.InsertCard(&Card{ID: "c1", Column: "dev", Status: StatusStarting, Session: "s", Worktree: t.TempDir()}))
@@ -309,7 +309,7 @@ func watchCrashingCard(t *testing.T, sessions *crashingSessions) *Store {
 	require.NoError(t, err)
 	c.Start(card)
 	t.Cleanup(func() { c.Stop("c1") })
-	return store
+	return store, c
 }
 
 func TestControllerStartupCrashLoopGoesRed(t *testing.T) {
@@ -319,20 +319,25 @@ func TestControllerStartupCrashLoopGoesRed(t *testing.T) {
 	// relaunch: the watcher must surface the failure instead of silently
 	// relaunching forever with the card stuck "starting".
 	sessions := &crashingSessions{}
-	store := watchCrashingCard(t, sessions)
+	store, c := watchCrashingCard(t, sessions)
 	waitForStatus(t, store, StatusError)
 	// Relaunches stop at the cap, preserving the dead pane's error output.
 	assert.Equal(t, int32(maxLaunchFailures-1), sessions.newSessions.Load())
+	// The relaunches themselves worked: the dead pane is the record, not a
+	// launch error.
+	assert.NoError(t, c.LaunchError("c1"))
 }
 
 func TestControllerFailedRelaunchGoesRed(t *testing.T) {
 	t.Parallel()
 
 	// The session cannot even be recreated (e.g. tmux new-session fails):
-	// the card must go red, not stay "starting" forever.
+	// the card must go red, not stay "starting" forever, and the failure
+	// must be recorded — there is no pane left to read it from.
 	sessions := &crashingSessions{newErr: errors.New("tmux: bad working directory")}
-	store := watchCrashingCard(t, sessions)
+	store, c := watchCrashingCard(t, sessions)
 	waitForStatus(t, store, StatusError)
+	assert.ErrorContains(t, c.LaunchError("c1"), "bad working directory")
 }
 
 // flakyClient fails its first snapshots, then behaves like a healthy agent
@@ -485,4 +490,23 @@ func TestRelaunchResumesFromExistingWorktree(t *testing.T) {
 	require.NoError(t, c.relaunch(card, ""))
 	assert.Equal(t, wt, sessions.workDir)
 	assert.Empty(t, sessions.worktreeName)
+}
+
+func TestTeardownForgetsControllerState(t *testing.T) {
+	t.Parallel()
+
+	// A SendPrompt relaunch runs outside the watcher, so Stop cannot wait
+	// for it: Teardown must drop the per-card state it may have re-added.
+	store := testStore(t)
+	require.NoError(t, store.InsertCard(&Card{ID: "c1", Session: "s", Worktree: t.TempDir()}))
+
+	c := newController(t.Context(), store, &crashingSessions{newErr: errors.New("boom")}, func() {})
+	card, err := store.GetCard("c1")
+	require.NoError(t, err)
+	c.resume(card)
+	require.Error(t, c.LaunchError("c1"))
+
+	c.Teardown(card)
+	require.NoError(t, c.LaunchError("c1"))
+	assert.Equal(t, 1, c.launchFailed("c1"), "failure count should have been dropped")
 }
