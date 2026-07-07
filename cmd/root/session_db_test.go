@@ -30,3 +30,16 @@ func TestSessionDBPath_ExplicitFlagWins(t *testing.T) {
 
 	assert.Equal(t, "/explicit/db.sqlite", sessionDBPath("/explicit/db.sqlite"))
 }
+
+// Guards the wiring, not just the helper: createSessionRequest must resolve
+// the default through sessionDBPath so the backend never opens an empty path.
+func TestCreateSessionRequest_ResolvesSessionDBAgainstDataDir(t *testing.T) {
+	// Not parallel: mutates the process-wide data-dir override.
+	dataDir := t.TempDir()
+	paths.SetDataDir(dataDir)
+	t.Cleanup(func() { paths.SetDataDir("") })
+
+	f := &runExecFlags{}
+	req := f.createSessionRequest("")
+	assert.Equal(t, filepath.Join(dataDir, "session.db"), req.SessionDB)
+}
