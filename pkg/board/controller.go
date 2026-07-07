@@ -70,6 +70,10 @@ type controller struct {
 	// watcher loop — so a user-initiated relaunch can reset it and give the
 	// agent a fresh set of attempts after the cap tripped.
 	launchFailures map[string]int
+	// launchErrors keeps, per card, the last failed relaunch's error. When a
+	// session cannot even be recreated there is no dead pane to attach to and
+	// read, so this is the only record of why the card went red.
+	launchErrors map[string]error
 
 	// relaunchMu serializes session relaunches. A watcher's background
 	// resume and a prompt-bearing relaunch (SendPrompt) can otherwise race:
@@ -93,6 +97,7 @@ func newController(ctx context.Context, store *Store, sessions sessionManager, o
 		watchers:       make(map[string]*watcher),
 		expectTurn:     make(map[string]bool),
 		launchFailures: make(map[string]int),
+		launchErrors:   make(map[string]error),
 	}
 }
 
@@ -157,6 +162,24 @@ func (c *controller) resetLaunchFailures(cardID string) {
 	delete(c.launchFailures, cardID)
 }
 
+func (c *controller) setLaunchError(cardID string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err == nil {
+		delete(c.launchErrors, cardID)
+	} else {
+		c.launchErrors[cardID] = err
+	}
+}
+
+// LaunchError returns the last failed relaunch's error for the card, or nil.
+// It explains why an errored card may have no session left to attach to.
+func (c *controller) LaunchError(cardID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.launchErrors[cardID]
+}
+
 // Stop cancels the card's watcher and waits for it to exit. Waiting matters:
 // it guarantees the watcher cannot relaunch the session after the caller
 // goes on to tear it down (kill the tmux session, remove the worktree),
@@ -167,6 +190,7 @@ func (c *controller) Stop(cardID string) {
 	delete(c.watchers, cardID)
 	delete(c.expectTurn, cardID)
 	delete(c.launchFailures, cardID)
+	delete(c.launchErrors, cardID)
 	c.mu.Unlock()
 	if ok {
 		w.cancel()
@@ -460,6 +484,7 @@ func (c *controller) relaunch(card *Card, prompt string) error {
 		card.Session, workDir, card.Agent, card.AgentSession,
 		socket, worktreeName, worktreeBase, prompt,
 	)
+	c.setLaunchError(card.ID, err)
 	if err == nil {
 		// The agent is launching again: show it as starting until its
 		// control plane answers and the event stream drives the status.

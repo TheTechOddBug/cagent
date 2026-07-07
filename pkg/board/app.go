@@ -450,9 +450,9 @@ var ErrAgentStarting = errors.New("the agent is still starting")
 // command. An errored card is attachable regardless: its agent may have
 // died at startup, and the dead pane holds the error output the user needs
 // to read — unless the session is gone entirely (its recreation failed), in
-// which case a clear error beats tmux's raw "can't find session". Before
-// attaching, the session's header row is refreshed with the card's current
-// title and project.
+// which case the recorded relaunch failure, when known, beats tmux's raw
+// "can't find session". Before attaching, the session's header row is
+// refreshed with the card's current title and project.
 func (a *App) AttachCommand(cardID string) (*exec.Cmd, error) {
 	card, err := a.store.GetCard(cardID)
 	if err != nil {
@@ -460,6 +460,9 @@ func (a *App) AttachCommand(cardID string) (*exec.Cmd, error) {
 	}
 	if card.Status == StatusError {
 		if exists, err := a.sessions.Exists(card.Session); err == nil && !exists {
+			if lerr := a.controller.LaunchError(cardID); lerr != nil {
+				return nil, fmt.Errorf("the agent could not be relaunched (%w); move the card forward to retry, or delete it", lerr)
+			}
 			return nil, errors.New("the agent's session is gone; move the card forward to relaunch it, or delete it")
 		}
 	} else if !a.controller.Ready(card) {

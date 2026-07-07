@@ -1,6 +1,7 @@
 package board
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -116,4 +117,24 @@ func TestMoveProject(t *testing.T) {
 	reloaded, err := userconfig.Load()
 	require.NoError(t, err)
 	assert.Equal(t, "c", reloaded.Board.Projects[1].Name)
+}
+
+func TestAttachCommandExplainsFailedRelaunch(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	require.NoError(t, store.InsertCard(&Card{ID: "c1", Status: StatusError, Session: "s", Worktree: t.TempDir()}))
+
+	// The session cannot be recreated: there is no pane holding the error,
+	// so attach must report why the relaunch failed instead of a bare
+	// "session is gone".
+	sessions := &crashingSessions{newErr: errors.New("tmux: bad working directory")}
+	c := newController(t.Context(), store, sessions, func() {})
+	card, err := store.GetCard("c1")
+	require.NoError(t, err)
+	c.resume(card)
+
+	app := &App{ctx: t.Context(), store: store, sessions: sessions, controller: c, onChanged: func() {}}
+	_, err = app.AttachCommand("c1")
+	assert.ErrorContains(t, err, "bad working directory")
 }
