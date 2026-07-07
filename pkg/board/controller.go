@@ -399,7 +399,7 @@ func startupPhase(card *Card) CardStatus {
 	if _, err := os.Stat(socketPath(card.AgentSession)); err == nil {
 		return StatusAttaching
 	}
-	if _, err := os.Stat(card.Worktree); card.Worktree != "" && err == nil {
+	if _, err := os.Stat(card.Worktree); err == nil {
 		return StatusLoading
 	}
 	return StatusStarting
