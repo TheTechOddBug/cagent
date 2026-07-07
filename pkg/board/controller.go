@@ -183,19 +183,28 @@ func (c *controller) LaunchError(cardID string) error {
 // Stop cancels the card's watcher and waits for it to exit. Waiting matters:
 // it guarantees the watcher cannot relaunch the session after the caller
 // goes on to tear it down (kill the tmux session, remove the worktree),
-// which would otherwise leave an orphaned session.
+// which would otherwise leave an orphaned session. The card's controller
+// state is dropped only after the wait, so a watcher mid-relaunch cannot
+// re-add entries behind the cleanup.
 func (c *controller) Stop(cardID string) {
 	c.mu.Lock()
 	w, ok := c.watchers[cardID]
 	delete(c.watchers, cardID)
-	delete(c.expectTurn, cardID)
-	delete(c.launchFailures, cardID)
-	delete(c.launchErrors, cardID)
 	c.mu.Unlock()
 	if ok {
 		w.cancel()
 		<-w.done
 	}
+	c.forget(cardID)
+}
+
+// forget drops all per-card controller state.
+func (c *controller) forget(cardID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.expectTurn, cardID)
+	delete(c.launchFailures, cardID)
+	delete(c.launchErrors, cardID)
 }
 
 // watch keeps one card mirrored to its control plane: snapshot to resync,
@@ -502,11 +511,15 @@ func (c *controller) relaunch(card *Card, prompt string) error {
 // Teardown kills the card's tmux session under the relaunch lock, so an
 // in-flight relaunch cannot recreate a session the caller is tearing down.
 // The caller must have removed the card from the store first: that is what
-// makes a later relaunch abort instead of resurrecting the session.
+// makes a later relaunch abort instead of resurrecting the session. The
+// card's controller state is dropped again here: a SendPrompt relaunch runs
+// outside the watcher (so Stop does not wait for it) and may have re-added
+// entries; holding the lock guarantees it has finished.
 func (c *controller) Teardown(card *Card) {
 	c.relaunchMu.Lock()
 	defer c.relaunchMu.Unlock()
 	_ = c.sessions.KillSession(card.Session)
+	c.forget(card.ID)
 }
 
 // sleep waits for d or until ctx is done, reporting whether ctx was done.

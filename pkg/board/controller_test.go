@@ -491,3 +491,22 @@ func TestRelaunchResumesFromExistingWorktree(t *testing.T) {
 	assert.Equal(t, wt, sessions.workDir)
 	assert.Empty(t, sessions.worktreeName)
 }
+
+func TestTeardownForgetsControllerState(t *testing.T) {
+	t.Parallel()
+
+	// A SendPrompt relaunch runs outside the watcher, so Stop cannot wait
+	// for it: Teardown must drop the per-card state it may have re-added.
+	store := testStore(t)
+	require.NoError(t, store.InsertCard(&Card{ID: "c1", Session: "s", Worktree: t.TempDir()}))
+
+	c := newController(t.Context(), store, &crashingSessions{newErr: errors.New("boom")}, func() {})
+	card, err := store.GetCard("c1")
+	require.NoError(t, err)
+	c.resume(card)
+	require.Error(t, c.LaunchError("c1"))
+
+	c.Teardown(card)
+	require.NoError(t, c.LaunchError("c1"))
+	assert.Equal(t, 1, c.launchFailed("c1"), "failure count should have been dropped")
+}

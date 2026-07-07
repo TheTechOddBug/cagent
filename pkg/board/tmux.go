@@ -49,14 +49,14 @@ type sessionManager interface {
 var socketDir = sync.OnceValues(func() (string, error) {
 	dir := filepath.Join(os.TempDir(), "cagent-board-"+strconv.Itoa(os.Getuid()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create tmux socket dir: %w", err)
+		return "", fmt.Errorf("create board socket dir: %w", err)
 	}
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", err
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("tmux socket dir %s is not a directory", dir)
+		return "", fmt.Errorf("board socket dir %s is not a directory", dir)
 	}
 	if err := checkOwner(dir, info); err != nil {
 		return "", err
@@ -66,7 +66,7 @@ var socketDir = sync.OnceValues(func() (string, error) {
 	// else's directory.
 	if info.Mode().Perm() != 0o700 {
 		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 0700 is the tightest usable mode for a directory
-			return "", fmt.Errorf("tighten tmux socket dir permissions: %w", err)
+			return "", fmt.Errorf("tighten board socket dir permissions: %w", err)
 		}
 	}
 	return dir, nil
