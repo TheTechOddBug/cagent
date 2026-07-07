@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.100.0] - 2026-07-07
+
+This release adds new diagnostic and configuration capabilities, hardens the board communication protocol, and improves error messaging for missing models and credentials.
+
+## What's New
+
+- Adds `docker agent doctor` command for diagnosing model provider credentials and agent readiness
+- Adds actionable errors when models or credentials are missing, with guidance on next steps
+- Adds `hooks.d` drop-in directory (`<config-dir>/hooks.d/*.yaml`) and `DOCKER_AGENT_CONFIG_DIR` environment variable override for config directory
+- Adds heartbeat idle watchdog to abort hung event streams in `docker agent board`
+- Adds session aggregate cost reporting to `GET /snapshot`
+- Adds machine-readable error codes to 404 responses for unknown session snapshots
+- Adds heartbeat keepalives to idle `/events` SSE streams
+
+## Bug Fixes
+
+- Fixes turn-boundary events being silently dropped when a subscriber's buffer overflows
+
+## Technical Changes
+
+- Extracts lean TUI engine into a separate package and reorganizes UI components (status models, inline images, tool views, transcript, screen model) into a dedicated UI layer
+- Adds documentation for `docker agent board` CLI reference and actionable model/credential errors in troubleshooting guide
+- Adds tmux usage guidance for running `docker agent board` in a sandbox environment
+### Pull Requests
+
+- [#3452](https://github.com/docker/docker-agent/pull/3452) - feat(cli): actionable errors for missing models and credentials (phase 1 of #3442)
+- [#3487](https://github.com/docker/docker-agent/pull/3487) - docs: update CHANGELOG.md for v1.99.0
+- [#3489](https://github.com/docker/docker-agent/pull/3489) - feat(cli): add docker agent doctor for model and credential diagnosis
+- [#3491](https://github.com/docker/docker-agent/pull/3491) - feat: harden control-plane protocol for reliable board communication
+- [#3492](https://github.com/docker/docker-agent/pull/3492) - Lean tui UI split
+- [#3494](https://github.com/docker/docker-agent/pull/3494) - docs: update CLI reference and troubleshooting for board and actionable errors
+- [#3495](https://github.com/docker/docker-agent/pull/3495) - Add tmux or running docker agent board in sbx
+- [#3496](https://github.com/docker/docker-agent/pull/3496) - feat: hooks.d drop-in directory and config-dir env override
+
+
 ## [v1.99.0] - 2026-07-06
 
 This release adds significant new capabilities including a Kanban board TUI, NVIDIA provider support, parallel tool dispatch, and numerous compaction and context-window improvements, along with several important bug fixes.
@@ -4467,3 +4502,5 @@ This release improves the terminal user interface with better error handling and
 [v1.98.0]: https://github.com/docker/docker-agent/releases/tag/v1.98.0
 
 [v1.99.0]: https://github.com/docker/docker-agent/releases/tag/v1.99.0
+
+[v1.100.0]: https://github.com/docker/docker-agent/releases/tag/v1.100.0
