@@ -43,16 +43,27 @@ func TestUpdateProject(t *testing.T) {
 
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
-	app := &App{ctx: t.Context(), config: cfg, columns: DefaultColumns}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "cards.json"))
+	require.NoError(t, err)
+	app := &App{ctx: t.Context(), config: cfg, columns: DefaultColumns, store: store, onChanged: func() {}}
 
 	require.NoError(t, app.AddProject(Project{Name: "one", Path: repo}))
 	require.NoError(t, app.AddProject(Project{Name: "two", Path: repo2}))
+	require.NoError(t, store.InsertCard(&Card{ID: "card1", Project: "one"}))
+	require.NoError(t, store.InsertCard(&Card{ID: "card2", Project: "two"}))
 
-	// Rename, repoint, and set the agent in one update; order is preserved.
+	// Rename, repoint, and set the agent in one update; order is preserved
+	// and existing cards follow the rename.
 	require.NoError(t, app.UpdateProject("one", Project{Name: "renamed", Path: repo2, Agent: "coder"}))
 	projects := app.Projects()
 	require.Len(t, projects, 2)
 	assert.Equal(t, Project{Name: "renamed", Path: repo2, Agent: "coder"}, projects[0])
+	card, err := store.GetCard("card1")
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", card.Project)
+	card, err = store.GetCard("card2")
+	require.NoError(t, err)
+	assert.Equal(t, "two", card.Project)
 
 	// Unknown project, duplicate name, and AddProject-style validation.
 	require.Error(t, app.UpdateProject("one", Project{Name: "x", Path: repo}))

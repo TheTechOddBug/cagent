@@ -273,14 +273,20 @@ func newProjectsDialog(projects []board.Project) *projectsDialog {
 	return &projectsDialog{projects: projects, confirmKeys: tuidialog.DefaultConfirmKeyMap()}
 }
 
-// setProjects refreshes the list after an add, edit or delete, leaving the
-// list view visible and keeping the cursor position (clamped).
+// setProjects refreshes the list after an add, edit or delete and returns
+// to the list view, keeping the cursor position (clamped).
 func (d *projectsDialog) setProjects(projects []board.Project) {
-	d.projects = projects
-	d.idx = min(max(d.idx, 0), max(len(projects)-1, 0))
+	d.refreshProjects(projects)
 	d.mode = projectsList
 	d.editing = ""
 	d.deleting = ""
+	d.inputs = nil
+}
+
+// refreshProjects updates the list data without leaving the current view.
+func (d *projectsDialog) refreshProjects(projects []board.Project) {
+	d.projects = projects
+	d.idx = min(max(d.idx, 0), max(len(projects)-1, 0))
 }
 
 // selectProject moves the cursor to the named project, if present.
@@ -392,13 +398,13 @@ func (d *projectsDialog) moveProject(delta int) tea.Cmd {
 }
 
 // updatePicking drives the directory picker; a picked directory pre-fills
-// the add form. When the picker was opened from an edit in progress
-// (ctrl+o), only the path field is replaced.
+// the add form. When the picker was opened from a form in progress
+// (ctrl+o), only the path field is replaced and esc returns to the form.
 func (d *projectsDialog) updatePicking(press tea.KeyPressMsg) (dialog, tea.Cmd) {
 	chosen, done, cmd := d.picker.Update(press)
 	switch {
 	case chosen != "":
-		if d.editing != "" {
+		if d.inputs != nil {
 			d.mode = projectsEditing
 			d.inputs[1].SetValue(chosen)
 			return d, nil
@@ -406,7 +412,7 @@ func (d *projectsDialog) updatePicking(press tea.KeyPressMsg) (dialog, tea.Cmd) 
 		cmd := d.startForm("", filepath.Base(chosen), chosen, "")
 		return d, cmd
 	case done:
-		if d.editing != "" {
+		if d.inputs != nil {
 			d.mode = projectsEditing
 		} else {
 			d.mode = projectsList
@@ -420,6 +426,7 @@ func (d *projectsDialog) updateEditing(press tea.KeyPressMsg) (dialog, tea.Cmd) 
 	case "esc":
 		d.mode = projectsList
 		d.editing = ""
+		d.inputs = nil
 		return d, nil
 	case "ctrl+o":
 		// Re-open the browser, starting from the path typed so far.

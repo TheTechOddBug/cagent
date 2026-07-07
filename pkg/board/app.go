@@ -165,8 +165,8 @@ func (a *App) AddProject(p Project) error {
 		a.config.Board = &userconfig.Board{}
 	}
 	for _, existing := range a.config.Board.Projects {
-		if existing.Name == p.Name {
-			return fmt.Errorf("project %q already exists", p.Name)
+		if existing.Name == stored.Name {
+			return fmt.Errorf("project %q already exists", stored.Name)
 		}
 	}
 	a.config.Board.Projects = append(a.config.Board.Projects, stored)
@@ -174,8 +174,9 @@ func (a *App) AddProject(p Project) error {
 }
 
 // UpdateProject replaces the project named oldName with p, applying the
-// same validation as AddProject and persisting the change. Existing cards
-// keep the repo path and agent they were created with.
+// same validation as AddProject and persisting the change. Cards created
+// against the old name follow a rename; they keep the repo path and agent
+// they were created with.
 func (a *App) UpdateProject(oldName string, p Project) error {
 	stored, err := a.validateProject(p)
 	if err != nil {
@@ -192,22 +193,35 @@ func (a *App) UpdateProject(oldName string, p Project) error {
 	if idx < 0 {
 		return fmt.Errorf("unknown project %q", oldName)
 	}
-	if p.Name != oldName {
+	if stored.Name != oldName {
 		for _, existing := range projects {
-			if existing.Name == p.Name {
-				return fmt.Errorf("project %q already exists", p.Name)
+			if existing.Name == stored.Name {
+				return fmt.Errorf("project %q already exists", stored.Name)
 			}
 		}
 	}
 	projects[idx] = stored
-	return a.saveConfigLocked()
+	if err := a.saveConfigLocked(); err != nil {
+		return err
+	}
+	if stored.Name != oldName {
+		// Keep existing cards attached to their project across the rename
+		// (their accent color and header stay consistent).
+		if err := a.store.RenameProject(oldName, stored.Name); err != nil {
+			return err
+		}
+		a.onChanged()
+	}
+	return nil
 }
 
 // validateProject checks a project's name and path and returns its stored
-// form. The path is stored ~-contracted so the shared config works across
-// environments whose home differs (host vs. docker sandbox).
+// form. The name is trimmed and the path is stored ~-contracted so the
+// shared config works across environments whose home differs (host vs.
+// docker sandbox).
 func (a *App) validateProject(p Project) (userconfig.BoardProject, error) {
-	if strings.TrimSpace(p.Name) == "" {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
 		return userconfig.BoardProject{}, errors.New("project name is required")
 	}
 	path, err := normalizeProjectPath(p.Path)
@@ -217,7 +231,7 @@ func (a *App) validateProject(p Project) (userconfig.BoardProject, error) {
 	if !isGitRepo(a.ctx, path) {
 		return userconfig.BoardProject{}, fmt.Errorf("%s is not a git repository", path)
 	}
-	return userconfig.BoardProject{Name: p.Name, Path: contractHome(path), Agent: p.Agent}, nil
+	return userconfig.BoardProject{Name: name, Path: contractHome(path), Agent: strings.TrimSpace(p.Agent)}, nil
 }
 
 // normalizeProjectPath expands a leading ~ and makes the path absolute. An
