@@ -133,6 +133,7 @@ func (e *AutoModelFallbackError) Error() string {
 	b.WriteString("  - Install Docker Model Runner: https://docs.docker.com/ai/model-runner/get-started/\n")
 	b.WriteString("  - Configure an API key for a cloud provider:\n")
 	b.WriteString(strings.Join(hints, "\n"))
+	fmt.Fprintf(&b, "\n\nStep-by-step model setup (API key or local): %s", environment.ModelSetupDocsURL)
 	return b.String()
 }
 

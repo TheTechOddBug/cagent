@@ -184,6 +184,7 @@ func (e *firstAvailableMissingEnvError) Error() string {
 	msg.WriteString("\n")
 	msg.WriteString(environment.SecretSourcesHelp(example))
 	msg.WriteString("\nOr run `docker agent setup` to configure a provider or local model interactively.\n")
+	fmt.Fprintf(&msg, "Step-by-step model setup (API key or local): %s\n", environment.ModelSetupDocsURL)
 
 	return msg.String()
 }
