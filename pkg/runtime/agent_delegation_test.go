@@ -266,3 +266,28 @@ func TestSubSessionWithoutAttachedFilesOmitsBlock(t *testing.T) {
 		assert.NotContains(t, m.Content, "<attached_files>")
 	}
 }
+
+func TestSubSessionInheritsPermissions(t *testing.T) {
+	t.Parallel()
+
+	perms := &session.PermissionsConfig{
+		Allow: []string{"read_*"},
+		Deny:  []string{"write_*"},
+		Ask:   []string{"edit_*"},
+	}
+	parent := session.New(session.WithPermissions(perms))
+
+	childAgent := agent.New("worker", "")
+	cfg := SubSessionConfig{
+		Task:      "refactor",
+		AgentName: "worker",
+		Title:     "Refactor",
+	}
+
+	s := newSubSession(parent, cfg, childAgent)
+
+	require.NotNil(t, s.Permissions)
+	assert.Equal(t, perms.Allow, s.Permissions.Allow)
+	assert.Equal(t, perms.Deny, s.Permissions.Deny)
+	assert.Equal(t, perms.Ask, s.Permissions.Ask)
+}

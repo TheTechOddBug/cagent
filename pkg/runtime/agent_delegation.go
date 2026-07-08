@@ -184,6 +184,9 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
 	}
+	if parent.Permissions != nil {
+		opts = append(opts, session.WithPermissions(parent.Permissions))
+	}
 	// Merge parent's excluded tools with config's excluded tools so that
 	// nested sub-sessions (e.g. skill → transfer_task → child) inherit
 	// exclusions from all ancestors and don't re-introduce filtered tools.
@@ -482,10 +485,6 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 // authorises all tool calls made by the sub-agent when they approve
 // run_background_agent. Callers should be aware that prompt injection in
 // the sub-agent's context could exploit this gate-bypass.
-//
-// TODO: propagate the parent session's per-tool permission rules once the
-// runtime supports per-session permission scoping rather than a single
-// shared ToolsApproved flag.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
 	return r.runCollecting(ctx, params.ParentSession, SubSessionConfig{
 		Task:           params.Task,
