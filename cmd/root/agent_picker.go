@@ -757,12 +757,21 @@ func (m *agentPickerModel) headerText() (title, subtitle string, helpPairs []str
 	if m.width > 0 {
 		maxWidth := max(m.width-2*(1+4), agentPickerMinCardWidth)
 		subtitleText = toolcommon.TruncateText(subtitleText, maxWidth)
-		for len(helpPairs) > 2 && dialog.HelpKeysWidth(helpPairs...) > maxWidth {
-			helpPairs = helpPairs[:len(helpPairs)-2]
-		}
+		helpPairs = fitHelpPairs(helpPairs, maxWidth)
 	}
 	subtitle = styles.MutedStyle.Render(subtitleText)
 	return title, subtitle, helpPairs
+}
+
+// fitHelpPairs drops trailing [key, description] pairs until the status bar
+// fits maxWidth, keeping at least one pair. Dropping whole pairs (instead of
+// truncating the styled line) guarantees the rendered help never soft-wraps,
+// which would add a row and break the pickers' row-based layout math.
+func fitHelpPairs(pairs []string, maxWidth int) []string {
+	for len(pairs) > 2 && dialog.HelpKeysWidth(pairs...) > maxWidth {
+		pairs = pairs[:len(pairs)-2]
+	}
+	return pairs
 }
 
 func (m *agentPickerModel) render() string {
@@ -824,7 +833,8 @@ func (m *agentPickerModel) renderDetails() string {
 		bar,
 	)
 
-	help := dialog.RenderHelpKeys(contentWidth, "↑↓", "scroll", "esc/?", "close")
+	helpPairs := fitHelpPairs([]string{"↑↓", "scroll", "esc/?", "close"}, contentWidth)
+	help := dialog.RenderHelpKeys(contentWidth, helpPairs...)
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,

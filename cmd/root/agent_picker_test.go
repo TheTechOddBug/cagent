@@ -267,6 +267,22 @@ func TestAgentPickerDetailsFixedSize(t *testing.T) {
 	assert.Equal(t, topH, h, "height changed at bottom")
 }
 
+func TestAgentPickerDetailsHelpNeverWraps(t *testing.T) {
+	t.Parallel()
+
+	// On very narrow terminals the details help must drop bindings instead of
+	// soft-wrapping, which would add a row and overflow the dialog height.
+	m := newAgentPickerModel([]agentChoice{{ref: "default", yaml: strings.Repeat("a: b\n", 50)}})
+	for _, w := range []int{20, 24, 28, 32, 40, 120} {
+		m.width = w
+		m.height = 40
+		m.openDetails()
+		_, dh := m.detailsDialogSize()
+		assert.Equal(t, dh, lipgloss.Height(m.renderDetails()), "dialog height mismatch at width %d", w)
+		m.showDetails = false
+	}
+}
+
 func TestStripControl(t *testing.T) {
 	t.Parallel()
 
@@ -556,12 +572,16 @@ func TestAgentPickerCardAtMatchesRenderedText(t *testing.T) {
 		assert.Equal(t, idx, i, "ref row for %q should hit card %d", ref, idx)
 	}
 
-	// The title and help rows must not resolve to any card.
+	// The title, subtitle, and status-bar rows must not resolve to any card.
 	titleY := findRow("Choose an agent to run")
 	_, ok := m.cardAt(m.width/2, titleY)
 	assert.False(t, ok, "title row must not hit a card")
 
-	helpY := findRow("double-click")
+	subtitleY := findRow("double-click a card")
+	_, ok = m.cardAt(m.width/2, subtitleY)
+	assert.False(t, ok, "subtitle row must not hit a card")
+
+	helpY := findRow("view yaml")
 	_, ok = m.cardAt(m.width/2, helpY)
 	assert.False(t, ok, "help row must not hit a card")
 }
