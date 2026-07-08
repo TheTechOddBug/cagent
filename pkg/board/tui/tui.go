@@ -136,6 +136,7 @@ type keyMap struct {
 	Diff     key.Binding
 	MoveFwd  key.Binding
 	MoveBack key.Binding
+	MoveTo   key.Binding
 	Delete   key.Binding
 	Projects key.Binding
 	Prompt   key.Binding
@@ -157,6 +158,7 @@ var keys = keyMap{
 	Diff:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "view diff")),
 	MoveFwd:  key.NewBinding(key.WithKeys("]", "shift+right", "L"), key.WithHelp("]", "move card forward")),
 	MoveBack: key.NewBinding(key.WithKeys("[", "shift+left", "H"), key.WithHelp("[", "move card back")),
+	MoveTo:   key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "move card to column N")),
 	Delete:   key.NewBinding(key.WithKeys("x", "backspace", "delete"), key.WithHelp("x", "delete card")),
 	Projects: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "manage projects")),
 	Prompt:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit column prompt")),
@@ -229,6 +231,14 @@ type model struct {
 	// lastClick* back double-click-to-attach on cards.
 	lastClickCard string
 	lastClickTime time.Time
+
+	// drag* back drag-and-drop card moves: dragCardID is the pressed card
+	// (a drag candidate), dragging turns true on the first motion event
+	// (cell-motion mode only reports motion while a button is held), and
+	// dragCol is the drop target column under the pointer (-1 when none).
+	dragCardID string
+	dragging   bool
+	dragCol    int
 }
 
 func newModel(app *board.App, refresh chan struct{}) *model {
@@ -499,6 +509,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		return m.handleClick(msg)
+	case tea.MouseMotionMsg:
+		m.handleMotion(msg)
+		return m, nil
+	case tea.MouseReleaseMsg:
+		return m.handleRelease(msg)
 	case tea.MouseWheelMsg:
 		m.handleWheel(msg)
 		return m, nil
@@ -544,10 +559,13 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, keys.MoveFwd):
-		cmd := m.moveCard(1)
+		cmd := m.moveCardTo(m.selCol + 1)
 		return m, cmd
 	case key.Matches(msg, keys.MoveBack):
-		cmd := m.moveCard(-1)
+		cmd := m.moveCardTo(m.selCol - 1)
+		return m, cmd
+	case key.Matches(msg, keys.MoveTo):
+		cmd := m.moveCardTo(int(msg.String()[0] - '1'))
 		return m, cmd
 
 	case key.Matches(msg, keys.Delete):
@@ -686,7 +704,43 @@ func (m *model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.lastClickCard = card.ID
 	m.lastClickTime = time.Now()
+	// The pressed card is a drag candidate: motion before the release turns
+	// the click into a drag (see handleMotion/handleRelease).
+	m.dragCardID = card.ID
+	m.dragCol = col
 	return m, nil
+}
+
+// handleMotion tracks a pressed card being dragged. Cell-motion mode only
+// reports motion while a button is held, so any motion after a card press
+// means a drag; the column under the pointer becomes the drop target.
+func (m *model) handleMotion(msg tea.MouseMotionMsg) {
+	if m.dragCardID == "" || msg.Button != tea.MouseLeft {
+		return
+	}
+	m.dragging = true
+	if col, ok := m.columnAt(msg.X, msg.Y); ok {
+		m.dragCol = col
+	} else {
+		m.dragCol = -1
+	}
+}
+
+// handleRelease completes a drag-and-drop: dropping a card on another
+// column moves it there. A release without prior motion is a plain click,
+// already handled by handleClick.
+func (m *model) handleRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
+	wasDragging, dst := m.dragging, m.dragCol
+	m.dragCardID, m.dragging, m.dragCol = "", false, -1
+	if !wasDragging {
+		return m, nil
+	}
+	m.lastClickCard = "" // a completed drag must not arm double-click
+	if col, ok := m.columnAt(msg.X, msg.Y); ok {
+		dst = col
+	}
+	cmd := m.moveCardTo(dst)
+	return m, cmd
 }
 
 // handleWheel moves the selection through the column under the cursor, so
@@ -731,13 +785,10 @@ func (m *model) createCard(project board.Project, prompt string) tea.Cmd {
 	}
 }
 
-func (m *model) moveCard(direction int) tea.Cmd {
+// moveCardTo moves the selected card to the column at index dst.
+func (m *model) moveCardTo(dst int) tea.Cmd {
 	card := m.selectedCard()
-	if card == nil {
-		return nil
-	}
-	dst := m.selCol + direction
-	if dst < 0 || dst >= len(m.columns) {
+	if card == nil || dst == m.selCol || dst < 0 || dst >= len(m.columns) {
 		return nil
 	}
 	colID := m.columns[dst].ID

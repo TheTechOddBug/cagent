@@ -289,9 +289,13 @@ func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight in
 		lines = append(lines, styles.MutedStyle.Render(fmt.Sprintf(" … %d more", len(cards)-end)))
 	}
 
-	// Selected column: white; others: a dimmed secondary border.
+	// Selected column: white; drag drop target: success green; others: a
+	// dimmed secondary border.
 	borderColor := darken(styles.BorderSecondary, 0.35)
-	if selected {
+	switch {
+	case m.dragging && idx == m.dragCol && idx != m.selCol:
+		borderColor = styles.Success
+	case selected:
 		borderColor = styles.White
 	}
 	return styles.BaseStyle.
@@ -407,6 +411,13 @@ func (m *model) renderStatus(status board.CardStatus, width int) string {
 }
 
 func (m *model) renderFooter() string {
+	if m.dragging {
+		if m.dragCol >= 0 && m.dragCol != m.selCol {
+			name := strings.TrimSpace(m.columns[m.dragCol].Emoji + " " + m.columns[m.dragCol].Name)
+			return styles.SuccessStyle.Render(" Release to move the card to " + toolcommon.TruncateText(sanitize(name), max(m.width-31, 1)))
+		}
+		return styles.MutedStyle.Render(" Drop the card on another column to move it")
+	}
 	if m.flash != "" {
 		style := styles.SuccessStyle
 		if m.isErr {
@@ -418,7 +429,7 @@ func (m *model) renderFooter() string {
 	// Same look as the main TUI's status bar: highlighted keys with secondary
 	// descriptions on the left, muted context on the right.
 	hints := []string{
-		"n", "new", "⏎", "attach", "d", "diff", "o", "editor", "s", "shell", "[ ]", "move",
+		"n", "new", "⏎", "attach", "d", "diff", "o", "editor", "s", "shell", "[ ] 1-9", "move",
 		"x", "delete", "p", "projects", "e", "prompt", "?", "help", "q", "quit",
 	}
 	parts := make([]string, 0, len(hints)/2)

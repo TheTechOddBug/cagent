@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -102,6 +103,91 @@ func TestCardAtMirrorsLayout(t *testing.T) {
 	assert.False(t, ok)
 	_, _, ok = m.cardAt(59, 5) // gap between columns
 	assert.False(t, ok)
+}
+
+// dragTestModel is a two-column board with two cards in the first column
+// and one in the second, on a 120x40 terminal (colWidth 59, cards from row 5).
+func dragTestModel() *model {
+	return &model{
+		width:   120,
+		height:  40,
+		columns: []board.Column{{ID: "dev", Name: "Dev"}, {ID: "done", Name: "Done"}},
+		cards: map[string][]*board.Card{
+			"dev":  {{ID: "a", Column: "dev"}, {ID: "b", Column: "dev"}},
+			"done": {{ID: "c", Column: "done"}},
+		},
+		scroll: map[string]int{},
+	}
+}
+
+func TestDragAndDropMovesCard(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+
+	// Pressing a card selects it and arms a drag candidate.
+	_, cmd := m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+	assert.Equal(t, "a", m.dragCardID)
+	assert.False(t, m.dragging)
+
+	// Motion while pressed turns the click into a drag targeting the
+	// column under the pointer.
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	assert.True(t, m.dragging)
+	assert.Equal(t, 1, m.dragCol)
+
+	// Releasing over the other column moves the card there.
+	_, cmd = m.handleRelease(tea.MouseReleaseMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	assert.NotNil(t, cmd, "drop on another column should move the card")
+	assert.False(t, m.dragging)
+	assert.Empty(t, m.dragCardID)
+	assert.Empty(t, m.lastClickCard, "a drag must not arm double-click attach")
+}
+
+func TestDragBackToOriginIsANoop(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	// Dropping the card back on its own column moves nothing.
+	_, cmd := m.handleRelease(tea.MouseReleaseMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+	assert.False(t, m.dragging)
+}
+
+func TestReleaseWithoutMotionIsAClick(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+
+	_, cmd := m.handleRelease(tea.MouseReleaseMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+	assert.Equal(t, "a", m.lastClickCard, "a plain click still arms double-click attach")
+}
+
+func TestDigitKeysMoveCardToColumn(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+
+	// 2 moves the selected card (first column) to the second column.
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: '2', Text: "2"})
+	assert.NotNil(t, cmd)
+
+	// The card's own column and out-of-range columns are no-ops.
+	_, cmd = m.handleKey(tea.KeyPressMsg{Code: '1', Text: "1"})
+	assert.Nil(t, cmd)
+	_, cmd = m.handleKey(tea.KeyPressMsg{Code: '9', Text: "9"})
+	assert.Nil(t, cmd)
+
+	// No selected card: nothing to move.
+	m.cards = map[string][]*board.Card{}
+	_, cmd = m.handleKey(tea.KeyPressMsg{Code: '2', Text: "2"})
+	assert.Nil(t, cmd)
 }
 
 func TestPlusButtonAt(t *testing.T) {
