@@ -61,6 +61,23 @@ func IsCantOpenError(err error) bool {
 	return false
 }
 
+// IsTransientError reports whether err is a temporary condition that a retry
+// (not a schema fix) would resolve: a canceled/expired context, or a SQLite
+// BUSY/LOCKED error from a concurrent writer. The primary result code is
+// compared after masking off extended-code bits (e.g. SQLITE_BUSY_SNAPSHOT).
+func IsTransientError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if sqliteErr, ok := errors.AsType[*sqlite.Error](err); ok {
+		switch sqliteErr.Code() & 0xff {
+		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+			return true
+		}
+	}
+	return false
+}
+
 // DiagnoseDBOpenError provides a more helpful error message when SQLite
 // fails to open/create a database file.
 func DiagnoseDBOpenError(path string, originalErr error) error {
