@@ -1056,6 +1056,33 @@ func (s *Session) SetPermissions(perms *PermissionsConfig) {
 	s.Permissions = perms
 }
 
+// SetToolsApproved updates ToolsApproved under s.mu so concurrent readers
+// (e.g. background-agent goroutines calling IsToolsApproved) observe a
+// consistent value. It mirrors WithToolsApproved's SafetyPolicy sync.
+func (s *Session) SetToolsApproved(approved bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ToolsApproved = approved
+	if approved && s.SafetyPolicy == "" {
+		s.SafetyPolicy = SafetyPolicyUnsafe
+	}
+}
+
+// AppendPermissionAllow adds toolName to the session's Allow list if not
+// already present, initializing Permissions when nil. Guarded by s.mu so
+// concurrent readers (ClonePermissions, permissionCheckers) see a
+// consistent snapshot.
+func (s *Session) AppendPermissionAllow(toolName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Permissions == nil {
+		s.Permissions = &PermissionsConfig{}
+	}
+	if !slices.Contains(s.Permissions.Allow, toolName) {
+		s.Permissions.Allow = append(s.Permissions.Allow, toolName)
+	}
+}
+
 // now returns the session's current time, falling back to time.Now for
 // sessions created without a clock (e.g. JSON deserialization).
 func (s *Session) now() time.Time {

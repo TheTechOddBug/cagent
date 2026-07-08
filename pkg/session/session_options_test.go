@@ -1,8 +1,6 @@
 package session
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,13 +77,11 @@ func TestAddAttachedFile(t *testing.T) {
 	t.Parallel()
 	t.Run("deduplicates and preserves order", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
-		barPath := filepath.Join(os.TempDir(), "bar.go")
 		s := New()
-		s.AddAttachedFile(fooPath)
-		s.AddAttachedFile(barPath)
-		s.AddAttachedFile(fooPath) // duplicate
-		assert.Equal(t, []string{fooPath, barPath}, s.AttachedFilesSnapshot())
+		s.AddAttachedFile("/abs/foo.go")
+		s.AddAttachedFile("/abs/bar.go")
+		s.AddAttachedFile("/abs/foo.go") // duplicate
+		assert.Equal(t, []string{"/abs/foo.go", "/abs/bar.go"}, s.AttachedFilesSnapshot())
 	})
 
 	t.Run("ignores empty paths", func(t *testing.T) {
@@ -106,12 +102,11 @@ func TestAddAttachedFile(t *testing.T) {
 
 	t.Run("snapshot is independent of session storage", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
 		s := New()
-		s.AddAttachedFile(fooPath)
+		s.AddAttachedFile("/abs/foo.go")
 		snap := s.AttachedFilesSnapshot()
 		snap[0] = "mutated"
-		assert.Equal(t, []string{fooPath}, s.AttachedFilesSnapshot())
+		assert.Equal(t, []string{"/abs/foo.go"}, s.AttachedFilesSnapshot())
 	})
 }
 
@@ -119,52 +114,43 @@ func TestRemoveAttachedFile(t *testing.T) {
 	t.Parallel()
 	t.Run("removes and reports presence", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
-		barPath := filepath.Join(os.TempDir(), "bar.go")
-		bazPath := filepath.Join(os.TempDir(), "baz.go")
 		s := New()
-		s.AddAttachedFile(fooPath)
-		s.AddAttachedFile(barPath)
-		s.AddAttachedFile(bazPath)
+		s.AddAttachedFile("/abs/foo.go")
+		s.AddAttachedFile("/abs/bar.go")
+		s.AddAttachedFile("/abs/baz.go")
 
-		assert.True(t, s.RemoveAttachedFile(barPath))
-		assert.Equal(t, []string{fooPath, bazPath}, s.AttachedFilesSnapshot())
+		assert.True(t, s.RemoveAttachedFile("/abs/bar.go"))
+		assert.Equal(t, []string{"/abs/foo.go", "/abs/baz.go"}, s.AttachedFilesSnapshot())
 	})
 
 	t.Run("reports absent paths", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
-		otherPath := filepath.Join(os.TempDir(), "other.go")
 		s := New()
-		s.AddAttachedFile(fooPath)
-		assert.False(t, s.RemoveAttachedFile(otherPath))
+		s.AddAttachedFile("/abs/foo.go")
+		assert.False(t, s.RemoveAttachedFile("/abs/other.go"))
 		assert.False(t, s.RemoveAttachedFile(""))
-		assert.Equal(t, []string{fooPath}, s.AttachedFilesSnapshot())
+		assert.Equal(t, []string{"/abs/foo.go"}, s.AttachedFilesSnapshot())
 	})
 
 	t.Run("no-op on empty list", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
 		s := New()
-		assert.False(t, s.RemoveAttachedFile(fooPath))
+		assert.False(t, s.RemoveAttachedFile("/abs/foo.go"))
 		assert.Empty(t, s.AttachedFilesSnapshot())
 	})
 
 	t.Run("file can be re-attached after removal", func(t *testing.T) {
 		t.Parallel()
-		fooPath := filepath.Join(os.TempDir(), "foo.go")
 		s := New()
-		s.AddAttachedFile(fooPath)
-		require.True(t, s.RemoveAttachedFile(fooPath))
-		s.AddAttachedFile(fooPath)
-		assert.Equal(t, []string{fooPath}, s.AttachedFilesSnapshot())
+		s.AddAttachedFile("/abs/foo.go")
+		require.True(t, s.RemoveAttachedFile("/abs/foo.go"))
+		s.AddAttachedFile("/abs/foo.go")
+		assert.Equal(t, []string{"/abs/foo.go"}, s.AttachedFilesSnapshot())
 	})
 }
 
 func TestWithAttachedFiles(t *testing.T) {
 	t.Parallel()
-	fooPath := filepath.Join(os.TempDir(), "foo.go")
-	barPath := filepath.Join(os.TempDir(), "bar.go")
-	s := New(WithAttachedFiles([]string{fooPath, "", "relative/path.go", barPath, fooPath}))
-	assert.Equal(t, []string{fooPath, barPath}, s.AttachedFilesSnapshot())
+	s := New(WithAttachedFiles([]string{"/abs/foo.go", "", "relative/path.go", "/abs/bar.go", "/abs/foo.go"}))
+	assert.Equal(t, []string{"/abs/foo.go", "/abs/bar.go"}, s.AttachedFilesSnapshot())
 }

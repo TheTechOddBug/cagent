@@ -326,7 +326,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	// must not silently escalate the parent's tool-approval gate: the user approved
 	// tools within a sub-session scope that ended in error, and that approval
 	// should not carry over to the parent's remaining turns.
-	parent.ToolsApproved = s.ToolsApproved
+	parent.SetToolsApproved(s.IsToolsApproved())
 	parent.SetPermissions(s.ClonePermissions())
 	span.SetStatus(codes.Ok, "sub-session completed")
 	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
@@ -550,8 +550,8 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 			ExpectedOutput: params.ExpectedOutput,
 			AgentName:      params.Agent,
 			Title:          "Transferred task",
-			ToolsApproved:  sess.ToolsApproved,
-			Permissions:    sess.Permissions,
+			ToolsApproved:  sess.IsToolsApproved(),
+			Permissions:    sess.ClonePermissions(),
 			NonInteractive: sess.NonInteractive,
 		},
 		SwitchCurrentAgent: true,
