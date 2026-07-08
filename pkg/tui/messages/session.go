@@ -2,12 +2,11 @@ package messages
 
 import "github.com/docker/docker-agent/pkg/session"
 
-// Attachment represents content attached to a message. It is either a reference
-// to a file on disk (FilePath is set) or inline content already in memory
-// (Content is set, e.g. pasted text). When FilePath is set the consumer reads
-// and classifies the file at send time; when only Content is set the consumer
-// uses it directly as inline text. This design lets us add binary-file support
-// (images, PDFs, …) in the future by extending the struct with a MimeType hint.
+// Attachment represents content attached to a message. It can be a reference
+// to a file on disk (FilePath is set), inline text content (Content is set),
+// or inline binary content (Data and MimeType are set). When FilePath is set,
+// the consumer reads and classifies the file at send time; inline content
+// is used directly.
 type Attachment struct {
 	// Name is the human-readable label (e.g. "paste-1", "main.go").
 	Name string

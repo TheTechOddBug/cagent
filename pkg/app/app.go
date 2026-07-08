@@ -626,8 +626,7 @@ func (a *App) processFileAttachment(ctx context.Context, att messages.Attachment
 		// For images, emit a dimension note so the model can map coordinates back to the original.
 		if resizeMeta != nil {
 			if note := chat.FormatDimensionNote(resizeMeta); note != "" {
-				textBuilder.WriteString("\n")
-				textBuilder.WriteString(note)
+				textBuilder.WriteString("\n" + note)
 			}
 		}
 		*binaryParts = append(*binaryParts, chat.MessagePart{
