@@ -163,6 +163,37 @@ func TestDraggedCardRendersFaded(t *testing.T) {
 	assert.Equal(t, during, m.renderCard(other, 30, false))
 }
 
+func TestDropTargetPreviewsGhostCard(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+	m.cards["dev"][0].Title = "Fix the flaky test"
+
+	// Before the drag, the destination column shows only its own card.
+	boardHeight, colWidth := m.boardSize()
+	idle := m.renderColumn(1, m.columns[1], colWidth, boardHeight)
+	assert.NotContains(t, idle, "Fix the flaky")
+
+	// Mid-drag, the drop target previews the dragged card at its insertion
+	// point: after the column's last card.
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	target := m.renderColumn(1, m.columns[1], colWidth, boardHeight)
+	assert.Contains(t, target, "Fix the flaky")
+
+	// The source column shows no ghost — a drop there is a no-op.
+	source := m.renderColumn(0, m.columns[0], colWidth, boardHeight)
+	assert.Equal(t, 1, strings.Count(source, "Fix the flaky"),
+		"the source column must only show the card itself")
+
+	// The ghost vanishes when the pointer leaves the column…
+	m.handleMotion(tea.MouseMotionMsg{X: 59, Y: 5, Button: tea.MouseLeft})
+	assert.NotContains(t, m.renderColumn(1, m.columns[1], colWidth, boardHeight), "Fix the flaky")
+
+	// …and the preview never persists a scroll change on the target.
+	assert.Equal(t, 0, m.scroll["done"])
+}
+
 func TestDragBackToOriginIsANoop(t *testing.T) {
 	t.Parallel()
 

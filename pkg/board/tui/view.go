@@ -244,6 +244,7 @@ func (m *model) renderBoard() string {
 
 func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight int) string {
 	selected := idx == m.selCol
+	dropTarget := m.dragging && idx == m.dragCol && idx != m.selCol
 	// The border box's Width/Height are outer sizes; the content area is two
 	// cells narrower (and shorter).
 	innerWidth := colWidth - 2
@@ -277,10 +278,26 @@ func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight in
 	}
 	m.scroll[col.ID] = scroll
 
+	// The drop target previews the dragged card at its insertion point: a
+	// faded ghost takes the last slot and the window slides to the column's
+	// tail, where a dropped card lands. The forced scroll is not persisted,
+	// so a cancelled drag leaves the column's window untouched.
+	ghost := ""
+	if dropTarget {
+		if card := m.cardByID(m.dragCardID); card != nil {
+			ghost = m.renderGhost(card, innerWidth)
+			slots--
+			scroll = max(len(cards)-slots, 0)
+		}
+	}
+
 	lines := []string{header, rule}
 	end := min(scroll+slots, len(cards))
 	for i := scroll; i < end; i++ {
 		lines = append(lines, m.renderCard(cards[i], innerWidth, selected && i == m.selRow))
+	}
+	if ghost != "" {
+		lines = append(lines, ghost)
 	}
 	switch {
 	case len(cards) == 0 && selected:
@@ -293,7 +310,7 @@ func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight in
 	// dimmed secondary border.
 	borderColor := darken(styles.BorderSecondary, 0.35)
 	switch {
-	case m.dragging && idx == m.dragCol && idx != m.selCol:
+	case dropTarget:
 		borderColor = styles.Success
 	case selected:
 		borderColor = styles.White
@@ -397,6 +414,26 @@ func (m *model) renderCard(card *board.Card, colInnerWidth int, selected bool) s
 	return styles.BaseStyle.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
+		Width(colInnerWidth).
+		Padding(0, 1).
+		Render(content)
+}
+
+// renderGhost previews the dragged card in the drop-target column: a faded
+// clone of the card at the column's tail, where the card lands on release.
+func (m *model) renderGhost(card *board.Card, colInnerWidth int) string {
+	textWidth := max(colInnerWidth-4, 1)
+	style := styles.BaseStyle.Foreground(fade(styles.SecondaryStyle.GetForeground()))
+	title1, title2 := splitTitle(sanitize(card.Title), textWidth)
+	content := strings.Join([]string{
+		style.Render(title1),
+		style.Render(title2),
+		style.Render(toolcommon.TruncateText(sanitize("◆ "+card.Project), textWidth)),
+		"",
+	}, "\n")
+	return styles.BaseStyle.
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(fade(styles.Success)).
 		Width(colInnerWidth).
 		Padding(0, 1).
 		Render(content)
