@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -136,6 +137,7 @@ type keyMap struct {
 	Diff     key.Binding
 	MoveFwd  key.Binding
 	MoveBack key.Binding
+	MoveTo   key.Binding
 	Delete   key.Binding
 	Projects key.Binding
 	Prompt   key.Binding
@@ -157,6 +159,7 @@ var keys = keyMap{
 	Diff:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "view diff")),
 	MoveFwd:  key.NewBinding(key.WithKeys("]", "shift+right", "L"), key.WithHelp("]", "move card forward")),
 	MoveBack: key.NewBinding(key.WithKeys("[", "shift+left", "H"), key.WithHelp("[", "move card back")),
+	MoveTo:   key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "move card to column N")),
 	Delete:   key.NewBinding(key.WithKeys("x", "backspace", "delete"), key.WithHelp("x", "delete card")),
 	Projects: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "manage projects")),
 	Prompt:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit column prompt")),
@@ -229,6 +232,14 @@ type model struct {
 	// lastClick* back double-click-to-attach on cards.
 	lastClickCard string
 	lastClickTime time.Time
+
+	// drag* back drag-and-drop card moves: dragCardID is the pressed card
+	// (a drag candidate), dragging turns true on the first motion event
+	// (cell-motion mode only reports motion while a button is held), and
+	// dragCol is the drop target column under the pointer (-1 when none).
+	dragCardID string
+	dragging   bool
+	dragCol    int
 }
 
 func newModel(app *board.App, refresh chan struct{}) *model {
@@ -244,6 +255,7 @@ func newModel(app *board.App, refresh chan struct{}) *model {
 
 // openDialog installs a dialog and runs its init command.
 func (m *model) openDialog(d dialog) tea.Cmd {
+	m.resetDrag() // the dialog captures the release: the drag cannot finish
 	m.dialog = d
 	return d.Init()
 }
@@ -259,6 +271,15 @@ func (m *model) reload() {
 		m.projectColors[p.Name] = projectColorAt(i)
 	}
 	m.clampSelection()
+	// A refresh can remove the dragged card or shrink the column list;
+	// re-validate so a drop cannot act on stale state.
+	if m.dragCardID != "" {
+		if m.cardByID(m.dragCardID) == nil {
+			m.resetDrag()
+		} else if m.dragCol >= len(m.columns) {
+			m.dragCol = -1
+		}
+	}
 }
 
 // groupCards buckets cards by column, in board order. A card whose column
@@ -301,6 +322,18 @@ func (m *model) selectedCard() *board.Card {
 		return nil
 	}
 	return cards[m.selRow]
+}
+
+// cardByID finds a card anywhere on the board.
+func (m *model) cardByID(id string) *board.Card {
+	for _, cards := range m.cards {
+		for _, c := range cards {
+			if c.ID == id {
+				return c
+			}
+		}
+	}
+	return nil
 }
 
 func (m *model) Init() tea.Cmd {
@@ -499,6 +532,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		return m.handleClick(msg)
+	case tea.MouseMotionMsg:
+		m.handleMotion(msg)
+		return m, nil
+	case tea.MouseReleaseMsg:
+		return m.handleRelease(msg)
 	case tea.MouseWheelMsg:
 		m.handleWheel(msg)
 		return m, nil
@@ -507,6 +545,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// A key press cancels any drag in progress (esc cancels a drag) and
+	// keeps the state clean across paths that lose the release event, like
+	// tea.ExecProcess (attach, shell) leaving mouse mode.
+	m.resetDrag()
 	switch {
 	case key.Matches(msg, keys.Quit):
 		return m, tea.Quit
@@ -544,10 +586,13 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, keys.MoveFwd):
-		cmd := m.moveCard(1)
+		cmd := m.moveCardTo(m.selCol + 1)
 		return m, cmd
 	case key.Matches(msg, keys.MoveBack):
-		cmd := m.moveCard(-1)
+		cmd := m.moveCardTo(m.selCol - 1)
+		return m, cmd
+	case key.Matches(msg, keys.MoveTo):
+		cmd := m.moveCardTo(int(msg.String()[0] - '1'))
 		return m, cmd
 
 	case key.Matches(msg, keys.Delete):
@@ -686,7 +731,62 @@ func (m *model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.lastClickCard = card.ID
 	m.lastClickTime = time.Now()
+	// The pressed card is a drag candidate: motion before the release turns
+	// the click into a drag (see handleMotion/handleRelease).
+	m.dragCardID = card.ID
+	m.dragCol = col
 	return m, nil
+}
+
+// handleMotion tracks a pressed card being dragged. Cell-motion mode only
+// reports motion while a button is held, so motion after a card press
+// means a drag; the column under the pointer becomes the drop target.
+func (m *model) handleMotion(msg tea.MouseMotionMsg) {
+	if m.dragCardID == "" || msg.Button != tea.MouseLeft {
+		return
+	}
+	// Jitter within the pressed card stays a click (double-click keeps
+	// working): the drag starts once the pointer leaves the card.
+	if !m.dragging {
+		if col, row, ok := m.cardAt(msg.X, msg.Y); ok && col == m.selCol && row == m.selRow {
+			return
+		}
+	}
+	m.dragging = true
+	if col, ok := m.columnAt(msg.X, msg.Y); ok {
+		m.dragCol = col
+	} else {
+		m.dragCol = -1
+	}
+}
+
+// handleRelease completes a drag-and-drop: dropping a card on another
+// column moves it there. A release without prior motion is a plain click,
+// already handled by handleClick.
+func (m *model) handleRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	cardID, wasDragging, dst := m.dragCardID, m.dragging, m.dragCol
+	m.resetDrag()
+	if !wasDragging {
+		return m, nil
+	}
+	m.lastClickCard = "" // a completed drag must not arm double-click
+	if col, ok := m.columnAt(msg.X, msg.Y); ok {
+		dst = col
+	}
+	cmd := m.moveCard(cardID, dst)
+	return m, cmd
+}
+
+// resetDrag abandons any drag in progress. Called whenever a drag can no
+// longer complete cleanly: a dialog opening (it captures the release), a
+// key press, or the dragged card disappearing on a refresh.
+func (m *model) resetDrag() {
+	m.dragCardID = ""
+	m.dragging = false
+	m.dragCol = -1
 }
 
 // handleWheel moves the selection through the column under the cursor, so
@@ -731,18 +831,27 @@ func (m *model) createCard(project board.Project, prompt string) tea.Cmd {
 	}
 }
 
-func (m *model) moveCard(direction int) tea.Cmd {
-	card := m.selectedCard()
-	if card == nil {
-		return nil
+// moveCardTo moves the selected card to the column at index dst.
+func (m *model) moveCardTo(dst int) tea.Cmd {
+	if card := m.selectedCard(); card != nil {
+		return m.moveCard(card.ID, dst)
 	}
-	dst := m.selCol + direction
+	return nil
+}
+
+// moveCard moves a card — by ID, so a board refresh mid-drag cannot
+// redirect the move to another card — to the column at index dst. Moving a
+// card to the column it already occupies is a no-op.
+func (m *model) moveCard(cardID string, dst int) tea.Cmd {
 	if dst < 0 || dst >= len(m.columns) {
 		return nil
 	}
 	colID := m.columns[dst].ID
+	if slices.ContainsFunc(m.cards[colID], func(c *board.Card) bool { return c.ID == cardID }) {
+		return nil
+	}
 	return func() tea.Msg {
-		if err := m.app.MoveCard(card.ID, colID); err != nil {
+		if err := m.app.MoveCard(cardID, colID); err != nil {
 			return flashMsg{text: err.Error(), isErr: true}
 		}
 		return cardMovedMsg{colIdx: dst}

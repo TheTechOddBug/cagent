@@ -704,11 +704,12 @@ func (d *helpDialog) View(width, _ int) string {
 		{keys.Editor.Help().Key, keys.Editor.Help().Desc + " ($DOCKER_AGENT_BOARD_EDITOR, default code)"},
 		{keys.Shell.Help().Key, keys.Shell.Help().Desc},
 		{"[ / ]", "move card (forward sends the column's prompt)"},
+		{keys.MoveTo.Help().Key, keys.MoveTo.Help().Desc},
 		{keys.Delete.Help().Key, "delete card, its session and worktree"},
 		{keys.Projects.Help().Key, keys.Projects.Help().Desc},
 		{keys.Prompt.Help().Key, "edit the selected column's prompt"},
 		{"←↓↑→ hjkl", "navigate (g/G first/last card)"},
-		{"mouse", "click selects · double-click attaches · wheel scrolls"},
+		{"mouse", "click selects · double-click attaches · drag moves · wheel scrolls"},
 		{keys.Quit.Help().Key, "quit (agents keep running in tmux)"},
 	}
 	// Same row styling as the main TUI's help dialog.
