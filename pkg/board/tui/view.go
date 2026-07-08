@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"image/color"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -244,7 +245,11 @@ func (m *model) renderBoard() string {
 
 func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight int) string {
 	selected := idx == m.selCol
-	dropTarget := m.dragging && idx == m.dragCol && idx != m.selCol
+	cards := m.cards[col.ID]
+	// A column already holding the dragged card is not a drop target: the
+	// move would be a no-op. This also covers a refresh moving the card
+	// under the drag — the card must never render twice in one column.
+	dropTarget := m.dragging && idx == m.dragCol && !containsCard(cards, m.dragCardID)
 	// The border box's Width/Height are outer sizes; the content area is two
 	// cells narrower (and shorter).
 	innerWidth := colWidth - 2
@@ -256,7 +261,6 @@ func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight in
 	if selected {
 		nameStyle = styles.HighlightWhiteStyle
 	}
-	cards := m.cards[col.ID]
 	header := " " + columnLabel(col, nameStyle)
 	// Right-aligned: a clickable + to create a card on the first column
 	// (see plusButtonAt), then the card count rightmost.
@@ -292,6 +296,11 @@ func (m *model) renderColumn(idx int, col board.Column, colWidth, boardHeight in
 	}
 
 	lines := []string{header, rule}
+	// The tail scroll can hide cards above the window; without this line a
+	// full column would collapse to just the ghost on short terminals.
+	if ghost != "" && scroll > 0 {
+		lines = append(lines, styles.MutedStyle.Render(fmt.Sprintf(" … %d more", scroll)))
+	}
 	end := min(scroll+slots, len(cards))
 	for i := scroll; i < end; i++ {
 		lines = append(lines, m.renderCard(cards[i], innerWidth, selected && i == m.selRow))
@@ -417,6 +426,11 @@ func (m *model) renderCard(card *board.Card, colInnerWidth int, selected bool) s
 		Width(colInnerWidth).
 		Padding(0, 1).
 		Render(content)
+}
+
+// containsCard reports whether one of the cards has the given ID.
+func containsCard(cards []*board.Card, id string) bool {
+	return slices.ContainsFunc(cards, func(c *board.Card) bool { return c.ID == id })
 }
 
 // renderGhost previews the dragged card in the drop-target column: a faded
@@ -582,7 +596,11 @@ func (m *model) columnAt(x, y int) (int, bool) {
 }
 
 // cardAt maps terminal coordinates to the (column, card) under them. It
-// mirrors the layout produced by renderBoard.
+// mirrors the layout produced by renderBoard — except the drop-target
+// column mid-drag, whose window slides for the ghost preview. That
+// divergence is safe: the only drag-time caller (handleRelease) just
+// checks the hit against the dragged card, which sits in the source
+// column, whose layout is unchanged.
 func (m *model) cardAt(x, y int) (col, row int, ok bool) {
 	col, ok = m.columnAt(x, y)
 	if !ok {

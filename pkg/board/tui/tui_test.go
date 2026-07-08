@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -192,6 +193,71 @@ func TestDropTargetPreviewsGhostCard(t *testing.T) {
 
 	// …and the preview never persists a scroll change on the target.
 	assert.Equal(t, 0, m.scroll["done"])
+}
+
+func TestDropTargetGhostSlidesToColumnTail(t *testing.T) {
+	t.Parallel()
+
+	// An overfull target column (7 cards, 5 slots at height 40) slides to
+	// its tail so the ghost sits at the real insertion point.
+	m := dragTestModel()
+	m.cards["dev"][0].Title = "Dragged card"
+	done := make([]*board.Card, 0, 7)
+	for i := range 7 {
+		done = append(done, &board.Card{ID: fmt.Sprintf("d%d", i), Column: "done", Title: fmt.Sprintf("Done task %d", i)})
+	}
+	m.cards["done"] = done
+
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	boardHeight, colWidth := m.boardSize()
+	target := m.renderColumn(1, m.columns[1], colWidth, boardHeight)
+	assert.Contains(t, target, "Done task 6", "the column tail must be visible")
+	assert.Contains(t, target, "Dragged card", "the ghost follows the last card")
+	assert.NotContains(t, target, "Done task 0")
+	assert.Contains(t, target, "… 3 more", "cards hidden above the window are counted")
+	assert.Equal(t, 0, m.scroll["done"], "the tail scroll must not persist")
+}
+
+func TestDropTargetGhostOnTinyTerminal(t *testing.T) {
+	t.Parallel()
+
+	// With a single visible slot the ghost takes it, and the column's own
+	// cards collapse into the hidden-count line instead of vanishing.
+	m := dragTestModel()
+	m.height = 12 // boardSize floor: one card slot
+	m.cards["dev"][0].Title = "Dragged card"
+	m.cards["done"][0].Title = "Done task"
+
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	boardHeight, colWidth := m.boardSize()
+	target := m.renderColumn(1, m.columns[1], colWidth, boardHeight)
+	assert.Contains(t, target, "Dragged card")
+	assert.Contains(t, target, "… 1 more")
+	assert.NotContains(t, target, "Done task")
+}
+
+func TestNoGhostWhenTargetAlreadyHoldsCard(t *testing.T) {
+	t.Parallel()
+
+	// A refresh can move the dragged card under the drag; the column that
+	// now holds it must not render it twice (the drop is a no-op anyway).
+	m := dragTestModel()
+	m.cards["dev"][0].Title = "Dragged card"
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	// Simulate an external move of the dragged card into the target column.
+	m.cards["done"] = append(m.cards["done"], m.cards["dev"][0])
+	m.cards["dev"] = m.cards["dev"][1:]
+
+	boardHeight, colWidth := m.boardSize()
+	target := m.renderColumn(1, m.columns[1], colWidth, boardHeight)
+	assert.Equal(t, 1, strings.Count(target, "Dragged card"),
+		"the card must not render twice in its own column")
 }
 
 func TestDragBackToOriginIsANoop(t *testing.T) {
