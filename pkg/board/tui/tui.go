@@ -413,6 +413,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case attachReadyMsg:
+		// tea.ExecProcess leaves mouse mode: a drag in flight loses its
+		// release and must not leak into the gestures after detach.
+		m.resetDrag()
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg { return attachDoneMsg{err: err} })
 
 	case attachFailedMsg:
@@ -715,6 +718,7 @@ func (m *model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	col, row, ok := m.cardAt(msg.X, msg.Y)
 	if !ok {
 		m.lastClickCard = ""
+		m.resetDrag() // a lost release must not leak into this gesture
 		return m, nil
 	}
 	m.selCol, m.selRow = col, row
@@ -732,25 +736,22 @@ func (m *model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	m.lastClickCard = card.ID
 	m.lastClickTime = time.Now()
 	// The pressed card is a drag candidate: motion before the release turns
-	// the click into a drag (see handleMotion/handleRelease).
+	// the click into a drag (see handleMotion/handleRelease). Rearming also
+	// clears any drag whose release was lost (e.g. to tea.ExecProcess).
+	m.resetDrag()
 	m.dragCardID = card.ID
 	m.dragCol = col
 	return m, nil
 }
 
 // handleMotion tracks a pressed card being dragged. Cell-motion mode only
-// reports motion while a button is held, so motion after a card press
-// means a drag; the column under the pointer becomes the drop target.
+// reports motion while a button is held, so any motion after a card press
+// starts the drag — the card fades immediately — and the column under the
+// pointer becomes the drop target. Jitter is sorted out on release: a drop
+// back on the pressed card stays a plain click (see handleRelease).
 func (m *model) handleMotion(msg tea.MouseMotionMsg) {
 	if m.dragCardID == "" || msg.Button != tea.MouseLeft {
 		return
-	}
-	// Jitter within the pressed card stays a click (double-click keeps
-	// working): the drag starts once the pointer leaves the card.
-	if !m.dragging {
-		if col, row, ok := m.cardAt(msg.X, msg.Y); ok && col == m.selCol && row == m.selRow {
-			return
-		}
 	}
 	m.dragging = true
 	if col, ok := m.columnAt(msg.X, msg.Y); ok {
@@ -761,8 +762,9 @@ func (m *model) handleMotion(msg tea.MouseMotionMsg) {
 }
 
 // handleRelease completes a drag-and-drop: dropping a card on another
-// column moves it there. A release without prior motion is a plain click,
-// already handled by handleClick.
+// column moves it there. A release without prior motion, or back on the
+// pressed card itself, is a plain click — jitter while pressed must not
+// break double-click-to-attach.
 func (m *model) handleRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
@@ -772,10 +774,13 @@ func (m *model) handleRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
 	if !wasDragging {
 		return m, nil
 	}
+	if col, row, ok := m.cardAt(msg.X, msg.Y); ok && m.cards[m.columns[col].ID][row].ID == cardID {
+		return m, nil // dropped where it was picked up: a click
+	}
 	m.lastClickCard = "" // a completed drag must not arm double-click
 	if col, ok := m.columnAt(msg.X, msg.Y); ok {
 		dst = col
-	}
+	} // else: keep the last motion's target — the release landed in a gutter
 	cmd := m.moveCard(cardID, dst)
 	return m, cmd
 }
@@ -791,8 +796,13 @@ func (m *model) resetDrag() {
 
 // handleWheel moves the selection through the column under the cursor, so
 // scrolling anywhere on a column walks its cards (the scroll window follows
-// the selection). Wheel events outside the columns area are ignored.
+// the selection). Wheel events outside the columns area, or during a drag
+// (they would move the selection and scroll the card under the pointer),
+// are ignored.
 func (m *model) handleWheel(msg tea.MouseWheelMsg) {
+	if m.dragCardID != "" {
+		return
+	}
 	col, ok := m.columnAt(msg.X, msg.Y)
 	if !ok {
 		return

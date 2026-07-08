@@ -145,6 +145,24 @@ func TestDragAndDropMovesCard(t *testing.T) {
 	assert.Empty(t, m.lastClickCard, "a drag must not arm double-click attach")
 }
 
+func TestDraggedCardRendersFaded(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+	card := m.cards["dev"][0]
+
+	idle := m.renderCard(card, 30, true)
+	m.dragCardID, m.dragging = card.ID, true
+	assert.NotEqual(t, idle, m.renderCard(card, 30, true),
+		"the dragged card must be visually distinct")
+
+	// Other cards keep their normal look while a drag is in progress.
+	other := m.cards["dev"][1]
+	during := m.renderCard(other, 30, false)
+	m.resetDrag()
+	assert.Equal(t, during, m.renderCard(other, 30, false))
+}
+
 func TestDragBackToOriginIsANoop(t *testing.T) {
 	t.Parallel()
 
@@ -164,13 +182,16 @@ func TestDragJitterWithinCardStaysAClick(t *testing.T) {
 	m := dragTestModel()
 	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
 
-	// Motion within the pressed card does not start a drag…
+	// Motion within the pressed card starts the drag right away, so the
+	// pickup is visible without waiting for the pointer to leave the card…
 	m.handleMotion(tea.MouseMotionMsg{X: 6, Y: 6, Button: tea.MouseLeft})
-	assert.False(t, m.dragging)
+	assert.True(t, m.dragging)
 
-	// …so the release is a plain click and double-click stays armed.
+	// …but releasing back on the same card is a plain click and
+	// double-click stays armed.
 	_, cmd := m.handleRelease(tea.MouseReleaseMsg{X: 6, Y: 6, Button: tea.MouseLeft})
 	assert.Nil(t, cmd)
+	assert.False(t, m.dragging)
 	assert.Equal(t, "a", m.lastClickCard)
 }
 
@@ -205,6 +226,48 @@ func TestDragCancelledByDialogAndKeys(t *testing.T) {
 	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
 	_, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	assert.False(t, m.dragging)
+}
+
+func TestStaleDragDoesNotLeakIntoNextGesture(t *testing.T) {
+	t.Parallel()
+
+	// A drag whose release was lost (tea.ExecProcess leaves mouse mode)
+	// must not turn the next click into a card move.
+	m := dragTestModel()
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	// Next gesture: click on empty column space…
+	_, cmd := m.handleClick(tea.MouseClickMsg{X: 65, Y: 5 + 2*cardHeight, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+	assert.False(t, m.dragging)
+	_, cmd = m.handleRelease(tea.MouseReleaseMsg{X: 65, Y: 5 + 2*cardHeight, Button: tea.MouseLeft})
+	assert.Nil(t, cmd, "a stale drag must not move a card on a plain click")
+
+	// …or on another card: the press rearms a clean candidate.
+	m = dragTestModel()
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	assert.False(t, m.dragging)
+	assert.Equal(t, "c", m.dragCardID)
+	_, cmd = m.handleRelease(tea.MouseReleaseMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+}
+
+func TestWheelIgnoredWhileCardPressed(t *testing.T) {
+	t.Parallel()
+
+	m := dragTestModel()
+	_, _ = m.handleClick(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	m.handleMotion(tea.MouseMotionMsg{X: 65, Y: 5, Button: tea.MouseLeft})
+
+	// A wheel event mid-drag must not move the selection: the drop-target
+	// highlight keys off selCol and the scroll would shift cards under the
+	// pointer.
+	m.handleWheel(tea.MouseWheelMsg{X: 65, Y: 5, Button: tea.MouseWheelDown})
+	assert.Equal(t, 0, m.selCol)
+	assert.Equal(t, 0, m.selRow)
 }
 
 func TestMoveCardResolvesByID(t *testing.T) {
