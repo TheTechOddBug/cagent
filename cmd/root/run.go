@@ -674,7 +674,9 @@ func promptRemoveDirtyWorktree(ctx context.Context, out *cli.Printer, wt *worktr
 	}
 
 	out.Println("\nThe git worktree " + wt.Dir + " (branch " + wt.Branch + ") still has " + strings.Join(held, ", ") + ".")
-	out.Println("Remove it and discard this work? Keeping preserves the directory and branch so you can return later. (y/N):")
+	out.Println("Delete this worktree and discard the work? (y/N)")
+	out.Println("  y: delete the directory and its work")
+	out.Println("  N: keep the directory and branch so you can return later")
 
 	response, err := input.ReadLine(ctx, os.Stdin)
 	if err != nil {
