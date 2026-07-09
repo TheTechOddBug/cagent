@@ -143,6 +143,20 @@ The **effort gauge** is a fixed-width six-cell indicator (`▰` filled, `▱` em
 
 Harness-backed agents (e.g. `claude-code`) show the harness type as their model and no thinking gauge. Press **Shift+Tab** to cycle the current model's thinking-effort level; a `✻ Thinking: <level>` toast confirms the change (useful when the sidebar is hidden).
 
+### Context-Usage Gauge
+
+The context-usage gauge (the fill bar and percentage shown in the sidebar token-usage section and in the lean TUI status line) color-escalates as the active session approaches the auto-compaction threshold:
+
+| Gauge color | When it appears |
+| ----------- | --------------- |
+| Green (normal) | Usage is below 75% of the configured compaction threshold |
+| Orange (warning) | Usage reaches 75% of the compaction threshold |
+| Red (critical) | Usage reaches 95% of the compaction threshold |
+
+While a compaction is running the percentage is replaced by a **"compacting…"** indicator; token counts remain visible in the lean TUI status line.
+
+The thresholds are proportional to the agent's configured `compaction_threshold` (default `0.9`), so a custom value keeps a predictable visual runway. See [Compaction Threshold](../../configuration/models/index.md#delegating-session-compaction) for configuration details.
+
 ### Thinking and Tool Details
 
 Reasoning/thinking blocks are collapsed by default and carry a `Thinking` header badge. When collapsed, the TUI shows a short preview and compact tool summaries. Expand a block to see the full thinking content and the real tool renderers, including detailed tool output such as file edit diffs.
