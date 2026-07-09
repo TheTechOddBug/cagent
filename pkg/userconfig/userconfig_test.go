@@ -98,6 +98,55 @@ func TestConfig_SetAlias_Validation(t *testing.T) {
 	}
 }
 
+func TestConfig_SetGetProviders(t *testing.T) {
+	t.Parallel()
+
+	config := &Config{}
+
+	require.Error(t, config.SetProvider("", latest.ProviderConfig{}))
+	require.Error(t, config.SetProvider("   ", latest.ProviderConfig{}))
+	assert.Nil(t, config.GetProviders())
+
+	provider := latest.ProviderConfig{
+		BaseURL:  "https://llm.corp.example.com/v1",
+		APIType:  "openai_chatcompletions",
+		TokenKey: "MYPROVIDER_API_KEY",
+	}
+	require.NoError(t, config.SetProvider("myprovider", provider))
+
+	providers := config.GetProviders()
+	require.Len(t, providers, 1)
+	assert.Equal(t, provider, providers["myprovider"])
+
+	// The returned map is a copy: mutating it must not affect the config.
+	delete(providers, "myprovider")
+	assert.Len(t, config.GetProviders(), 1)
+}
+
+func TestConfig_ProvidersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	config := &Config{}
+	require.NoError(t, config.SetProvider("myprovider", latest.ProviderConfig{
+		BaseURL:  "https://llm.corp.example.com/v1",
+		APIType:  "openai_responses",
+		TokenKey: "MYPROVIDER_API_KEY",
+	}))
+	require.NoError(t, config.saveTo(configFile))
+
+	loaded, err := loadFrom(configFile, "")
+	require.NoError(t, err)
+
+	providers := loaded.GetProviders()
+	require.Len(t, providers, 1)
+	assert.Equal(t, "https://llm.corp.example.com/v1", providers["myprovider"].BaseURL)
+	assert.Equal(t, "openai_responses", providers["myprovider"].APIType)
+	assert.Equal(t, "MYPROVIDER_API_KEY", providers["myprovider"].TokenKey)
+}
+
 func TestValidateAliasName(t *testing.T) {
 	t.Parallel()
 

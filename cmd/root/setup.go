@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,10 +20,13 @@ import (
 	"github.com/docker/docker-agent/pkg/chatgpt"
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/input"
+	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr"
 	"github.com/docker/docker-agent/pkg/telemetry"
+	"github.com/docker/docker-agent/pkg/userconfig"
 )
 
 // errSetupCancelled is returned when the user aborts the wizard (EOF or an
@@ -41,6 +46,10 @@ type setupResult struct {
 	Value  string
 	// Model is set when the local path selected or pulled a DMR model.
 	Model string
+	// ProviderName and Provider are set when the custom path registered an
+	// OpenAI-compatible provider in the user config.
+	ProviderName string
+	Provider     *latest.ProviderConfig
 }
 
 // setupWizard drives the interactive model setup. The function fields are
@@ -58,20 +67,26 @@ type setupWizard struct {
 	dmrLister    config.DMRModelLister
 	pullModel    func(ctx context.Context, model string) error
 	chatgptLogin func(ctx context.Context, out io.Writer) (*chatgpt.LoginResult, error)
+	saveProvider func(name string, provider latest.ProviderConfig) error
+	listModels   func(ctx context.Context, baseURL, token string) []string
 }
 
 func newSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
-		Short: "Interactively set up a model (API key or local)",
+		Short: "Interactively set up a model (API key, local, or custom endpoint)",
 		Long: `Set up a model for docker agent, interactively.
 
-Two paths:
+Three paths:
   - Cloud provider: pick a provider, paste its API key, and choose where to
     store it (OS keychain, pass, or the docker agent env file). Picking
     chatgpt signs in with your ChatGPT account in the browser instead of
     asking for an API key.
   - Local model: check Docker Model Runner and pull a model. No API key needed.
+  - OpenAI-compatible provider: register a custom endpoint (vLLM, LiteLLM,
+    a corporate gateway, ...) with its API format and API key variable. The
+    provider is saved to your user configuration and its models become
+    usable everywhere via --model <name>/<model>.
 
 Ends with the exact command to start chatting. Secret values are stored where
 you choose and never printed. Check the result anytime with 'docker agent doctor'.`,
@@ -124,6 +139,12 @@ func newTerminalSetupWizard(in io.Reader, out io.Writer) *setupWizard {
 		dmrLister:    dmr.ListModels,
 		pullModel:    dmr.Pull,
 		chatgptLogin: chatgpt.Login,
+		saveProvider: func(name string, provider latest.ProviderConfig) error {
+			return userconfig.Update(func(cfg *userconfig.Config) error {
+				return cfg.SetProvider(name, provider)
+			})
+		},
+		listModels: fetchOpenAICompatibleModels,
 	}
 }
 
@@ -135,17 +156,21 @@ func (w *setupWizard) run(ctx context.Context) (*setupResult, error) {
 	fmt.Fprintln(w.out, "How do you want to run models?")
 	fmt.Fprintln(w.out, "  1. Cloud provider (needs an API key)")
 	fmt.Fprintln(w.out, "  2. Local model via Docker Model Runner (no API key)")
+	fmt.Fprintln(w.out, "  3. OpenAI-compatible provider (custom endpoint, e.g. vLLM, LiteLLM)")
 
-	choice, err := w.promptChoice(ctx, 2, 1)
+	choice, err := w.promptChoice(ctx, 3, 1)
 	if err != nil {
 		return nil, err
 	}
 
 	var result *setupResult
-	if choice == 1 {
+	switch choice {
+	case 1:
 		result, err = w.setupCloudProvider(ctx)
-	} else {
+	case 2:
 		result, err = w.setupLocalModel(ctx)
+	default:
+		result, err = w.setupCustomProvider(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -293,9 +318,213 @@ func (w *setupWizard) setupLocalModel(ctx context.Context) (*setupResult, error)
 	return &setupResult{Model: "dmr/" + model}, nil
 }
 
+// customAPITypes maps the wizard's API-format menu entries to the api_type
+// values understood by the providers section.
+var customAPITypes = []string{"openai_chatcompletions", "openai_responses"}
+
+// setupCustomProvider walks the custom path: name an OpenAI-compatible
+// provider, point it at an endpoint, pick the API format, optionally wire an
+// API key, and save the provider to the user config so every command can use
+// its models via --model <name>/<model>.
+func (w *setupWizard) setupCustomProvider(ctx context.Context) (*setupResult, error) {
+	name, err := w.promptProviderName(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	baseURL, err := w.promptBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Fprintln(w.out)
+	fmt.Fprintln(w.out, "Which API format does the endpoint use?")
+	fmt.Fprintln(w.out, "  1. Chat Completions (/chat/completions, most common)")
+	fmt.Fprintln(w.out, "  2. Responses (/responses)")
+	formatChoice, err := w.promptChoice(ctx, len(customAPITypes), 1)
+	if err != nil {
+		return nil, err
+	}
+
+	envVar, key, err := w.promptCustomProviderKey(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	providerCfg := latest.ProviderConfig{
+		BaseURL:  baseURL,
+		APIType:  customAPITypes[formatChoice-1],
+		TokenKey: envVar,
+	}
+
+	model, err := w.promptCustomProviderModel(ctx, baseURL, key)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := w.saveProvider(name, providerCfg); err != nil {
+		return nil, fmt.Errorf("saving provider %q to the user config: %w", name, err)
+	}
+	fmt.Fprintf(w.out, "\nSaved provider %q (%s) to %s.\n", name, baseURL, userconfig.Path())
+
+	result := &setupResult{EnvVar: envVar, Value: key, ProviderName: name, Provider: &providerCfg}
+	if model != "" {
+		result.Model = name + "/" + model
+	}
+	return result, nil
+}
+
+// promptProviderName asks for the custom provider's name until a valid,
+// non-conflicting one is entered. Built-in provider names are rejected so a
+// custom definition never silently shadows them.
+func (w *setupWizard) promptProviderName(ctx context.Context) (string, error) {
+	for {
+		fmt.Fprint(w.out, "\nProvider name (e.g. myprovider): ")
+		name, err := w.readLine(ctx)
+		if err != nil {
+			return "", err
+		}
+		name = strings.TrimSpace(name)
+		switch {
+		case name == "":
+			fmt.Fprintln(w.out, "The name is empty; enter one or press Ctrl+C to cancel.")
+		case strings.ContainsAny(name, "/ \t"):
+			fmt.Fprintln(w.out, "The name cannot contain '/' or whitespace.")
+		case name == "auto" || provider.IsKnownProvider(name):
+			fmt.Fprintf(w.out, "%q is a built-in provider name; pick another one.\n", name)
+		default:
+			return name, nil
+		}
+	}
+}
+
+// promptBaseURL asks for the endpoint's base URL until an absolute http(s)
+// URL is entered.
+func (w *setupWizard) promptBaseURL(ctx context.Context) (string, error) {
+	for {
+		fmt.Fprint(w.out, "Base URL of the API endpoint (e.g. https://api.example.com/v1): ")
+		baseURL, err := w.readLine(ctx)
+		if err != nil {
+			return "", err
+		}
+		baseURL = strings.TrimSpace(baseURL)
+		u, parseErr := url.Parse(baseURL)
+		if parseErr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			fmt.Fprintln(w.out, "Enter an absolute http(s) URL, e.g. https://api.example.com/v1.")
+			continue
+		}
+		return baseURL, nil
+	}
+}
+
+// promptCustomProviderKey asks which environment variable holds the API key
+// (empty for an unauthenticated endpoint) and, when one is named, collects
+// and stores the key like the cloud path does. The raw key is also returned
+// so the wizard can authenticate its model-discovery request.
+func (w *setupWizard) promptCustomProviderKey(ctx context.Context, name string) (envVar, key string, err error) {
+	for {
+		fmt.Fprint(w.out, "Environment variable that holds the API key (empty if none is needed): ")
+		envVar, err = w.readLine(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		envVar = strings.TrimSpace(envVar)
+		if envVar == "" {
+			return "", "", nil
+		}
+		if !isValidEnvVarName(envVar) {
+			fmt.Fprintln(w.out, "Enter a valid environment variable name (letters, digits and underscores, e.g. MYPROVIDER_API_KEY), or leave it empty.")
+			continue
+		}
+		break
+	}
+
+	key, err = w.promptSecret(ctx, fmt.Sprintf("\nPaste your %s API key (%s, input hidden): ", name, envVar))
+	if err != nil {
+		return "", "", err
+	}
+	if err := w.storeSecret(ctx, envVar, key); err != nil {
+		return "", "", err
+	}
+	return envVar, key, nil
+}
+
+// promptCustomProviderModel queries the endpoint for its models to validate
+// the configuration and suggest a default, then asks which model to use.
+// Discovery failures are not fatal: the user can type a model ID manually or
+// leave it empty and discover models later with `docker agent models`.
+func (w *setupWizard) promptCustomProviderModel(ctx context.Context, baseURL, key string) (string, error) {
+	fmt.Fprintln(w.out)
+	fmt.Fprintln(w.out, "Checking the endpoint for available models...")
+
+	models := w.listModels(ctx, baseURL, key)
+	var defaultModel string
+	if len(models) > 0 {
+		fmt.Fprintf(w.out, "The endpoint lists %d model(s):\n", len(models))
+		for i, m := range models {
+			if i == maxModelsShown {
+				fmt.Fprintf(w.out, "  ... and %d more (see `docker agent models`)\n", len(models)-maxModelsShown)
+				break
+			}
+			fmt.Fprintf(w.out, "  - %s\n", m)
+		}
+		defaultModel = models[0]
+	} else {
+		fmt.Fprintln(w.out, "Could not list models from the endpoint; you can enter one manually.")
+	}
+
+	if defaultModel != "" {
+		fmt.Fprintf(w.out, "Model to use [%s]: ", defaultModel)
+	} else {
+		fmt.Fprint(w.out, "Model to use (leave empty to pick one later): ")
+	}
+	model, err := w.readLine(ctx)
+	if err != nil {
+		return "", err
+	}
+	if model = strings.TrimSpace(model); model == "" {
+		model = defaultModel
+	}
+	return model, nil
+}
+
+// maxModelsShown caps the endpoint's discovered-model listing so a provider
+// serving hundreds of models does not flood the wizard.
+const maxModelsShown = 10
+
+// envVarNameRe matches portable environment variable names.
+var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func isValidEnvVarName(name string) bool {
+	return envVarNameRe.MatchString(name)
+}
+
 // printNextSteps ends the wizard with ready-to-copy commands.
 func (w *setupWizard) printNextSteps(result *setupResult) {
 	fmt.Fprintln(w.out)
+
+	// Auto-selection never picks a custom provider, so its next steps must
+	// carry the explicit --model reference (or how to find one) instead of
+	// the bare `docker agent run`.
+	if result.ProviderName != "" {
+		if result.Model != "" {
+			fmt.Fprintln(w.out, "You're all set. Start chatting with:")
+			fmt.Fprintln(w.out)
+			fmt.Fprintf(w.out, "  docker agent run --model %s\n", result.Model)
+		} else {
+			fmt.Fprintf(w.out, "Provider %q is set up. List its models with:\n", result.ProviderName)
+			fmt.Fprintln(w.out)
+			fmt.Fprintf(w.out, "  docker agent models --provider %s\n", result.ProviderName)
+			fmt.Fprintln(w.out)
+			fmt.Fprintln(w.out, "Then start chatting with:")
+			fmt.Fprintln(w.out)
+			fmt.Fprintf(w.out, "  docker agent run --model %s/<model>\n", result.ProviderName)
+		}
+		fmt.Fprintln(w.out)
+		fmt.Fprintln(w.out, "Check your setup anytime with `docker agent doctor`.")
+		return
+	}
+
 	fmt.Fprintln(w.out, "You're all set. Start chatting with:")
 	fmt.Fprintln(w.out)
 	fmt.Fprintln(w.out, "  docker agent run")
@@ -308,6 +537,8 @@ func (w *setupWizard) printNextSteps(result *setupResult) {
 
 // promptChoice reads a 1-based menu choice, re-asking on invalid input. An
 // empty answer selects def; EOF cancels the wizard.
+//
+//nolint:unparam // def is 1 for every current menu; the parameter documents the default-choice contract
 func (w *setupWizard) promptChoice(ctx context.Context, n, def int) (int, error) {
 	for {
 		fmt.Fprintf(w.out, "Choice [%d]: ", def)
@@ -429,6 +660,20 @@ func (f *runExecFlags) offerSetupOnNoModel(ctx context.Context, cmd *cobra.Comma
 	if result.EnvVar != "" {
 		if err := os.Setenv(result.EnvVar, result.Value); err != nil {
 			slog.WarnContext(ctx, "Failed to export the stored key for the retry", "env_var", result.EnvVar, "error", err)
+		}
+	}
+
+	// A provider registered by the wizard was saved after the run config was
+	// seeded from the user config, so bridge it in for the retry too. Auto
+	// model selection never picks a custom provider, so pin the model chosen
+	// in the wizard unless a default model is already configured.
+	if result.ProviderName != "" && result.Provider != nil {
+		if f.runConfig.Providers == nil {
+			f.runConfig.Providers = map[string]latest.ProviderConfig{}
+		}
+		f.runConfig.Providers[result.ProviderName] = *result.Provider
+		if result.Model != "" && f.runConfig.DefaultModel == nil {
+			f.runConfig.DefaultModel = parseModelShorthand(result.Model)
 		}
 	}
 

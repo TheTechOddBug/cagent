@@ -46,7 +46,7 @@ Optionally provide a description as an argument to skip the initial prompt.`,
 		RunE:    flags.runNewCommand,
 	}
 
-	cmd.PersistentFlags().StringVar(&flags.modelParam, "model", "", "Model to use, optionally as provider/model where provider is one of: anthropic, openai, google, dmr. If omitted, provider is auto-selected based on available credentials or gateway")
+	cmd.PersistentFlags().StringVar(&flags.modelParam, "model", "", "Model to use, optionally as provider/model where provider is one of: anthropic, openai, google, dmr, or a custom provider from `docker agent setup`. If omitted, provider is auto-selected based on available credentials or gateway")
 	cmd.PersistentFlags().IntVar(&flags.maxIterationsParam, "max-iterations", 0, "Maximum number of agentic loop iterations to prevent infinite loops (default: 20 for DMR, unlimited for other providers)")
 	addRuntimeConfigFlags(cmd, &flags.runConfig)
 

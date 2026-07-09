@@ -387,30 +387,61 @@ func validateProviders(cfg *latest.Config) error {
 	}
 
 	for name, provCfg := range cfg.Providers {
-		// Validate provider name
-		if err := validateProviderName(name); err != nil {
-			return fmt.Errorf("provider '%s': %w", name, err)
+		if err := ValidateProviderConfig(name, provCfg); err != nil {
+			return err
 		}
-
-		// Validate api_type if set
-		if !providerAPITypes[provCfg.APIType] {
-			return fmt.Errorf("provider '%s': invalid api_type '%s' (must be one of: openai_chatcompletions, openai_responses)", name, provCfg.APIType)
-		}
-
-		// base_url is required for OpenAI-compatible providers (the default)
-		// but optional for native providers like anthropic, google, amazon-bedrock
-		if provCfg.BaseURL != "" {
-			if _, err := url.Parse(provCfg.BaseURL); err != nil {
-				return fmt.Errorf("provider '%s': invalid base_url '%s': %w", name, provCfg.BaseURL, err)
-			}
-		} else if isOpenAICustomProvider(provCfg) {
-			return fmt.Errorf("provider '%s': base_url is required for OpenAI-compatible providers", name)
-		}
-
-		// token_key is optional - if not set, requests will be sent without bearer token
 	}
 
 	return nil
+}
+
+// ValidateProviderConfig validates a single named provider configuration, as
+// found in the `providers` section of an agent file or in the user-level
+// config.
+func ValidateProviderConfig(name string, provCfg latest.ProviderConfig) error {
+	// Validate provider name
+	if err := validateProviderName(name); err != nil {
+		return fmt.Errorf("provider '%s': %w", name, err)
+	}
+
+	// Validate api_type if set
+	if !providerAPITypes[provCfg.APIType] {
+		return fmt.Errorf("provider '%s': invalid api_type '%s' (must be one of: openai_chatcompletions, openai_responses)", name, provCfg.APIType)
+	}
+
+	// base_url is required for OpenAI-compatible providers (the default)
+	// but optional for native providers like anthropic, google, amazon-bedrock
+	if provCfg.BaseURL != "" {
+		if _, err := url.Parse(provCfg.BaseURL); err != nil {
+			return fmt.Errorf("provider '%s': invalid base_url '%s': %w", name, provCfg.BaseURL, err)
+		}
+	} else if isOpenAICustomProvider(provCfg) {
+		return fmt.Errorf("provider '%s': base_url is required for OpenAI-compatible providers", name)
+	}
+
+	// token_key is optional - if not set, requests will be sent without bearer token
+
+	return nil
+}
+
+// MergeGlobalProviders merges user-level provider definitions (from the user
+// config) into an agent config's `providers` section. Definitions in the
+// agent file win on name conflicts. Invalid global definitions are skipped
+// with a warning so one bad user-config entry never breaks every run.
+func MergeGlobalProviders(cfg *latest.Config, global map[string]latest.ProviderConfig) {
+	for name, provCfg := range global {
+		if _, exists := cfg.Providers[name]; exists {
+			continue
+		}
+		if err := ValidateProviderConfig(name, provCfg); err != nil {
+			slog.Warn("Ignoring invalid provider from user config", "provider", name, "error", err)
+			continue
+		}
+		if cfg.Providers == nil {
+			cfg.Providers = map[string]latest.ProviderConfig{}
+		}
+		cfg.Providers[name] = provCfg
+	}
 }
 
 // isOpenAICustomProvider returns true if the provider config describes an OpenAI-compatible

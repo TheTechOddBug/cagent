@@ -164,6 +164,12 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		)
 	}
 
+	// Merge user-level provider definitions (seeded into the runtime config
+	// from the user config file) so custom providers registered via
+	// `docker agent setup` resolve in every run, including inline
+	// `--model myprovider/mymodel` overrides. Agent-file definitions win.
+	config.MergeGlobalProviders(cfg, runConfig.Providers)
+
 	// Resolve model aliases (e.g., "claude-sonnet-4-5" -> "claude-sonnet-4-5-20250929")
 	// This ensures the API uses the pinned model version. The original name is preserved
 	// in DisplayModel so the sidebar and other UI elements show the user-configured name.

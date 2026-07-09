@@ -330,6 +330,33 @@ func TestDefaultModelLogic(t *testing.T) {
 	}
 }
 
+// User-level custom providers from the user config must seed the runtime
+// config so custom `--model myprovider/mymodel` references resolve in every
+// command (issue #3557).
+func TestGatewayFlags_SeedsUserConfigProviders(t *testing.T) {
+	t.Parallel()
+
+	userCfg := &userconfig.Config{
+		Providers: map[string]latest.ProviderConfig{
+			"myprovider": {BaseURL: "https://llm.corp.example.com/v1", TokenKey: "MY_KEY"},
+		},
+	}
+
+	cmd := &cobra.Command{
+		RunE: func(*cobra.Command, []string) error { return nil },
+	}
+	runConfig := config.RuntimeConfig{
+		EnvProviderForTests: environment.NewMapEnvProvider(nil),
+	}
+	addGatewayFlags(cmd, &runConfig, func() (*userconfig.Config, error) { return userCfg, nil })
+
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
+
+	require.Contains(t, runConfig.Providers, "myprovider")
+	assert.Equal(t, "https://llm.corp.example.com/v1", runConfig.Providers["myprovider"].BaseURL)
+}
+
 // A missing or malformed --env-from-file must abort the run instead of being
 // logged and skipped: the flag is the documented way to supply credentials
 // (issue #3442).
