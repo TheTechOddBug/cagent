@@ -91,7 +91,7 @@ func (s *Session) Clone() *Session {
 		InputTokens:             s.InputTokens,
 		OutputTokens:            s.OutputTokens,
 		Cost:                    s.Cost,
-		Permissions:             clonePermissionsConfig(s.Permissions),
+		Permissions:             s.Permissions.Clone(),
 		AgentModelOverrides:     cloneStringMap(s.AgentModelOverrides),
 		CustomModelsUsed:        cloneStringSlice(s.CustomModelsUsed),
 		AttachedFiles:           cloneStringSlice(s.AttachedFiles),
@@ -190,7 +190,7 @@ func copySessionMetadata(dst, src *Session, title string) {
 	dst.MaxConsecutiveToolCalls = src.MaxConsecutiveToolCalls
 	dst.MaxOldToolCallTokens = src.MaxOldToolCallTokens
 	dst.Starred = src.Starred
-	dst.Permissions = clonePermissionsConfig(src.Permissions)
+	dst.Permissions = src.Permissions.Clone()
 	dst.AgentModelOverrides = cloneStringMap(src.AgentModelOverrides)
 	dst.CustomModelsUsed = cloneStringSlice(src.CustomModelsUsed)
 	dst.AttachedFiles = src.AttachedFilesSnapshot()
@@ -313,21 +313,9 @@ func cloneEvalResultChecks(src EvalResultChecks) EvalResultChecks {
 	}
 	if src.Relevance != nil {
 		relevance := *src.Relevance
-		relevance.Results = slices.Clone(src.Relevance.Results)
 		cp.Relevance = &relevance
 	}
 	return cp
-}
-
-func clonePermissionsConfig(src *PermissionsConfig) *PermissionsConfig {
-	if src == nil {
-		return nil
-	}
-	return &PermissionsConfig{
-		Allow: cloneStringSlice(src.Allow),
-		Ask:   cloneStringSlice(src.Ask),
-		Deny:  cloneStringSlice(src.Deny),
-	}
 }
 
 func cloneStringMap(src map[string]string) map[string]string {

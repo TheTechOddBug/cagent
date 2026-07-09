@@ -270,6 +270,18 @@ type PermissionsConfig struct {
 	Deny []string `json:"deny,omitempty"`
 }
 
+// Clone returns a deep copy of the permissions configuration.
+func (c *PermissionsConfig) Clone() *PermissionsConfig {
+	if c == nil {
+		return nil
+	}
+	return &PermissionsConfig{
+		Allow: slices.Clone(c.Allow),
+		Ask:   slices.Clone(c.Ask),
+		Deny:  slices.Clone(c.Deny),
+	}
+}
+
 // Message is a message from an agent
 type Message struct {
 	// ID is the database ID of the message (used for persistence tracking)

@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -290,4 +293,20 @@ func TestSubSessionInheritsPermissions(t *testing.T) {
 	assert.Equal(t, perms.Allow, s.Permissions.Allow)
 	assert.Equal(t, perms.Deny, s.Permissions.Deny)
 	assert.Equal(t, perms.Ask, s.Permissions.Ask)
+
+	// Verify the gap flagged in PR review: even if ToolsApproved is true (yolo flag),
+	// the inherited Deny should correctly override the yolo flag during dispatch.
+	s.ToolsApproved = true
+
+	checker := permissions.NewChecker(&latest.PermissionsConfig{
+		Allow: s.Permissions.Allow,
+		Ask:   s.Permissions.Ask,
+		Deny:  s.Permissions.Deny,
+	})
+	namedCheckers := []toolexec.NamedChecker{
+		{Checker: checker, Source: "session permissions"},
+	}
+
+	decision := toolexec.Decide(s.ToolsApproved, namedCheckers, "write_file", map[string]any{"path": "foo"}, false)
+	assert.Equal(t, toolexec.OutcomeDeny, decision.Outcome, "Inherited Deny should override ToolsApproved: true (yolo)")
 }

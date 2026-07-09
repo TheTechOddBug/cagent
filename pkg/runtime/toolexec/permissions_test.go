@@ -18,13 +18,13 @@ func newChecker(t *testing.T, allow, ask, deny []string) *permissions.Checker {
 	})
 }
 
-func TestDecide_YoloShortCircuits(t *testing.T) {
+func TestDecide_DenyOverridesYolo(t *testing.T) {
 	t.Parallel()
 	d := Decide(true, []NamedChecker{
 		{Checker: newChecker(t, nil, nil, []string{"shell"}), Source: "team"},
 	}, "shell", nil, false)
 
-	assert.Equal(t, PermissionDecision{Outcome: OutcomeAllow, Reason: ReasonYolo}, d)
+	assert.Equal(t, PermissionDecision{Outcome: OutcomeDeny, Reason: ReasonChecker, Source: "team"}, d)
 }
 
 func TestDecide_DenyFromCheckerWins(t *testing.T) {

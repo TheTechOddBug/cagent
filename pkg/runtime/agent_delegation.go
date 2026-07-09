@@ -185,7 +185,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
 	}
 	if parent.Permissions != nil {
-		opts = append(opts, session.WithPermissions(parent.Permissions))
+		opts = append(opts, session.WithPermissions(parent.Permissions.Clone()))
 	}
 	// Merge parent's excluded tools with config's excluded tools so that
 	// nested sub-sessions (e.g. skill → transfer_task → child) inherit

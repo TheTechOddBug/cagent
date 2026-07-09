@@ -75,10 +75,6 @@ func Decide(
 	toolArgs map[string]any,
 	readOnlyHint bool,
 ) PermissionDecision {
-	if yoloApproved {
-		return PermissionDecision{Outcome: OutcomeAllow, Reason: ReasonYolo}
-	}
-
 	for _, pc := range checkers {
 		switch pc.Checker.CheckWithArgs(toolName, toolArgs) {
 		case permissions.Deny:
@@ -90,6 +86,10 @@ func Decide(
 		case permissions.Ask:
 			// No explicit match at this level; fall through to next checker.
 		}
+	}
+
+	if yoloApproved {
+		return PermissionDecision{Outcome: OutcomeAllow, Reason: ReasonYolo}
 	}
 
 	if readOnlyHint {
