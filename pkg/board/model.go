@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/paths"
@@ -34,16 +35,52 @@ var DefaultColumns = []Column{
 }
 
 // ColumnsFromConfig maps user-configured columns to board columns, falling
-// back to [DefaultColumns] when none are configured.
+// back to [DefaultColumns] when none are configured. The config file is
+// hand-editable, so entries are normalized instead of trusted: a missing id
+// is derived from the name, an id-less and nameless entry is dropped, and a
+// duplicate id is dropped (card moves address columns by id, so duplicates
+// would be ambiguous).
 func ColumnsFromConfig(cols []userconfig.BoardColumn) []Column {
-	if len(cols) == 0 {
-		return DefaultColumns
-	}
 	out := make([]Column, 0, len(cols))
+	seen := make(map[string]bool, len(cols))
 	for _, c := range cols {
-		out = append(out, Column{ID: c.ID, Name: c.Name, Emoji: c.Emoji, Prompt: c.Prompt})
+		id := strings.TrimSpace(c.ID)
+		if id == "" {
+			id = columnID(c.Name)
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		name := strings.TrimSpace(c.Name)
+		if name == "" {
+			name = id
+		}
+		out = append(out, Column{ID: id, Name: name, Emoji: c.Emoji, Prompt: c.Prompt})
+	}
+	if len(out) == 0 {
+		// Cloned: the caller may edit the pipeline in place.
+		return slices.Clone(DefaultColumns)
 	}
 	return out
+}
+
+// columnID derives a column id from its display name: lowercased, with
+// runs of separators collapsed to a dash and anything else non-alphanumeric
+// dropped. Names that slug to nothing (e.g. emoji-only) yield "".
+func columnID(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			if s := b.String(); s != "" && !strings.HasSuffix(s, "-") {
+				b.WriteByte('-')
+			}
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
 }
 
 // CardStatus tracks what a card's agent is doing.

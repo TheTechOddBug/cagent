@@ -236,8 +236,8 @@ type BoardColumn struct {
 type Board struct {
 	// Projects are the repositories cards can be created against.
 	Projects []BoardProject `yaml:"projects,omitempty"`
-	// Columns overrides the default pipeline (Dev → Simplify → Review →
-	// Fix → Push → Done). Leave empty to keep the defaults.
+	// Columns overrides the default pipeline (Dev → Review → Push → Done).
+	// Leave empty to keep the defaults.
 	Columns []BoardColumn `yaml:"columns,omitempty"`
 }
 

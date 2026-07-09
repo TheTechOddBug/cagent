@@ -237,6 +237,250 @@ func (d *promptDialog) View(width, height int) string {
 	)
 }
 
+// --- columns manager ---
+
+// columnsMode is the columns dialog's active view.
+type columnsMode int
+
+const (
+	columnsList columnsMode = iota
+	columnsEditing
+	columnsConfirming
+)
+
+// columnsDialog lists and edits the pipeline's columns, stored in the
+// user's global config file. Editing keeps the column's id (and prompt),
+// so existing cards stay attached across a rename. Removal asks for
+// confirmation first.
+type columnsDialog struct {
+	columns []board.Column
+	idx     int
+
+	mode   columnsMode
+	inputs []textinput.Model // name, emoji
+	focus  int
+	// editing is the column being edited (its id and prompt survive the
+	// form); the zero value means the form adds a new column.
+	editing board.Column
+	// deleting is the column awaiting delete confirmation.
+	deleting    board.Column
+	confirmKeys tuidialog.ConfirmKeyMap
+}
+
+func newColumnsDialog(columns []board.Column) *columnsDialog {
+	return &columnsDialog{columns: columns, confirmKeys: tuidialog.DefaultConfirmKeyMap()}
+}
+
+// setColumns refreshes the list after an add, edit or delete and returns
+// to the list view, keeping the cursor position (clamped).
+func (d *columnsDialog) setColumns(columns []board.Column) {
+	d.refreshColumns(columns)
+	d.mode = columnsList
+	d.editing = board.Column{}
+	d.deleting = board.Column{}
+	d.inputs = nil
+}
+
+// refreshColumns updates the list data without leaving the current view.
+func (d *columnsDialog) refreshColumns(columns []board.Column) {
+	d.columns = columns
+	d.idx = min(max(d.idx, 0), max(len(columns)-1, 0))
+}
+
+// selectColumn moves the cursor to the column with the given id, if present.
+func (d *columnsDialog) selectColumn(id string) {
+	if i := slices.IndexFunc(d.columns, func(c board.Column) bool { return c.ID == id }); i >= 0 {
+		d.idx = i
+	}
+}
+
+var columnFields = []struct{ label, placeholder string }{
+	{"Name", "Review"},
+	{"Emoji", "\U0001f50d (optional)"},
+}
+
+// startForm opens the add/edit form. editing is the column being edited
+// (the zero value when adding); its name and emoji pre-fill the fields.
+func (d *columnsDialog) startForm(editing board.Column) tea.Cmd {
+	d.mode = columnsEditing
+	d.editing = editing
+	d.focus = 0
+	d.inputs = make([]textinput.Model, len(columnFields))
+	for i, f := range columnFields {
+		ti := textinput.New()
+		ti.SetStyles(styles.DialogInputStyle)
+		ti.Placeholder = f.placeholder
+		ti.SetWidth(56)
+		d.inputs[i] = ti
+	}
+	d.inputs[0].SetValue(editing.Name)
+	d.inputs[1].SetValue(editing.Emoji)
+	d.inputs[0].Focus()
+	return textinput.Blink
+}
+
+func (d *columnsDialog) Init() tea.Cmd { return nil }
+
+func (d *columnsDialog) Update(msg tea.Msg) (dialog, tea.Cmd) {
+	press, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return d, nil
+	}
+	switch d.mode {
+	case columnsEditing:
+		return d.updateEditing(press)
+	case columnsConfirming:
+		return d.updateConfirming(press)
+	}
+
+	switch press.String() {
+	case "esc", "q":
+		return d, closeDialog
+	case "up", "k":
+		d.idx = max(d.idx-1, 0)
+	case "down", "j":
+		d.idx = min(d.idx+1, max(len(d.columns)-1, 0))
+	case "a", "n":
+		cmd := d.startForm(board.Column{})
+		return d, cmd
+	case "e", "enter":
+		if len(d.columns) > 0 {
+			cmd := d.startForm(d.columns[d.idx])
+			return d, cmd
+		}
+	case "p":
+		// The prompt is long-form: hand it to the dedicated prompt editor.
+		if len(d.columns) > 0 {
+			column := d.columns[d.idx]
+			return d, func() tea.Msg { return editColumnPromptMsg{column: column} }
+		}
+	case "shift+up", "K":
+		cmd := d.moveColumn(-1)
+		return d, cmd
+	case "shift+down", "J":
+		cmd := d.moveColumn(1)
+		return d, cmd
+	case "x", "d", "backspace", "delete":
+		if len(d.columns) > 0 {
+			d.mode = columnsConfirming
+			d.deleting = d.columns[d.idx]
+		}
+	}
+	return d, nil
+}
+
+// updateConfirming handles the delete confirmation prompt.
+func (d *columnsDialog) updateConfirming(press tea.KeyPressMsg) (dialog, tea.Cmd) {
+	switch {
+	case key.Matches(press, d.confirmKeys.Yes), press.String() == "enter":
+		id := d.deleting.ID
+		d.mode = columnsList
+		d.deleting = board.Column{}
+		return d, func() tea.Msg { return deleteColumnMsg{id: id} }
+	case key.Matches(press, d.confirmKeys.No), press.String() == "esc", press.String() == "q":
+		d.mode = columnsList
+		d.deleting = board.Column{}
+	}
+	return d, nil
+}
+
+// moveColumn asks the model to reorder the selected column by delta
+// positions; the model persists the order and moves the cursor along.
+func (d *columnsDialog) moveColumn(delta int) tea.Cmd {
+	if len(d.columns) == 0 {
+		return nil
+	}
+	id := d.columns[d.idx].ID
+	return func() tea.Msg { return moveColumnMsg{id: id, delta: delta} }
+}
+
+func (d *columnsDialog) updateEditing(press tea.KeyPressMsg) (dialog, tea.Cmd) {
+	switch press.String() {
+	case "esc":
+		d.mode = columnsList
+		d.editing = board.Column{}
+		d.inputs = nil
+		return d, nil
+	case "tab", "down":
+		cmd := d.setFocus((d.focus + 1) % len(d.inputs))
+		return d, cmd
+	case "shift+tab", "up":
+		cmd := d.setFocus((d.focus + len(d.inputs) - 1) % len(d.inputs))
+		return d, cmd
+	case "enter":
+		// The id and prompt ride along untouched: the form only edits the
+		// display fields.
+		column := d.editing
+		column.Name = strings.TrimSpace(d.inputs[0].Value())
+		column.Emoji = strings.TrimSpace(d.inputs[1].Value())
+		oldID := d.editing.ID
+		return d, func() tea.Msg { return submitColumnMsg{column: column, oldID: oldID} }
+	}
+	var cmd tea.Cmd
+	d.inputs[d.focus], cmd = d.inputs[d.focus].Update(press)
+	return d, cmd
+}
+
+func (d *columnsDialog) setFocus(focus int) tea.Cmd {
+	d.inputs[d.focus].Blur()
+	d.focus = focus
+	return d.inputs[d.focus].Focus()
+}
+
+func (d *columnsDialog) View(width, _ int) string {
+	w := dialogWidth(70, width)
+	switch d.mode {
+	case columnsEditing:
+		return d.viewForm(w)
+	case columnsConfirming:
+		return renderDialog("Remove column?", w,
+			styles.BaseStyle.Render(toolcommon.TruncateText(sanitize(strings.TrimSpace(d.deleting.Emoji+" "+d.deleting.Name)), w)),
+			styles.MutedStyle.Render("A column that still has cards cannot be removed."),
+			"",
+			helpLine(w, d.confirmKeys.Yes.Help().Key, "remove", d.confirmKeys.No.Help().Key+"/esc", "cancel"),
+		)
+	}
+
+	rows := make([]string, 0, len(d.columns))
+	for i, c := range d.columns {
+		marker, nameStyle := "  ", styles.BaseStyle.Foreground(columnHeaderColor(i, len(d.columns)))
+		if i == d.idx {
+			marker, nameStyle = styles.SuccessStyle.Render("\u276f "), nameStyle.Bold(true)
+		}
+		line := marker + nameStyle.Render(sanitize(strings.TrimSpace(c.Emoji+" "+c.Name)))
+		if prompt := strings.Join(strings.Fields(sanitize(c.Prompt)), " "); prompt != "" {
+			line += styles.MutedStyle.Render("  " + prompt)
+		}
+		rows = append(rows, toolcommon.TruncateText(line, w))
+	}
+
+	return renderDialog("Columns", w,
+		lipgloss.JoinVertical(lipgloss.Left, rows...),
+		"",
+		helpLine(w, "a", "add", "e", "edit", "p", "prompt", "x", "remove", "shift+\u2191\u2193", "reorder", "esc", "close"),
+	)
+}
+
+func (d *columnsDialog) viewForm(w int) string {
+	rows := make([]string, 0, len(columnFields)*2)
+	for i, f := range columnFields {
+		label := styles.SecondaryStyle.Render(f.label)
+		if i == d.focus {
+			label = styles.HighlightWhiteStyle.Render(f.label)
+		}
+		rows = append(rows, label, d.inputs[i].View())
+	}
+	title := "Add column"
+	if d.editing.ID != "" {
+		title = "Edit column"
+	}
+	return renderDialog(title, w,
+		lipgloss.JoinVertical(lipgloss.Left, rows...),
+		"",
+		helpLine(w, "enter", "save", "tab", "next field", "esc", "back"),
+	)
+}
+
 // --- projects manager ---
 
 // projectsMode is the projects dialog's active view.
@@ -707,6 +951,7 @@ func (d *helpDialog) View(width, _ int) string {
 		{keys.MoveTo.Help().Key, keys.MoveTo.Help().Desc},
 		{keys.Delete.Help().Key, "delete card, its session and worktree"},
 		{keys.Projects.Help().Key, keys.Projects.Help().Desc},
+		{keys.Columns.Help().Key, "manage columns (add, edit, reorder, remove)"},
 		{keys.Prompt.Help().Key, "edit the selected column's prompt"},
 		{"←↓↑→ hjkl", "navigate (g/G first/last card)"},
 		{"mouse", "click selects · double-click attaches · drag moves · wheel scrolls"},
@@ -720,8 +965,8 @@ func (d *helpDialog) View(width, _ int) string {
 		rows = append(rows, keyStyle.Render(b.key)+descStyle.Render(b.desc))
 	}
 	rows = append(rows, "",
-		styles.MutedStyle.Render("Projects and column prompts are stored in the global config"),
-		styles.MutedStyle.Render("file ("+toolcommon.TruncateText(configPathHint(), w-8)+")."),
+		styles.MutedStyle.Render("Projects, columns, and their prompts are stored in the global"),
+		styles.MutedStyle.Render("config file ("+toolcommon.TruncateText(configPathHint(), w-8)+")."),
 	)
 	return renderDialog("Help", w, lipgloss.JoinVertical(lipgloss.Left, rows...))
 }

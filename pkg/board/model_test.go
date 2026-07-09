@@ -51,6 +51,32 @@ func TestColumnsFromConfig(t *testing.T) {
 		{ID: "todo", Name: "Todo", Emoji: "📝", Prompt: "do it"},
 	})
 	assert.Equal(t, []Column{{ID: "todo", Name: "Todo", Emoji: "📝", Prompt: "do it"}}, cols)
+
+	// Hand-edited configs are normalized: a missing id is derived from the
+	// name, duplicate ids and unusable entries are dropped, and a missing
+	// name falls back to the id.
+	cols = ColumnsFromConfig([]userconfig.BoardColumn{
+		{Name: "In Review"},
+		{ID: "in-review", Name: "Dup"},
+		{Emoji: "🚧"},
+		{ID: " done "},
+	})
+	assert.Equal(t, []Column{
+		{ID: "in-review", Name: "In Review"},
+		{ID: "done", Name: "done"},
+	}, cols)
+
+	// An entirely unusable config falls back to the defaults.
+	assert.Equal(t, DefaultColumns, ColumnsFromConfig([]userconfig.BoardColumn{{Emoji: "🚧"}}))
+}
+
+func TestColumnID(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "qa-check", columnID("  QA   Check "))
+	assert.Equal(t, "fix-2", columnID("Fix_2"))
+	assert.Empty(t, columnID("🚧"))
+	assert.Empty(t, columnID("  "))
 }
 
 func TestCardStatusBusy(t *testing.T) {
