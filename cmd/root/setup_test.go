@@ -44,7 +44,8 @@ func (s *fakeSecretStore) Store(_ context.Context, name, value string) error {
 
 // newTestWizard builds a wizard fed by scripted answers, returning the output
 // buffer. Secrets are answered by keys (one per prompt); DMR state comes from
-// dmrModels/dmrErr.
+// dmrModels/dmrErr. The custom-provider seams default to "no models listed"
+// and an in-memory provider store; tests override the fields as needed.
 func newTestWizard(answers string, keys []string, stores []environment.SecretStore, dmrModels []string, dmrErr error) (*setupWizard, *bytes.Buffer, *[]string) {
 	var out bytes.Buffer
 	var pulled []string
@@ -67,6 +68,8 @@ func newTestWizard(answers string, keys []string, stores []environment.SecretSto
 			pulled = append(pulled, model)
 			return nil
 		},
+		saveProvider: func(string, latest.ProviderConfig) error { return nil },
+		listModels:   func(context.Context, string, string) []string { return nil },
 	}
 	return wizard, &out, &pulled
 }
@@ -238,7 +241,7 @@ func TestSetupWizard_InvalidChoiceReasks(t *testing.T) {
 	_, err := wizard.run(t.Context())
 	require.NoError(t, err)
 
-	assert.Contains(t, out.String(), "Enter a number between 1 and 2.")
+	assert.Contains(t, out.String(), "Enter a number between 1 and 3.")
 	assert.Empty(t, *pulled)
 }
 
@@ -249,6 +252,141 @@ func TestSetupWizard_EOFCancels(t *testing.T) {
 
 	_, err := wizard.run(t.Context())
 	require.ErrorIs(t, err, errSetupCancelled)
+}
+
+// customProviderRecorder overrides the wizard's saveProvider seam and records
+// what the custom path persisted.
+type customProviderRecorder struct {
+	name     string
+	provider latest.ProviderConfig
+	err      error
+}
+
+func (r *customProviderRecorder) save(name string, provider latest.ProviderConfig) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.name = name
+	r.provider = provider
+	return nil
+}
+
+func TestSetupWizard_CustomPathSavesProviderAndKey(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSecretStore{name: "keychain"}
+	recorder := &customProviderRecorder{}
+	// custom -> name -> base URL -> format 2 (responses) -> env var -> store 1 -> model (default)
+	wizard, out, _ := newTestWizard("3\nmyprovider\nhttps://llm.corp.example.com/v1\n2\nMYPROVIDER_API_KEY\n1\n\n",
+		[]string{"sk-custom-key"}, []environment.SecretStore{store}, nil, nil)
+	wizard.saveProvider = recorder.save
+	wizard.listModels = func(_ context.Context, baseURL, token string) []string {
+		assert.Equal(t, "https://llm.corp.example.com/v1", baseURL)
+		assert.Equal(t, "sk-custom-key", token)
+		return []string{"corp-model-a", "corp-model-b"}
+	}
+
+	result, err := wizard.run(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, "myprovider", recorder.name)
+	assert.Equal(t, latest.ProviderConfig{
+		BaseURL:  "https://llm.corp.example.com/v1",
+		APIType:  "openai_responses",
+		TokenKey: "MYPROVIDER_API_KEY",
+	}, recorder.provider)
+
+	assert.Equal(t, "sk-custom-key", store.stored["MYPROVIDER_API_KEY"])
+	assert.Equal(t, "MYPROVIDER_API_KEY", result.EnvVar)
+	assert.Equal(t, "myprovider", result.ProviderName)
+	require.NotNil(t, result.Provider)
+	assert.Equal(t, "myprovider/corp-model-a", result.Model, "empty answer picks the first discovered model")
+
+	output := out.String()
+	assert.Contains(t, output, "corp-model-a")
+	assert.Contains(t, output, "docker agent run --model myprovider/corp-model-a")
+	assert.NotContains(t, output, "sk-custom-key", "secret values must never be printed")
+}
+
+func TestSetupWizard_CustomPathWithoutKeyOrModels(t *testing.T) {
+	t.Parallel()
+
+	recorder := &customProviderRecorder{}
+	// custom -> name -> base URL -> format default -> no env var -> no model
+	wizard, out, _ := newTestWizard("3\nlocal-vllm\nhttp://localhost:8000/v1\n\n\n\n", nil, nil, nil, nil)
+	wizard.saveProvider = recorder.save
+
+	result, err := wizard.run(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, "local-vllm", recorder.name)
+	assert.Equal(t, latest.ProviderConfig{
+		BaseURL: "http://localhost:8000/v1",
+		APIType: "openai_chatcompletions",
+	}, recorder.provider)
+
+	assert.Empty(t, result.EnvVar)
+	assert.Empty(t, result.Model)
+	assert.Equal(t, "local-vllm", result.ProviderName)
+
+	output := out.String()
+	assert.Contains(t, output, "Could not list models from the endpoint")
+	assert.Contains(t, output, "docker agent models --provider local-vllm")
+	assert.Contains(t, output, "docker agent run --model local-vllm/<model>")
+}
+
+func TestSetupWizard_CustomPathValidatesNameAndURL(t *testing.T) {
+	t.Parallel()
+
+	recorder := &customProviderRecorder{}
+	// Rejected names: empty, slash, built-in (openai), reserved (auto); then a
+	// bad URL before a valid one.
+	wizard, out, _ := newTestWizard("3\n\nbad/name\nopenai\nauto\nmyprovider\nnot-a-url\nhttps://ok.example.com/v1\n1\n\ncorp-model\n", nil, nil, nil, nil)
+	wizard.saveProvider = recorder.save
+
+	result, err := wizard.run(t.Context())
+	require.NoError(t, err)
+
+	output := out.String()
+	assert.Contains(t, output, "The name is empty")
+	assert.Contains(t, output, "cannot contain '/'")
+	assert.Contains(t, output, `"openai" is a built-in provider name`)
+	assert.Contains(t, output, `"auto" is a built-in provider name`)
+	assert.Contains(t, output, "Enter an absolute http(s) URL")
+
+	assert.Equal(t, "myprovider", recorder.name)
+	assert.Equal(t, "https://ok.example.com/v1", recorder.provider.BaseURL)
+	assert.Equal(t, "myprovider/corp-model", result.Model)
+}
+
+func TestSetupWizard_CustomPathReasksOnInvalidEnvVarName(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSecretStore{name: "keychain"}
+	recorder := &customProviderRecorder{}
+	wizard, out, _ := newTestWizard("3\nmyprovider\nhttps://ok.example.com/v1\n1\nMY BAD VAR\nMY_KEY\n1\nm1\n",
+		[]string{"sk-key"}, []environment.SecretStore{store}, nil, nil)
+	wizard.saveProvider = recorder.save
+
+	_, err := wizard.run(t.Context())
+	require.NoError(t, err)
+
+	assert.Contains(t, out.String(), "Enter a valid environment variable name")
+	assert.Equal(t, "MY_KEY", recorder.provider.TokenKey)
+	assert.Equal(t, "sk-key", store.stored["MY_KEY"])
+}
+
+func TestSetupWizard_CustomPathSurfacesSaveFailure(t *testing.T) {
+	t.Parallel()
+
+	recorder := &customProviderRecorder{err: errors.New("disk full")}
+	wizard, _, _ := newTestWizard("3\nmyprovider\nhttps://ok.example.com/v1\n1\n\nm1\n", nil, nil, nil, nil)
+	wizard.saveProvider = recorder.save
+
+	_, err := wizard.run(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `saving provider "myprovider" to the user config`)
+	assert.Contains(t, err.Error(), "disk full")
 }
 
 func TestErrorIndicatesNoUsableModel(t *testing.T) {

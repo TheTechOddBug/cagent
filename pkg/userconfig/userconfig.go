@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -281,6 +282,12 @@ type Config struct {
 	DefaultModel *latest.FlexibleModelConfig `yaml:"default_model,omitempty"`
 	// Aliases maps alias names to alias configurations
 	Aliases map[string]*Alias `yaml:"aliases,omitempty"`
+	// Providers maps user-defined provider names to reusable provider
+	// configurations (e.g. custom OpenAI-compatible endpoints registered via
+	// `docker agent setup`). They use the same shape as the `providers`
+	// section of an agent file and are merged into every loaded agent config;
+	// definitions in the agent file win on name conflicts.
+	Providers map[string]latest.ProviderConfig `yaml:"providers,omitempty"`
 	// Settings contains global user settings
 	Settings *Settings `yaml:"settings,omitempty"`
 	// Board configures the `docker agent board` Kanban TUI.
@@ -548,6 +555,40 @@ func (c *Config) DeleteAlias(name string) bool {
 		return true
 	}
 	return false
+}
+
+// GetProviders returns a copy of the user-defined provider configurations.
+//
+// This method is safe for concurrent use; the returned map is detached from
+// the config so callers can read it without holding the lock.
+func (c *Config) GetProviders() map[string]latest.ProviderConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.Providers) == 0 {
+		return nil
+	}
+	return maps.Clone(c.Providers)
+}
+
+// SetProvider creates or updates a user-defined provider configuration.
+//
+// This method is safe for concurrent use. Writes to the Providers map are
+// protected by a mutex to avoid concurrent map write panics when providers
+// are modified from multiple goroutines.
+func (c *Config) SetProvider(name string, provider latest.ProviderConfig) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("provider name cannot be empty")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.Providers == nil {
+		c.Providers = make(map[string]latest.ProviderConfig)
+	}
+	c.Providers[name] = provider
+	return nil
 }
 
 // GetSettings returns the global settings with defaults applied.

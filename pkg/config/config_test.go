@@ -980,6 +980,58 @@ func TestProviders_Validation(t *testing.T) {
 	}
 }
 
+func TestMergeGlobalProviders(t *testing.T) {
+	t.Parallel()
+
+	global := map[string]latest.ProviderConfig{
+		"myprovider": {BaseURL: "https://global.example.com/v1", TokenKey: "MY_KEY"},
+		"other":      {BaseURL: "https://other.example.com/v1"},
+	}
+
+	t.Run("adds global providers", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &latest.Config{}
+		MergeGlobalProviders(cfg, global)
+
+		require.Len(t, cfg.Providers, 2)
+		assert.Equal(t, "https://global.example.com/v1", cfg.Providers["myprovider"].BaseURL)
+	})
+
+	t.Run("agent file definition wins", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &latest.Config{Providers: map[string]latest.ProviderConfig{
+			"myprovider": {BaseURL: "https://file.example.com/v1"},
+		}}
+		MergeGlobalProviders(cfg, global)
+
+		assert.Equal(t, "https://file.example.com/v1", cfg.Providers["myprovider"].BaseURL)
+		assert.Equal(t, "https://other.example.com/v1", cfg.Providers["other"].BaseURL)
+	})
+
+	t.Run("invalid global provider is skipped", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &latest.Config{}
+		MergeGlobalProviders(cfg, map[string]latest.ProviderConfig{
+			"no-base-url": {APIType: "openai_chatcompletions"},
+			"valid":       {BaseURL: "https://ok.example.com/v1"},
+		})
+
+		require.Len(t, cfg.Providers, 1)
+		assert.Contains(t, cfg.Providers, "valid")
+	})
+
+	t.Run("no global providers leaves config untouched", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &latest.Config{}
+		MergeGlobalProviders(cfg, nil)
+		assert.Nil(t, cfg.Providers)
+	})
+}
+
 func TestLoadUnknownKeyFromNewerVersionHint(t *testing.T) {
 	t.Parallel()
 

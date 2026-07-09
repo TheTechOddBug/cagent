@@ -910,6 +910,123 @@ func TestLoadRetainsAgentConfig(t *testing.T) {
 	assert.False(t, ok, "unknown agent reports no retained config")
 }
 
+// TestLoadWithConfig_GlobalProviders covers user-level custom providers
+// (seeded into the runtime config from the user config file): they must
+// resolve inline `provider/model` references in any agent config, while
+// agent-file definitions with the same name keep precedence.
+func TestLoadWithConfig_GlobalProviders(t *testing.T) {
+	t.Parallel()
+
+	globalProviders := map[string]latest.ProviderConfig{
+		"myprovider": {
+			BaseURL:  "https://llm.corp.example.com/v1",
+			APIType:  "openai_chatcompletions",
+			TokenKey: "MYPROVIDER_API_KEY",
+		},
+	}
+	env := environment.NewMapEnvProvider(map[string]string{"MYPROVIDER_API_KEY": "dummy"})
+
+	t.Run("resolves inline model reference", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte(`agents:
+  root:
+    model: myprovider/corp-model
+    instruction: test
+`)
+		runConfig := &config.RuntimeConfig{
+			Config:              config.Config{Providers: globalProviders},
+			EnvProviderForTests: env,
+		}
+
+		result, err := LoadWithConfig(t.Context(), config.NewBytesSource("global-providers.yaml", data), runConfig, withTestProviderRegistry()...)
+		require.NoError(t, err)
+
+		root, err := result.Team.Agent("root")
+		require.NoError(t, err)
+
+		models := root.ConfiguredModels()
+		require.Len(t, models, 1)
+		assert.Equal(t, "myprovider/corp-model", models[0].ID().String())
+
+		require.Contains(t, result.Providers, "myprovider")
+		assert.Equal(t, "https://llm.corp.example.com/v1", result.Providers["myprovider"].BaseURL)
+	})
+
+	t.Run("resolves --model override", func(t *testing.T) {
+		t.Parallel()
+
+		// The agent file references another provider entirely; the CLI
+		// override must resolve through the merged global provider (the
+		// `docker agent new|run --model myprovider/mymodel` path).
+		data := []byte(`agents:
+  root:
+    model: openai/gpt-4o
+    instruction: test
+`)
+		runConfig := &config.RuntimeConfig{
+			Config:              config.Config{Providers: globalProviders},
+			EnvProviderForTests: env,
+		}
+
+		result, err := LoadWithConfig(t.Context(), config.NewBytesSource("global-providers.yaml", data), runConfig,
+			withTestProviderRegistry(WithModelOverrides([]string{"myprovider/corp-model"}))...)
+		require.NoError(t, err)
+
+		root, err := result.Team.Agent("root")
+		require.NoError(t, err)
+
+		models := root.ConfiguredModels()
+		require.Len(t, models, 1)
+		assert.Equal(t, "myprovider/corp-model", models[0].ID().String())
+	})
+
+	t.Run("missing token variable fails the preflight check", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte(`agents:
+  root:
+    model: myprovider/corp-model
+    instruction: test
+`)
+		runConfig := &config.RuntimeConfig{
+			Config:              config.Config{Providers: globalProviders},
+			EnvProviderForTests: &noEnvProvider{},
+		}
+
+		_, err := LoadWithConfig(t.Context(), config.NewBytesSource("global-providers.yaml", data), runConfig, withTestProviderRegistry()...)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "MYPROVIDER_API_KEY")
+	})
+
+	t.Run("agent file definition wins", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte(`providers:
+  myprovider:
+    base_url: https://file.example.com/v1
+models:
+  corp:
+    provider: myprovider
+    model: corp-model
+agents:
+  root:
+    model: corp
+    instruction: test
+`)
+		runConfig := &config.RuntimeConfig{
+			Config:              config.Config{Providers: globalProviders},
+			EnvProviderForTests: env,
+		}
+
+		result, err := LoadWithConfig(t.Context(), config.NewBytesSource("global-providers.yaml", data), runConfig, withTestProviderRegistry()...)
+		require.NoError(t, err)
+
+		require.Contains(t, result.Providers, "myprovider")
+		assert.Equal(t, "https://file.example.com/v1", result.Providers["myprovider"].BaseURL)
+	})
+}
+
 func TestLoadWithConfig_GlobalHooks(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "dummy")
 
