@@ -235,16 +235,6 @@ func trimTrailingPerLine(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestPercentLabel(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, "0%", percentLabel(0))
-	assert.Equal(t, "50%", percentLabel(0.5))
-	assert.Equal(t, "100%", percentLabel(1))
-	assert.Equal(t, "0%", percentLabel(-0.5))
-	assert.Equal(t, "100%", percentLabel(2))
-}
-
 func TestAgentPickerDetailsFixedSize(t *testing.T) {
 	t.Parallel()
 
@@ -275,6 +265,22 @@ func TestAgentPickerDetailsFixedSize(t *testing.T) {
 	w, h := lipgloss.Size(m.renderDetails())
 	assert.Equal(t, topW, w, "width changed at bottom")
 	assert.Equal(t, topH, h, "height changed at bottom")
+}
+
+func TestAgentPickerDetailsHelpNeverWraps(t *testing.T) {
+	t.Parallel()
+
+	// On very narrow terminals the details help must drop bindings instead of
+	// soft-wrapping, which would add a row and overflow the dialog height.
+	m := newAgentPickerModel([]agentChoice{{ref: "default", yaml: strings.Repeat("a: b\n", 50)}})
+	for _, w := range []int{20, 24, 28, 32, 40, 120} {
+		m.width = w
+		m.height = 40
+		m.openDetails()
+		_, dh := m.detailsDialogSize()
+		assert.Equal(t, dh, lipgloss.Height(m.renderDetails()), "dialog height mismatch at width %d", w)
+		m.showDetails = false
+	}
 }
 
 func TestStripControl(t *testing.T) {
@@ -320,7 +326,7 @@ func TestAgentPickerWindowing(t *testing.T) {
 	}
 	m := newAgentPickerModel(choices)
 	m.width = 120
-	m.height = 30 // fits (30-12)/7 = 2 cards
+	m.height = 22 // fits (22-12)/5 = 2 cards
 
 	assert.Equal(t, 2, m.visibleCount())
 
@@ -566,12 +572,16 @@ func TestAgentPickerCardAtMatchesRenderedText(t *testing.T) {
 		assert.Equal(t, idx, i, "ref row for %q should hit card %d", ref, idx)
 	}
 
-	// The title and help rows must not resolve to any card.
+	// The title, subtitle, and status-bar rows must not resolve to any card.
 	titleY := findRow("Choose an agent to run")
 	_, ok := m.cardAt(m.width/2, titleY)
 	assert.False(t, ok, "title row must not hit a card")
 
-	helpY := findRow("double-click")
+	subtitleY := findRow("double-click a card")
+	_, ok = m.cardAt(m.width/2, subtitleY)
+	assert.False(t, ok, "subtitle row must not hit a card")
+
+	helpY := findRow("view yaml")
 	_, ok = m.cardAt(m.width/2, helpY)
 	assert.False(t, ok, "help row must not hit a card")
 }
@@ -784,7 +794,7 @@ func TestAgentPickerBoardButtonWindowed(t *testing.T) {
 	}
 	m := newAgentPickerModel(choices)
 	m.width = 120
-	m.height = 30 // fits 2 cards
+	m.height = 22 // fits 2 cards
 	for range 5 {
 		m.moveDown()
 	}
