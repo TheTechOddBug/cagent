@@ -119,6 +119,93 @@ func TestMoveProject(t *testing.T) {
 	assert.Equal(t, "c", reloaded.Board.Projects[1].Name)
 }
 
+func TestColumnCRUD(t *testing.T) {
+	paths.SetConfigDir(t.TempDir())
+	t.Cleanup(func() { paths.SetConfigDir("") })
+
+	cfg, err := userconfig.Load()
+	require.NoError(t, err)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "cards.json"))
+	require.NoError(t, err)
+	app := &App{ctx: t.Context(), config: cfg, columns: ColumnsFromConfig(nil), store: store, onChanged: func() {}}
+
+	ids := func() []string {
+		var out []string
+		for _, c := range app.Columns() {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+
+	// Add derives the id from the name and keeps it unique.
+	col, err := app.AddColumn(Column{Name: "  QA Check ", Emoji: " \U0001f9ea ", Prompt: "run the tests"})
+	require.NoError(t, err)
+	assert.Equal(t, Column{ID: "qa-check", Name: "QA Check", Emoji: "\U0001f9ea", Prompt: "run the tests"}, col)
+	dup, err := app.AddColumn(Column{Name: "QA Check"})
+	require.NoError(t, err)
+	assert.Equal(t, "qa-check-2", dup.ID)
+	_, err = app.AddColumn(Column{Name: "   "})
+	require.Error(t, err)
+
+	// Update keeps the id stable across a rename.
+	updated, err := app.UpdateColumn("qa-check", Column{Name: "Verify", Prompt: "run the tests"})
+	require.NoError(t, err)
+	assert.Equal(t, Column{ID: "qa-check", Name: "Verify", Prompt: "run the tests"}, updated)
+	_, err = app.UpdateColumn("nope", Column{Name: "x"})
+	require.Error(t, err)
+	_, err = app.UpdateColumn("qa-check", Column{Name: ""})
+	require.Error(t, err)
+
+	// Move clamps at both ends.
+	require.NoError(t, app.MoveColumn("qa-check", -2))
+	assert.Equal(t, []string{"dev", "review", "qa-check", "push", "done", "qa-check-2"}, ids())
+	require.NoError(t, app.MoveColumn("dev", -1))
+	require.NoError(t, app.MoveColumn("qa-check-2", 5))
+	assert.Equal(t, []string{"dev", "review", "qa-check", "push", "done", "qa-check-2"}, ids())
+	require.Error(t, app.MoveColumn("nope", 1))
+
+	// A column that still has cards cannot be removed.
+	require.NoError(t, store.InsertCard(&Card{ID: "c1", Column: "qa-check"}))
+	require.Error(t, app.RemoveColumn("qa-check"))
+	require.NoError(t, app.RemoveColumn("qa-check-2"))
+	require.Error(t, app.RemoveColumn("nope"))
+	assert.Equal(t, []string{"dev", "review", "qa-check", "push", "done"}, ids())
+
+	// The customized pipeline is persisted to the config file.
+	reloaded, err := userconfig.Load()
+	require.NoError(t, err)
+	require.NotNil(t, reloaded.Board)
+	assert.Equal(t, ids(), func() []string {
+		var out []string
+		for _, c := range reloaded.Board.Columns {
+			out = append(out, c.ID)
+		}
+		return out
+	}())
+
+	// Restoring the defaults drops the columns section from the config, so
+	// future default-pipeline changes reach the user again.
+	require.NoError(t, store.DeleteCard("c1"))
+	require.NoError(t, app.RemoveColumn("qa-check"))
+	reloaded, err = userconfig.Load()
+	require.NoError(t, err)
+	assert.Empty(t, reloaded.Board.Columns)
+}
+
+func TestRemoveColumnKeepsAtLeastOne(t *testing.T) {
+	paths.SetConfigDir(t.TempDir())
+	t.Cleanup(func() { paths.SetConfigDir("") })
+
+	cfg, err := userconfig.Load()
+	require.NoError(t, err)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "cards.json"))
+	require.NoError(t, err)
+	app := &App{ctx: t.Context(), config: cfg, columns: []Column{{ID: "only", Name: "Only"}}, store: store, onChanged: func() {}}
+
+	require.Error(t, app.RemoveColumn("only"))
+	assert.Len(t, app.Columns(), 1)
+}
+
 func TestAttachCommandExplainsFailedRelaunch(t *testing.T) {
 	t.Parallel()
 
