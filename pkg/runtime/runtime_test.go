@@ -2599,6 +2599,7 @@ func TestForceAskOverridesYoloMode(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
+	sess.NonInteractive = true
 	require.True(t, sess.ToolsApproved)
 
 	calls := []tools.ToolCall{{
@@ -2611,7 +2612,8 @@ func TestForceAskOverridesYoloMode(t *testing.T) {
 	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
-	// With --yolo and Deny/ForceAsk precedence, the tool should NOT execute.
+	// ForceAsk overrides --yolo: the checker's ForceAsk verdict routes to
+	// askUser, which denies in non-interactive mode instead of blocking.
 	require.False(t, executed, "expected tool to NOT be executed in --yolo mode because ForceAsk wins")
 }
 
