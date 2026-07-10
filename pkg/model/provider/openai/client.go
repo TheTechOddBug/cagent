@@ -86,8 +86,19 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			slog.DebugContext(ctx, "Custom provider with no token_key, sending requests without authentication",
 				"provider", cfg.Provider, "base_url", cfg.BaseURL)
 			clientOptions = append(clientOptions, option.WithAPIKey(""))
+		default:
+			// No token_key configured: resolve OPENAI_API_KEY through the
+			// environment provider chain instead of letting the SDK read it
+			// from the OS environment. The chain resolves secret references
+			// (e.g. "op://..." via the 1Password CLI) and consults extra
+			// sources (keychain, Docker Desktop, ...); the SDK's os.Getenv
+			// fallback would send the raw reference as the bearer token.
+			if authToken, _ := env.Get(ctx, "OPENAI_API_KEY"); authToken != "" {
+				clientOptions = append(clientOptions, option.WithAPIKey(authToken))
+			}
+			// Otherwise let the OpenAI SDK use its default behavior
+			// (OPENAI_API_KEY from the OS env).
 		}
-		// Otherwise let the OpenAI SDK use its default behavior (OPENAI_API_KEY from env)
 
 		if cfg.Provider == "azure" {
 			// Azure configuration
