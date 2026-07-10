@@ -1644,3 +1644,68 @@ func TestEditLabelInContentIsNotClickable(t *testing.T) {
 	_, cmd = m.handleMouseClick(tea.MouseClickMsg{X: ansi.StringWidth(before), Y: contentLine, Button: tea.MouseLeft})
 	assert.Nil(t, cmd, "edit label text inside message content must not be clickable")
 }
+
+// TestAddAgentReturnKeepsSpinnerLast verifies the delegation-return transition
+// slips in before a trailing pending-response spinner (whose label survives),
+// preserving the "spinner is always last" invariant RemoveSpinner relies on.
+func TestAddAgentReturnKeepsSpinnerLast(t *testing.T) {
+	t.Parallel()
+
+	m := NewScrollableView(80, 24, &service.SessionState{}).(*model)
+	m.AddAssistantMessage("researcher", "root → researcher")
+	require.Equal(t, types.MessageTypeSpinner, m.messages[len(m.messages)-1].Type)
+
+	cmd := m.AddAgentReturn("researcher", "root")
+	require.NotNil(t, cmd)
+
+	require.Len(t, m.messages, 2)
+	assert.Equal(t, types.MessageTypeAgentReturn, m.messages[0].Type)
+	assert.Equal(t, "researcher", m.messages[0].Sender)
+	assert.Equal(t, "root", m.messages[0].Content)
+	last := m.messages[1]
+	assert.Equal(t, types.MessageTypeSpinner, last.Type, "the spinner stays at the tail")
+	assert.Equal(t, "researcher", last.Sender, "the re-added spinner keeps its sender")
+	assert.Equal(t, "root → researcher", last.Content, "the re-added spinner keeps its label")
+
+	m.RemoveSpinner()
+	require.Len(t, m.messages, 1, "the tail spinner is still removable")
+	assert.Equal(t, types.MessageTypeAgentReturn, m.messages[0].Type)
+}
+
+// TestAddAgentReturnWithoutSpinnerAppends verifies the transition simply
+// appends when no spinner is pending, and that empty names are a no-op.
+func TestAddAgentReturnWithoutSpinnerAppends(t *testing.T) {
+	t.Parallel()
+
+	m := NewScrollableView(80, 24, &service.SessionState{}).(*model)
+	m.AddUserMessage("go")
+
+	require.NotNil(t, m.AddAgentReturn("researcher", "root"))
+	require.Len(t, m.messages, 2)
+	assert.Equal(t, types.MessageTypeAgentReturn, m.messages[1].Type)
+
+	assert.Nil(t, m.AddAgentReturn("", "root"))
+	assert.Nil(t, m.AddAgentReturn("researcher", ""))
+	assert.Len(t, m.messages, 2, "empty agent names add nothing")
+}
+
+// TestAgentReturnIsInertInList verifies the transition is neither selectable
+// nor hoverable-for-copy nor animated: it must not be treated like assistant
+// or tool content by the list machinery.
+func TestAgentReturnIsInertInList(t *testing.T) {
+	t.Parallel()
+
+	m := NewScrollableView(80, 24, &service.SessionState{}).(*model)
+	m.AddAgentReturn("researcher", "root")
+
+	require.Len(t, m.messages, 1)
+	assert.False(t, m.isSelectableMessage(0), "the transition is not selectable")
+	assert.False(t, m.shouldCacheMessage(0))
+	assert.False(t, m.hasAnimatedContent(), "the transition needs no animation ticks")
+	assert.Equal(t, -1, m.findLastAssistantMessage(), "the transition is not assistant content")
+
+	out := ansi.Strip(m.View())
+	assert.Contains(t, out, "researcher")
+	assert.Contains(t, out, types.AgentReturnLabel)
+	assert.NotContains(t, out, types.MessageCopyLabel)
+}

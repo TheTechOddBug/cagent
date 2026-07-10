@@ -487,6 +487,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	// Create initial chat page (after options are applied so leanMode is set)
 	initialChatPage := chat.New(m.ctx(), initialApp, initialSessionState, m.chatPageOpts()...)
+	initialChatPage.SetRoutingID(sessID)
 	m.chatPages[sessID] = initialChatPage
 	m.chatPage = initialChatPage
 
@@ -628,6 +629,7 @@ func (m *appModel) editorOpts() []editor.Option {
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
 	ss := service.NewSessionState(sess)
 	cp := chat.New(m.ctx(), a, ss, m.chatPageOpts()...)
+	cp.SetRoutingID(tabID)
 	ed := editor.New(m.history, m.editorOpts()...)
 
 	m.chatPages[tabID] = cp
@@ -1366,10 +1368,14 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 		}
 	}
 
-	// Update the inactive chat page (discard cmds — UI effects aren't needed for hidden pages)
+	// Update the inactive chat page (discard cmds — UI effects aren't needed for hidden pages),
+	// except its routed one-shot timers: presentation deadlines (e.g. the sidebar's transfer box)
+	// must keep running while the tab is hidden, and their expiry lands back here as a RoutedMsg
+	// for this page. Applying such a timer arms no new ones, so this cannot loop.
 	updated, _ := chatPage.Update(msg.Inner)
-	m.chatPages[msg.SessionID] = updated.(chat.Page)
-	return m, nil
+	page := updated.(chat.Page)
+	m.chatPages[msg.SessionID] = page
+	return m, page.TakeRoutedTimers()
 }
 
 // applyPauseEvent advances a session's pause indicator in response to runtime

@@ -121,7 +121,7 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 
 	case *runtime.AgentSwitchingEvent:
-		return true, p.sidebar.SetAgentSwitching(msg.Switching, msg.FromAgent, msg.ToAgent)
+		return true, p.handleAgentSwitching(msg)
 
 	case *runtime.ToolsetInfoEvent:
 		p.sidebar.SetSkillsInfo(len(p.app.CurrentAgentSkills()))
@@ -273,7 +273,10 @@ func (p *chatPage) handleAgentChoice(msg *runtime.AgentChoiceEvent) tea.Cmd {
 	p.hasReceivedAssistantContent = true
 	// Clear pending response indicator - first chunk has arrived
 	p.setPendingResponse(false)
-	return p.messages.AppendToLastMessage(msg.AgentName, msg.Content)
+	// Content is useful activity: acknowledge the sidebar's outbound transfer
+	// box when this agent is a delegation target.
+	activityCmd := p.sidebar.SetAgentActivity(msg.AgentName)
+	return tea.Batch(activityCmd, p.messages.AppendToLastMessage(msg.AgentName, msg.Content))
 }
 
 func (p *chatPage) handleAgentChoiceReasoning(msg *runtime.AgentChoiceReasoningEvent) tea.Cmd {
@@ -281,7 +284,31 @@ func (p *chatPage) handleAgentChoiceReasoning(msg *runtime.AgentChoiceReasoningE
 		return nil
 	}
 	p.setPendingResponse(false)
-	return p.messages.AppendReasoning(msg.AgentName, msg.Content)
+	activityCmd := p.sidebar.SetAgentActivity(msg.AgentName)
+	return tea.Batch(activityCmd, p.messages.AppendReasoning(msg.AgentName, msg.Content))
+}
+
+// handleAgentSwitching forwards transfer_task hop boundaries to the sidebar
+// and schedules the presentation timers it arms, routed back to this page so
+// they expire on their owner even after a tab switch. A stop the sidebar
+// accepted (it closed the exact inverse hop of a recorded start) additionally
+// adds the delegation-return transition to the chat ("child returned control
+// to parent"); a stale stop — no matching hop — stays silent everywhere, and
+// a start adds nothing to the chat: the transfer_task tool call already
+// narrates the outbound direction. Boundaries arriving after the user
+// cancelled the stream are dropped entirely: the delegation they belong to
+// was already torn down visually.
+func (p *chatPage) handleAgentSwitching(msg *runtime.AgentSwitchingEvent) tea.Cmd {
+	if p.streamCancelled {
+		return nil
+	}
+	res := p.sidebar.SetAgentSwitching(msg.Switching, msg.FromAgent, msg.ToAgent)
+	cmd := tea.Batch(res.Cmd, p.scheduleTransferTimers(res.Timers))
+	if msg.Switching || !res.Accepted {
+		return cmd
+	}
+	returnCmd := p.messages.AddAgentReturn(msg.FromAgent, msg.ToAgent)
+	return tea.Batch(cmd, returnCmd, p.messages.ScrollToBottom())
 }
 
 func (p *chatPage) handleStreamStopped(msg *runtime.StreamStoppedEvent) tea.Cmd {
@@ -354,8 +381,11 @@ func (p *chatPage) handlePartialToolCall(msg *runtime.PartialToolCallEvent) tea.
 	if msg.ToolDefinition != nil {
 		toolDef = *msg.ToolDefinition
 	}
+	// A tool call is useful activity even without any streamed text:
+	// acknowledge the sidebar's outbound transfer box.
+	activityCmd := p.sidebar.SetAgentActivity(msg.AgentName)
 	toolCmd := p.messages.AddOrUpdateToolCall(msg.AgentName, msg.ToolCall, toolDef, types.ToolStatusPending)
-	return tea.Batch(toolCmd, p.messages.ScrollToBottom())
+	return tea.Batch(activityCmd, toolCmd, p.messages.ScrollToBottom())
 }
 
 func (p *chatPage) handleToolCallConfirmation(msg *runtime.ToolCallConfirmationEvent) tea.Cmd {

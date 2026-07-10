@@ -362,6 +362,8 @@ func (mv *messageModel) render(width int) string {
 		return msg.Content
 	case types.MessageTypeCancelled:
 		return styles.WarningStyle.Render("⚠ stream cancelled ⚠")
+	case types.MessageTypeAgentReturn:
+		return renderAgentReturn(msg.Sender, msg.Content, width)
 	case types.MessageTypeWelcome:
 		messageStyle := styles.WelcomeMessageStyle
 		// Convert explicit newlines to markdown hard line breaks (two trailing spaces)
@@ -449,6 +451,26 @@ func (mv *messageModel) senderPrefix(sender string) string {
 		return ""
 	}
 	return styles.AgentBadgeStyleFor(sender).MarginLeft(2).Render(sender) + "\n\n"
+}
+
+// renderAgentReturn renders the delegation-return transition: the returning
+// child's badge, a muted "returned control to" connector, and the parent's
+// badge — the same visual language as the transfer_task/handoff headers, kept
+// visually light. The line is word-wrapped to the width and each wrapped line
+// hard-capped, so narrow chat columns never overflow (the cap only ever trims
+// trailing wrap spaces).
+func renderAgentReturn(fromAgent, toAgent string, width int) string {
+	line := styles.AgentBadgeStyleFor(fromAgent).MarginLeft(2).Render(fromAgent) +
+		styles.MutedStyle.Render(" "+types.AgentReturnLabel+" ") +
+		styles.AgentBadgeStyleFor(toAgent).Render(toAgent)
+	if width <= 0 {
+		return line
+	}
+	lines := strings.Split(ansi.Wrap(line, width, ""), "\n")
+	for i, l := range lines {
+		lines[i] = ansi.Truncate(l, width, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // sameAgentAsPrevious returns true if the previous message was from the same agent

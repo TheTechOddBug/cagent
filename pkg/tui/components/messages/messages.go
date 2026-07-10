@@ -73,6 +73,10 @@ type Model interface {
 	AppendToLastMessage(agentName, content string) tea.Cmd
 	AppendReasoning(agentName, content string) tea.Cmd
 	AddShellOutputMessage(content string) tea.Cmd
+	// AddAgentReturn appends the UI-only "child returned control to parent"
+	// delegation transition. It is never persisted, so it does not reappear
+	// when the session is reloaded.
+	AddAgentReturn(fromAgent, toAgent string) tea.Cmd
 	LoadFromSession(sess *session.Session) tea.Cmd
 
 	RemoveSpinner()
@@ -1309,6 +1313,26 @@ func (m *model) AddErrorMessage(content string) tea.Cmd {
 
 func (m *model) AddShellOutputMessage(content string) tea.Cmd {
 	return m.addMessage(types.ShellOutput(content))
+}
+
+// AddAgentReturn appends the delegation-return transition. A pending-response
+// spinner pinned at the tail is re-added (with its label) after the
+// transition so the "spinner is always last" invariant — relied on by
+// RemoveSpinner — keeps holding.
+func (m *model) AddAgentReturn(fromAgent, toAgent string) tea.Cmd {
+	if fromAgent == "" || toAgent == "" {
+		return nil
+	}
+	var trailingSpinner *types.Message
+	if last := m.lastMessage(); last != nil && last.Type == types.MessageTypeSpinner {
+		trailingSpinner = last
+		m.removeSpinner()
+	}
+	cmds := []tea.Cmd{m.addMessage(types.AgentReturn(fromAgent, toAgent))}
+	if trailingSpinner != nil {
+		cmds = append(cmds, m.addMessage(types.SpinnerLabeled(trailingSpinner.Sender, trailingSpinner.Content)))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *model) AddAssistantMessage(sender, label string) tea.Cmd {

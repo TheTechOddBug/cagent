@@ -22,12 +22,20 @@ const (
 	MessageTypeToolResult
 	MessageTypeWelcome
 	MessageTypeLoading
+	// MessageTypeAgentReturn is the UI-only delegation-return transition shown
+	// when a sub-agent hands control back to its parent. It is live feedback
+	// for the AgentSwitching runtime event, which is not persisted to the
+	// session, so it never reappears when a session is reloaded.
+	MessageTypeAgentReturn
 )
 
 const (
 	UserMessageEditLabel = "✎ edit"
 	MessageCopyLabel     = "⎘ copy"
 	ErrorRetryLabel      = "↻ retry"
+	// AgentReturnLabel is the connector between the child and parent badges
+	// of a delegation-return transition (see AgentReturn).
+	AgentReturnLabel = "returned control to"
 	// MessageActionSeparator joins adjacent action labels (e.g. edit + copy)
 	// on a message's hover-action row.
 	MessageActionSeparator = "  "
@@ -115,6 +123,19 @@ func User(content string) *Message {
 func Cancelled() *Message {
 	return &Message{
 		Type: MessageTypeCancelled,
+	}
+}
+
+// AgentReturn is the delegation-return transition: fromAgent (the child)
+// returned control to toAgent (the parent). Sender carries the child so the
+// accent/badge machinery colors it like any other agent attribution; Content
+// carries the parent name rather than copyable text — the message type is
+// UI-only and is neither selectable nor copyable.
+func AgentReturn(fromAgent, toAgent string) *Message {
+	return &Message{
+		Type:    MessageTypeAgentReturn,
+		Sender:  fromAgent,
+		Content: toAgent,
 	}
 }
 

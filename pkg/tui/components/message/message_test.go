@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -356,5 +357,43 @@ func TestUserMessageHoverKeepsHeightAtNarrowWidth(t *testing.T) {
 		h := mv.Height(width)
 		mv.SetHovered(true)
 		assert.Equal(t, h, mv.Height(width), "hover must not change height at width %d", width)
+	}
+}
+
+// TestAgentReturnRendersBadgesAndLabel covers the delegation-return
+// transition: both agent badges render around the "returned control to"
+// connector, and the view is a plain static line — not spinner-driven, and
+// distinct from assistant markdown (no action row, no copy affordance).
+func TestAgentReturnRendersBadgesAndLabel(t *testing.T) {
+	t.Parallel()
+
+	mv := New(types.AgentReturn("researcher", "root"), nil)
+	mv.SetSize(80, 0)
+
+	assert.False(t, mv.isSpinnerDriven(), "the transition is static")
+
+	out := stripANSI(mv.View())
+	assert.Contains(t, out, "researcher", "the child badge names the returning agent")
+	assert.Contains(t, out, "root", "the parent badge names the agent receiving control")
+	assert.Contains(t, out, types.AgentReturnLabel)
+	assert.NotContains(t, out, types.MessageCopyLabel, "the transition carries no copy affordance")
+
+	mv.SetHovered(true)
+	assert.Equal(t, out, stripANSI(mv.View()), "hovering an agent-return changes nothing")
+}
+
+// TestAgentReturnRespectsNarrowWidths verifies the transition wraps instead of
+// overflowing when the chat column is narrow.
+func TestAgentReturnRespectsNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	msg := types.AgentReturn("delegation-orchestrator", "implementation-reviewer")
+	for _, width := range []int{10, 16, 24, 40} {
+		mv := New(msg, nil)
+		mv.SetSize(width, 0)
+		for i, line := range strings.Split(mv.View(), "\n") {
+			assert.LessOrEqualf(t, ansi.StringWidth(line), width,
+				"width %d: line %d must not overflow", width, i)
+		}
 	}
 }

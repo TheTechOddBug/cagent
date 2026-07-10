@@ -155,6 +155,19 @@ type Page interface {
 	// SetSendMode sets what happens to messages sent while the agent is
 	// working: steer into the ongoing stream or queue until the turn ends.
 	SetSendMode(mode msgtypes.SendMode)
+	// SetRoutingID records the tab identity used to address this page's
+	// one-shot UI timers back to it (messages.RoutedMsg.SessionID). The
+	// appModel keys its chat pages — and the supervisor its event routing —
+	// by this ID, which is the tab's initial session ID and may diverge from
+	// the current app.Session().ID after a session restore or in-place
+	// replace.
+	SetRoutingID(id string)
+	// TakeRoutedTimers returns and clears the routed one-shot timer commands
+	// armed by the most recent Update. The active page's Update already
+	// returns them inside its regular command; the appModel calls this for
+	// background pages — whose regular commands are discarded — so
+	// presentation deadlines keep running while a tab is hidden.
+	TakeRoutedTimers() tea.Cmd
 }
 
 // queuedMessage represents a message waiting to be sent to the agent
@@ -188,6 +201,15 @@ type chatPage struct {
 	streamDepth     int      // nesting depth of active streams (incremented on StreamStarted, decremented on StreamStopped)
 	agentStack      []string // agent per active stream level; len(agentStack)==streamDepth
 	streamStartTime time.Time
+
+	// routingID is the tab identity this page's routed UI timers are
+	// addressed to; empty for standalone pages (timers then fire unrouted,
+	// which is correct when this is the only page).
+	routingID string
+	// pendingTimers holds the routed timer commands armed by the current
+	// Update, so they can be re-collected via TakeRoutedTimers when the
+	// regular command is discarded (background tabs).
+	pendingTimers []tea.Cmd
 
 	// Track whether we've received content from an assistant response
 	// Used by --exit-after-response to ensure we don't exit before receiving content
@@ -414,6 +436,10 @@ func (p *chatPage) Init() tea.Cmd {
 
 // Update handles messages and updates the page state
 func (p *chatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+	// Timers armed by a previous Update were dispatched by its caller (either
+	// through the returned command or via TakeRoutedTimers); only this
+	// update's timers may be collected after it.
+	p.pendingTimers = nil
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		cmd := p.SetSize(msg.Width, msg.Height)
@@ -1209,6 +1235,56 @@ func (p *chatPage) SetLayoutSettings(settings msgtypes.LayoutSettings) tea.Cmd {
 // SetSendMode sets the behavior of messages sent while the agent is working.
 func (p *chatPage) SetSendMode(mode msgtypes.SendMode) {
 	p.sendMode = mode
+}
+
+// SetRoutingID records the tab identity this page's routed UI timers are
+// addressed to. See Page.SetRoutingID.
+func (p *chatPage) SetRoutingID(id string) {
+	p.routingID = id
+}
+
+// TakeRoutedTimers returns and clears the routed timer commands armed by the
+// most recent Update. See Page.TakeRoutedTimers.
+func (p *chatPage) TakeRoutedTimers() tea.Cmd {
+	if len(p.pendingTimers) == 0 {
+		return nil
+	}
+	cmd := tea.Batch(p.pendingTimers...)
+	p.pendingTimers = nil
+	return cmd
+}
+
+// scheduleTransferTimers arms the sidebar's one-shot presentation timers,
+// addressed to this page: with a routing identity each expiry is wrapped in
+// a messages.RoutedMsg so it lands on this page's tab even when another tab
+// is active (or this one is hidden) by then; without one (standalone pages)
+// the raw payload goes to the single active page. The commands are also
+// recorded for TakeRoutedTimers so an update on a hidden page keeps its
+// deadlines armed.
+func (p *chatPage) scheduleTransferTimers(timers []sidebar.TransferTimer) tea.Cmd {
+	if len(timers) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(timers))
+	for _, timer := range timers {
+		cmds = append(cmds, p.routedTimerCmd(timer))
+	}
+	cmd := tea.Batch(cmds...)
+	p.pendingTimers = append(p.pendingTimers, cmd)
+	return cmd
+}
+
+// routedTimerCmd schedules one timer, wrapping its payload in the page's
+// routing envelope. The routing ID is captured by value: the command runs on
+// a background goroutine and must not read page state later.
+func (p *chatPage) routedTimerCmd(timer sidebar.TransferTimer) tea.Cmd {
+	routingID := p.routingID
+	if routingID == "" {
+		return timer.Cmd()
+	}
+	return tea.Tick(timer.Duration, func(time.Time) tea.Msg {
+		return msgtypes.RoutedMsg{SessionID: routingID, Inner: timer.Msg}
+	})
 }
 
 // handleSidebarClickType checks what was clicked in the sidebar area.

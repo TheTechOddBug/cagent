@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -66,10 +67,20 @@ type Model interface {
 	SetTeamInfo(availableAgents []runtime.AgentDetails)
 	// SetAgentSwitching records the start (switching=true) or end of a
 	// transfer_task hop between fromAgent and toAgent. Stops carry the
-	// inverse pair of their start (start A→B is closed by stop B→A). The
-	// returned command starts the transfer-box animation tick when the first
-	// hop begins; callers must dispatch it.
-	SetAgentSwitching(switching bool, fromAgent, toAgent string) tea.Cmd
+	// inverse pair of their start (start A→B is closed by stop B→A) and are
+	// only accepted when that exact hop is live. A start presents the
+	// outbound transfer box for a bounded window (≥ ~1.5s, until the
+	// destination's first useful activity, ≤ ~3s); an accepted stop replaces
+	// it with a transient child→parent Return box shown for up to ~1.5s —
+	// it may disappear earlier when the enclosing turn/stream ends, since
+	// the outermost StreamStopped intentionally clears any leftover
+	// presentation. Callers must dispatch the result's Cmd and schedule its
+	// Timers (see AgentSwitchResult).
+	SetAgentSwitching(switching bool, fromAgent, toAgent string) AgentSwitchResult
+	// SetAgentActivity records the first useful activity (reasoning, content
+	// or a tool call) attributed to agentName, acknowledging the outbound
+	// transfer box of the innermost hop targeting that agent.
+	SetAgentActivity(agentName string) tea.Cmd
 	SetToolsetInfo(availableTools int, loading bool)
 	SetSkillsInfo(availableSkills int)
 	SetSessionStarred(starred bool)
@@ -131,12 +142,113 @@ type ragIndexingState struct {
 	spinner spinner.Spinner
 }
 
-// agentTransfer is one in-flight transfer_task hop. The sidebar keeps a stack
-// of them: the innermost hop renders as a compact box below the whole agent
-// roster (see renderTransferPanel), and popping it restores the enclosing
-// hop's box with its rail dot back on the left.
+// agentTransfer is one logical transfer_task hop. The sidebar keeps a stack
+// of them for the lifetime of the delegations (so nested starts/stops and the
+// return transition stay correct), while the compact box below the agent
+// roster (see renderTransferPanel) is only presented for a bounded window:
+// at least transferMinVisible, until the destination agent shows its first
+// useful activity, and never past the transferMaxVisible cutoff.
 type agentTransfer struct {
 	from, to string
+	// gen tokens this hop's presentation timers: a timer message carrying a
+	// generation that no longer matches any live hop is stale and ignored.
+	gen int64
+	// minElapsed is set when the minimum-visibility window has passed.
+	minElapsed bool
+	// activity is set on the destination agent's first useful event
+	// (reasoning, content, or a tool call).
+	activity bool
+	// acked hides the hop's box: the child proved it took over (activity
+	// after the minimum window) or the maximum window elapsed.
+	acked bool
+}
+
+// agentReturnState is the transient child→parent "Return" presentation shown
+// briefly (transferReturnVisible) when a transfer_task hop completes.
+type agentReturnState struct {
+	from, to string
+	gen      int64
+}
+
+// transferPresentation is what the transfer panel currently displays: a
+// from→to relation and the box title distinguishing an outbound Transfer
+// from a Return. gen makes distinct presentations of the same relation
+// comparable, so a phase reset can be detected reliably.
+type transferPresentation struct {
+	from, to string
+	title    string
+	gen      int64
+}
+
+// transferTimerKind selects which presentation window elapsed.
+type transferTimerKind int
+
+const (
+	transferTimerMin transferTimerKind = iota
+	transferTimerMax
+	transferTimerReturn
+)
+
+// transferTimerMsg is the tokenized tea.Tick payload driving the transfer
+// presentation windows. gen identifies the hop (or Return) the timer was
+// armed for, so timers of dismissed or replaced presentations are ignored.
+type transferTimerMsg struct {
+	gen  int64
+	kind transferTimerKind
+}
+
+// transferGenCounter issues process-unique generations for the presentation
+// timers. Uniqueness across sidebar instances matters: a misrouted timer
+// message must never accidentally identify another sidebar's hop.
+var transferGenCounter atomic.Int64
+
+// TransferTimer is a one-shot presentation-window timer the sidebar asks its
+// owner to schedule: after Duration, Msg must be delivered back to this
+// sidebar's Update. Descriptors are returned instead of pre-built tick
+// commands so the owning page can address the expiry to itself (wrapping Msg
+// in a routed envelope); a deadline armed on one tab is then neither lost
+// nor applied to whichever tab happens to be active when it fires.
+type TransferTimer struct {
+	Duration time.Duration
+	Msg      tea.Msg
+}
+
+// Cmd schedules the timer as a plain tick delivered to the active page —
+// sufficient for single-page setups; multi-tab owners wrap Msg in their own
+// routed envelope instead.
+func (t TransferTimer) Cmd() tea.Cmd {
+	return tea.Tick(t.Duration, func(time.Time) tea.Msg { return t.Msg })
+}
+
+// AgentSwitchResult is the outcome of SetAgentSwitching. Cmd carries the
+// animation-subscription command and must be dispatched; Timers are the
+// presentation-window timers armed by the boundary and must be scheduled by
+// the owner (see TransferTimer). Accepted reports whether the boundary
+// matched the sidebar's delegation state — a recorded start, or a stop that
+// closed its exact inverse hop; only an accepted stop presents a Return, so
+// callers gate their own return feedback on it.
+type AgentSwitchResult struct {
+	Cmd      tea.Cmd
+	Timers   []TransferTimer
+	Accepted bool
+}
+
+// Transfer presentation windows.
+const (
+	// transferMinVisible is the floor under the outbound box: even when the
+	// destination agent acts immediately, the box stays perceptible this long.
+	transferMinVisible = 1500 * time.Millisecond
+	// transferMaxVisible is the cutoff for silent or slow destinations: the
+	// box clears at this point even without any child activity.
+	transferMaxVisible = 3 * time.Second
+	// transferReturnVisible is how long the child→parent Return box shows.
+	transferReturnVisible = 1500 * time.Millisecond
+)
+
+// transferTimer builds the tokenized descriptor of one presentation-window
+// timer.
+func transferTimer(d time.Duration, gen int64, kind transferTimerKind) TransferTimer {
+	return TransferTimer{Duration: d, Msg: transferTimerMsg{gen: gen, kind: kind}}
 }
 
 // model implements Model
@@ -159,7 +271,8 @@ type model struct {
 	agentModel         string
 	agentDescription   string
 	availableAgents    []runtime.AgentDetails
-	agentTransfers     []agentTransfer // in-flight transfer_task hops (stack; top = innermost)
+	agentTransfers     []agentTransfer   // logical transfer_task hops (stack; top = innermost)
+	agentReturn        *agentReturnState // transient child→parent Return presentation, nil when none
 	availableTools     int
 	availableSkills    int
 	toolsLoading       bool // true when more tools may still be loading
@@ -355,53 +468,187 @@ func (m *model) SetTeamInfo(availableAgents []runtime.AgentDetails) {
 	m.invalidateCache()
 }
 
-// SetAgentSwitching tracks the in-flight transfer_task hops. A start
-// (switching=true) pushes the fromAgent→toAgent hop; a stop pops it. Stops
-// carry the inverse pair of their start (start A→B is closed by stop B→A), so
-// the matching entry is removed even when nested stops arrive out of order;
-// when no entry matches, the innermost hop is popped.
+// SetAgentSwitching tracks the transfer_task hops. A start (switching=true)
+// pushes the fromAgent→toAgent hop and presents its box. A stop is matched
+// strictly: stops carry the inverse pair of their start (start A→B is closed
+// by stop B→A), so only the exact inverse hop is removed — and a transient
+// child→parent Return box presented — even when nested stops arrive out of
+// order. A named stop matching no live hop is stale (its start was already
+// cleared, or it belongs to another run) and is a complete no-op, so it can
+// neither steal a live hop nor present a bogus Return. A legacy nameless
+// stop still drops the innermost hop so old emitters cannot leak the stack,
+// but never presents a Return. Boundaries arriving after an ESC cancel are
+// dropped until the next stream start resets the flag.
 //
-// The first hop starts the transfer-box animation subscription (the returned
-// command primes the shared tick); the last stop ends it. Whenever the visible
-// (innermost) hop changes, the rail phase restarts on the left.
-func (m *model) SetAgentSwitching(switching bool, fromAgent, toAgent string) tea.Cmd {
+// Presentation windows are driven by tokenized timers (see transferTimerMsg):
+// the outbound box hides at min(first useful child activity, max cutoff) but
+// never before the minimum window; the Return box hides after its own window
+// without restoring an already-acknowledged outer hop. The shared animation
+// subscription runs exactly while a box is visible.
+func (m *model) SetAgentSwitching(switching bool, fromAgent, toAgent string) AgentSwitchResult {
+	if m.streamCancelled {
+		// The cancel already tore the presentation down; hops of the dying
+		// stream must not repaint it. StreamStartedEvent clears the flag.
+		return AgentSwitchResult{}
+	}
+	prev, prevOK := m.visibleTransfer()
 	if switching {
-		// The new hop becomes the visible top of the stack.
-		m.agentTransfers = append(m.agentTransfers, agentTransfer{from: fromAgent, to: toAgent})
-		m.transferAnimationFrame = 0
-		m.invalidateCache()
-		return m.transferAnimation.Start()
+		gen := transferGenCounter.Add(1)
+		m.agentTransfers = append(m.agentTransfers, agentTransfer{from: fromAgent, to: toAgent, gen: gen})
+		// A new outbound hop supersedes any transient Return.
+		m.agentReturn = nil
+		return AgentSwitchResult{
+			Cmd: m.resyncTransferPresentation(prev, prevOK),
+			Timers: []TransferTimer{
+				transferTimer(transferMinVisible, gen, transferTimerMin),
+				transferTimer(transferMaxVisible, gen, transferTimerMax),
+			},
+			Accepted: true,
+		}
 	}
 	n := len(m.agentTransfers)
 	if n == 0 {
-		return nil
+		// Nothing in flight (e.g. cancel/reset already cleared the stack):
+		// a late stop must not present a Return.
+		return AgentSwitchResult{}
 	}
-	idx := n - 1
+	if fromAgent == "" && toAgent == "" {
+		// Legacy nameless stop: pop the innermost hop, present nothing.
+		m.agentTransfers = slices.Delete(m.agentTransfers, n-1, n)
+		return AgentSwitchResult{Cmd: m.resyncTransferPresentation(prev, prevOK)}
+	}
+	idx := -1
 	for i := n - 1; i >= 0; i-- {
-		if m.agentTransfers[i] == (agentTransfer{from: toAgent, to: fromAgent}) {
+		if m.agentTransfers[i].from == toAgent && m.agentTransfers[i].to == fromAgent {
 			idx = i
 			break
 		}
 	}
+	if idx < 0 {
+		// Stale named stop: no live hop to close — full no-op.
+		return AgentSwitchResult{}
+	}
 	m.agentTransfers = slices.Delete(m.agentTransfers, idx, idx+1)
-	if idx == len(m.agentTransfers) {
-		// The innermost hop was popped: the restored parent (if any) restarts
-		// its dot on the left. Out-of-order pops keep the visible hop's phase.
-		m.transferAnimationFrame = 0
+	gen := transferGenCounter.Add(1)
+	m.agentReturn = &agentReturnState{from: fromAgent, to: toAgent, gen: gen}
+	return AgentSwitchResult{
+		Cmd:      m.resyncTransferPresentation(prev, prevOK),
+		Timers:   []TransferTimer{transferTimer(transferReturnVisible, gen, transferTimerReturn)},
+		Accepted: true,
 	}
-	if len(m.agentTransfers) == 0 {
-		m.transferAnimation.Stop()
+}
+
+// SetAgentActivity records the first useful activity attributed to agentName
+// and acknowledges the innermost hop targeting that agent: immediately when
+// the minimum-visibility window has already elapsed, otherwise the pending
+// minimum timer performs the hide so the box stays perceptible.
+func (m *model) SetAgentActivity(agentName string) tea.Cmd {
+	if agentName == "" {
+		return nil
 	}
-	m.invalidateCache()
+	for i := range slices.Backward(m.agentTransfers) {
+		hop := &m.agentTransfers[i]
+		if hop.to != agentName || hop.acked {
+			continue
+		}
+		hop.activity = true
+		if !hop.minElapsed {
+			return nil
+		}
+		prev, prevOK := m.visibleTransfer()
+		hop.acked = true
+		return m.resyncTransferPresentation(prev, prevOK)
+	}
 	return nil
 }
 
-// activeTransfer returns the innermost in-flight transfer hop, if any.
-func (m *model) activeTransfer() (agentTransfer, bool) {
-	if n := len(m.agentTransfers); n > 0 {
-		return m.agentTransfers[n-1], true
+// handleTransferTimer applies an elapsed presentation window. Timers are
+// tokenized by generation: a message whose generation matches no live hop
+// (nor the live Return) is stale — its presentation was already dismissed,
+// replaced, or cleared by cancel/reset/load — and is dropped.
+func (m *model) handleTransferTimer(msg transferTimerMsg) tea.Cmd {
+	if msg.kind == transferTimerReturn {
+		if m.agentReturn == nil || m.agentReturn.gen != msg.gen {
+			return nil
+		}
+		prev, prevOK := m.visibleTransfer()
+		m.agentReturn = nil
+		return m.resyncTransferPresentation(prev, prevOK)
 	}
-	return agentTransfer{}, false
+	for i := range m.agentTransfers {
+		hop := &m.agentTransfers[i]
+		if hop.gen != msg.gen {
+			continue
+		}
+		if msg.kind == transferTimerMin {
+			hop.minElapsed = true
+			if !hop.activity {
+				// No useful child activity yet: keep the box up until the
+				// activity arrives or the max cutoff fires.
+				return nil
+			}
+		}
+		if hop.acked {
+			return nil
+		}
+		prev, prevOK := m.visibleTransfer()
+		hop.acked = true
+		return m.resyncTransferPresentation(prev, prevOK)
+	}
+	return nil
+}
+
+// visibleTransfer returns the relation the transfer panel should currently
+// present, if any: the transient Return takes precedence (it is always the
+// most recent event), then the innermost not-yet-acknowledged hop — so an
+// acknowledged outer hop is never restored, while one still inside its
+// presentation window resumes after the Return.
+func (m *model) visibleTransfer() (transferPresentation, bool) {
+	if r := m.agentReturn; r != nil {
+		return transferPresentation{from: r.from, to: r.to, title: transferReturnBoxTitle, gen: r.gen}, true
+	}
+	for _, hop := range slices.Backward(m.agentTransfers) {
+		if !hop.acked {
+			return transferPresentation{from: hop.from, to: hop.to, title: transferBoxTitle, gen: hop.gen}, true
+		}
+	}
+	return transferPresentation{}, false
+}
+
+// resyncTransferPresentation reconciles the rail phase and the animation
+// subscription after a transfer-state mutation. prev is the presentation that
+// was visible before the mutation: when the visible relation changed, the dot
+// restarts on the left; the shared subscription runs exactly while a box is
+// visible so an idle panel never keeps the coordinator ticking.
+func (m *model) resyncTransferPresentation(prev transferPresentation, prevOK bool) tea.Cmd {
+	m.invalidateCache()
+	cur, ok := m.visibleTransfer()
+	if !ok {
+		m.transferAnimationFrame = 0
+		m.transferAnimation.Stop()
+		return nil
+	}
+	if !prevOK || cur != prev {
+		m.transferAnimationFrame = 0
+	}
+	return m.transferAnimation.Start()
+}
+
+// delegationInFlight reports whether any transfer_task hop is still running
+// or a Return is being presented; it drives the Agents header's ↔ marker so
+// the relation stays hinted even after the box acknowledged.
+func (m *model) delegationInFlight() bool {
+	return len(m.agentTransfers) > 0 || m.agentReturn != nil
+}
+
+// clearTransferPresentation drops all transfer state — the logical hops, the
+// transient Return and the rail phase — and stops the animation subscription.
+// Pending presentation timers become stale and are ignored when they fire.
+func (m *model) clearTransferPresentation() {
+	m.agentTransfers = nil
+	m.agentReturn = nil
+	m.transferAnimation.Stop()
+	m.transferAnimationFrame = 0
 }
 
 // SetToolsetInfo sets the number of available tools and loading state
@@ -597,9 +844,7 @@ func (m *model) LoadFromSession(sess *session.Session) {
 	// stack entries.
 	m.rootSessionID = sess.ID
 	m.sessionStack = nil
-	m.agentTransfers = nil
-	m.transferAnimation.Stop()
-	m.transferAnimationFrame = 0
+	m.clearTransferPresentation()
 
 	// Load session title
 	if sess.Title != "" {
@@ -629,13 +874,11 @@ func (m *model) LoadFromSession(sess *session.Session) {
 // transfer box cannot survive into the new run. rootSessionID is
 // preserved so the idle display stays valid until the next stream starts.
 func (m *model) ResetStreamTracking() {
-	if len(m.sessionStack) == 0 && len(m.agentTransfers) == 0 {
+	if len(m.sessionStack) == 0 && len(m.agentTransfers) == 0 && m.agentReturn == nil {
 		return
 	}
 	m.sessionStack = nil
-	m.agentTransfers = nil
-	m.transferAnimation.Stop()
-	m.transferAnimationFrame = 0
+	m.clearTransferPresentation()
 	m.invalidateCache()
 }
 
@@ -851,8 +1094,12 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			m.workingAgent = msg.AgentName
 			m.invalidateCache()
 		}
+		// A tool call is useful activity: it acknowledges the outbound
+		// transfer box of the hop targeting this agent (models may call a
+		// tool without emitting any text first).
+		activityCmd := m.SetAgentActivity(msg.AgentName)
 		cmd := m.startSpinner()
-		return m, cmd
+		return m, tea.Batch(cmd, activityCmd)
 	case *runtime.ToolCallResponseEvent:
 		// Tool response received - ensure working agent is set (in case stream events were missed)
 		if msg.AgentName != "" {
@@ -897,6 +1144,12 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		if n := len(m.sessionStack); n > 0 {
 			m.sessionStack = m.sessionStack[:n-1]
 		}
+		if len(m.sessionStack) == 0 {
+			// The outermost stream ended: no delegation can outlive it. Drop
+			// any presentation that outlasted its timers — e.g. on a
+			// background tab whose tick commands were discarded.
+			m.clearTransferPresentation()
+		}
 		m.invalidateCache()
 		m.stopSpinner() // Will only stop if no other state needs it
 		return m, nil
@@ -907,7 +1160,18 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.SetTeamInfo(msg.AvailableAgents)
 		return m, nil
 	case *runtime.AgentSwitchingEvent:
-		cmd := m.SetAgentSwitching(msg.Switching, msg.FromAgent, msg.ToAgent)
+		// Standalone dispatch: no routing identity exists at this level, so
+		// the presentation timers fire as plain ticks — correct for a
+		// single-page setup. The multi-tab chat page intercepts this event
+		// and routes the timers to its own tab instead.
+		res := m.SetAgentSwitching(msg.Switching, msg.FromAgent, msg.ToAgent)
+		cmds := []tea.Cmd{res.Cmd}
+		for _, timer := range res.Timers {
+			cmds = append(cmds, timer.Cmd())
+		}
+		return m, tea.Batch(cmds...)
+	case transferTimerMsg:
+		cmd := m.handleTransferTimer(msg)
 		return m, cmd
 	case *runtime.ToolsetInfoEvent:
 		// Ignore loading state if stream was cancelled (stale event from before cancellation)
@@ -926,9 +1190,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.streamCancelled = true
 		m.workingAgent = ""
 		m.sessionStack = nil
-		m.agentTransfers = nil
-		m.transferAnimation.Stop()
-		m.transferAnimationFrame = 0
+		m.clearTransferPresentation()
 		m.toolsLoading = false
 		m.titleRegenerating = false
 		m.compacting = false
@@ -1064,7 +1326,7 @@ func (m *model) computeCollapsedViewModel(contentWidth int) CollapsedViewModel {
 		TitleWithStar:    titleWithStar,
 		WorkingIndicator: m.workingIndicatorCollapsed(),
 		WorkingDir:       m.workingDirLine(),
-		InfoLine:         m.collapsedInfoLine(),
+		InfoLine:         m.collapsedInfoLine(contentWidth),
 		ContentWidth:     contentWidth,
 	}
 	if !m.sectionVisibility.HideUsage {
@@ -1096,7 +1358,7 @@ func (m *model) CollapsedHeight(outerWidth int) int {
 
 // collapsedInfoLine returns a one-line summary of the agents, tools, and
 // todos sections for the collapsed band, honoring section visibility.
-func (m *model) collapsedInfoLine() string {
+func (m *model) collapsedInfoLine(contentWidth int) string {
 	var parts []string
 	appendPart := func(part string) {
 		if part != "" {
@@ -1106,6 +1368,7 @@ func (m *model) collapsedInfoLine() string {
 
 	if !m.sectionVisibility.HideAgents {
 		appendPart(m.agentSummaryCollapsed())
+		appendPart(m.transferSummaryCollapsed(contentWidth))
 	}
 	if !m.sectionVisibility.HideTools {
 		appendPart(m.toolsSummaryCollapsed())
@@ -1133,6 +1396,26 @@ func (m *model) agentSummaryCollapsed() string {
 		summary += styles.MutedStyle.Render(fmt.Sprintf(" +%d", n-1))
 	}
 	return summary
+}
+
+// transferSummaryCollapsed renders the visible transfer presentation for the
+// collapsed band: the box title (Transfer/Return) in muted style followed by
+// the same animated from ─●─► to relation as the vertical box. The whole
+// summary is budgeted to contentWidth — overflowing names are truncated by
+// the shared relation renderer — so the band's height estimate stays honest
+// even with long or wide (CJK) agent names.
+func (m *model) transferSummaryCollapsed(contentWidth int) string {
+	pres, ok := m.visibleTransfer()
+	if !ok {
+		return ""
+	}
+	title := pres.title + " "
+	avail := contentWidth - lipgloss.Width(title)
+	if avail < transferRailCells+1 {
+		// No room for even the bare rail after the title: drop the title.
+		return m.transferRelationLine(pres, max(0, contentWidth))
+	}
+	return styles.MutedStyle.Render(title) + m.transferRelationLine(pres, avail)
 }
 
 // toolsSummaryCollapsed renders the tools/skills counts with the sidebar's
@@ -1524,7 +1807,7 @@ func (m *model) agentInfo(contentWidth int) string {
 	if len(m.availableAgents) > 1 {
 		agentTitle = "Agents"
 	}
-	if len(m.agentTransfers) > 0 {
+	if m.delegationInFlight() {
 		agentTitle += " ↔"
 	}
 
@@ -1551,12 +1834,12 @@ func (m *model) agentInfo(contentWidth int) string {
 			add(line, agent.Name)
 		}
 	}
-	// The innermost in-flight transfer renders as a compact box below the whole
-	// roster, after a blank breathing line; every one of its lines is unowned so
-	// the box stays unclickable.
-	if transfer, ok := m.activeTransfer(); ok {
+	// The visible transfer presentation renders as a compact box below the
+	// whole roster, after a blank breathing line; every one of its lines is
+	// unowned so the box stays unclickable.
+	if pres, ok := m.visibleTransfer(); ok {
 		add("", "")
-		for _, line := range m.renderTransferPanel(transfer, contentWidth) {
+		for _, line := range m.renderTransferPanel(pres, contentWidth) {
 			add(line, "")
 		}
 	}
@@ -1731,11 +2014,12 @@ func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth,
 // language. The rail is the fixed three-cell track the bright dot travels
 // before the arrow head (●──►, ─●─►, ──●►).
 const (
-	transferBoxTitle  = "Transfer"
-	transferTrack     = "─"
-	transferDot       = "●"
-	transferArrowHead = "►"
-	transferRailCells = 3
+	transferBoxTitle       = "Transfer"
+	transferReturnBoxTitle = "Return"
+	transferTrack          = "─"
+	transferDot            = "●"
+	transferArrowHead      = "►"
+	transferRailCells      = 3
 
 	// transferFramesPerStep divides the shared 14 FPS animation tick down to
 	// a sober ~7 FPS dot movement.
@@ -1767,12 +2051,19 @@ func (m *model) transferRailView() string {
 }
 
 // renderTransferRelation renders the box's content — "Scout ─●─► Coder" —
-// fitted to exactly width cells (space-padded on the right). The agent names
-// use their accent styles and share the room left by the fixed rail: when they
-// overflow, a short name donates its surplus to the long one and both are
-// truncated with ellipses. Widths too small for names degrade to the animated
-// rail alone, then to a bare muted track; the result never exceeds width.
-func (m *model) renderTransferRelation(t agentTransfer, width int) string {
+// fitted to exactly width cells (space-padded on the right by way of
+// transferRelationLine, which does the fitting).
+func (m *model) renderTransferRelation(t transferPresentation, width int) string {
+	return padRight(m.transferRelationLine(t, width), width)
+}
+
+// transferRelationLine renders the relation fitted to at most width cells,
+// without trailing padding. The agent names use their accent styles and
+// share the room left by the fixed rail: when they overflow, a short name
+// donates its surplus to the long one and both are truncated with ellipses.
+// Widths too small for names degrade to the animated rail alone, then to a
+// bare muted track; the result never exceeds width.
+func (m *model) transferRelationLine(t transferPresentation, width int) string {
 	const railWidth = transferRailCells + 1 // track cells + arrow head
 	if width < railWidth {
 		return styles.MutedStyle.Render(strings.Repeat(transferTrack, max(0, width)))
@@ -1780,7 +2071,7 @@ func (m *model) renderTransferRelation(t agentTransfer, width int) string {
 
 	nameAvail := width - railWidth - 2 // one space on each side of the rail
 	if nameAvail < 2 {
-		return padRight(m.transferRailView(), width)
+		return m.transferRailView()
 	}
 
 	fromWidth, toWidth := lipgloss.Width(t.from), lipgloss.Width(t.to)
@@ -1797,24 +2088,37 @@ func (m *model) renderTransferRelation(t agentTransfer, width int) string {
 		}
 	}
 
-	line := styles.AgentAccentStyleFor(t.from).Render(toolcommon.TruncateText(t.from, fromBudget)) +
+	line := styles.AgentAccentStyleFor(t.from).Render(truncateAgentName(t.from, fromBudget)) +
 		" " + m.transferRailView() + " " +
-		styles.AgentAccentStyleFor(t.to).Render(toolcommon.TruncateText(t.to, toBudget))
-	return padRight(line, width)
+		styles.AgentAccentStyleFor(t.to).Render(truncateAgentName(t.to, toBudget))
+	return line
 }
 
-// renderTransferPanel renders the in-flight transfer hop as a compact
+// truncateAgentName truncates an agent name to budget cells for the transfer
+// relation. TruncateText can overflow the budget by one cell when it
+// force-takes a wide (CJK) rune at tiny budgets; degrade to a bare ellipsis
+// in that case so the relation never exceeds its width.
+func truncateAgentName(name string, budget int) string {
+	s := toolcommon.TruncateText(name, budget)
+	if lipgloss.Width(s) > budget {
+		return "…"
+	}
+	return s
+}
+
+// renderTransferPanel renders the visible transfer presentation as a compact
 // three-line box spanning the full content width:
 //
 //	╭─ Transfer ────────╮
 //	│ Scout ─●─► Coder  │
 //	╰───────────────────╯
 //
-// The border and embedded title are muted; the content line is built by
+// The embedded title distinguishes the outbound Transfer from the transient
+// Return. The border and title are muted; the content line is built by
 // renderTransferRelation. As the sidebar narrows the title is dropped first,
 // then the inner margins; pathologically small widths fall back to the bare
 // relation so no line ever exceeds contentWidth.
-func (m *model) renderTransferPanel(t agentTransfer, contentWidth int) []string {
+func (m *model) renderTransferPanel(t transferPresentation, contentWidth int) []string {
 	border := lipgloss.RoundedBorder()
 	inner := contentWidth - 2 // room between the border columns
 	if inner < transferRailCells+1 {
@@ -1822,7 +2126,7 @@ func (m *model) renderTransferPanel(t agentTransfer, contentWidth int) []string 
 	}
 
 	top := border.TopLeft + strings.Repeat(border.Top, inner) + border.TopRight
-	head := border.TopLeft + border.Top + " " + transferBoxTitle + " "
+	head := border.TopLeft + border.Top + " " + t.title + " "
 	if headWidth := lipgloss.Width(head); headWidth+1 <= contentWidth {
 		top = head + strings.Repeat(border.Top, contentWidth-headWidth-1) + border.TopRight
 	}
