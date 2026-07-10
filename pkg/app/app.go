@@ -529,8 +529,35 @@ func (a *App) buildUserMultiContent(ctx context.Context, message string, attachm
 		case att.Content != "":
 			// Inline content attachment (e.g. pasted text).
 			a.processInlineAttachment(att, &textBuilder)
+		case len(att.Data) > 0:
+			// Binary inline content.
+			doc, resizeMeta, procErr := chat.ProcessAttachmentWithMetadata(chat.MessagePart{
+				Type: chat.MessagePartTypeDocument,
+				Document: &chat.Document{
+					Name:     att.Name,
+					MimeType: att.MimeType,
+					Source: chat.DocumentSource{
+						InlineData: att.Data,
+					},
+				},
+			})
+			if procErr != nil {
+				slog.WarnContext(ctx, "skipping inline attachment: processing failed", "name", att.Name, "error", procErr)
+				a.sendEvent(ctx, runtime.Warning(fmt.Sprintf("Skipped attachment %s: %s", att.Name, procErr), ""))
+				continue
+			}
+			if resizeMeta != nil {
+				if note := chat.FormatDimensionNote(resizeMeta); note != "" {
+					textBuilder.WriteString("\n")
+					textBuilder.WriteString(note)
+				}
+			}
+			binaryParts = append(binaryParts, chat.MessagePart{
+				Type:     chat.MessagePartTypeDocument,
+				Document: &doc,
+			})
 		default:
-			slog.DebugContext(ctx, "skipping attachment with no file path or content", "name", att.Name)
+			slog.DebugContext(ctx, "skipping attachment with no file path, content, or data", "name", att.Name)
 		}
 	}
 
@@ -986,6 +1013,49 @@ func (a *App) ContextBreakdown(ctx context.Context) (*runtime.ContextBreakdown, 
 		return nil, fmt.Errorf("context breakdown: %w", runtime.ErrUnsupported)
 	}
 	return cp.ContextBreakdown(ctx, a.Session())
+}
+
+// liveSessionLister is an optional runtime capability: listing the current
+// root session plus every live sub-agent session for the /context team view.
+// Only the local runtime (which owns the RunStream registry) implements it;
+// remote runtimes degrade to a root-only view.
+type liveSessionLister interface {
+	LiveSessions(ctx context.Context, current *session.Session) []runtime.LiveSession
+}
+
+// LiveSessions returns the current root session plus every currently live
+// sub-agent session (foreground children and background agent tasks), or nil
+// when the runtime does not expose live-session tracking.
+func (a *App) LiveSessions(ctx context.Context) []runtime.LiveSession {
+	lister, ok := a.runtime.(liveSessionLister)
+	if !ok {
+		return nil
+	}
+	return lister.LiveSessions(ctx, a.Session())
+}
+
+// liveSessionCompactor is an optional runtime capability: queueing an
+// explicit compaction of one live session onto that session's own run loop.
+type liveSessionCompactor interface {
+	CompactLiveSession(ctx context.Context, sessionID, additionalPrompt string, events runtime.EventSink) error
+}
+
+// CompactLiveSession queues a manual compaction for the identified live
+// session and bridges the resulting compaction/usage events into the app's
+// event stream. The request executes on the target session's own run loop at
+// a safe iteration boundary; neither the root stream nor the target stream
+// is cancelled. Returns an error wrapping [runtime.ErrUnsupported] when the
+// runtime cannot target live sessions (e.g. remote runtimes), or the
+// runtime's rejection for unknown/finished sessions and duplicate requests.
+func (a *App) CompactLiveSession(ctx context.Context, sessionID, additionalPrompt string) error {
+	compactor, ok := a.runtime.(liveSessionCompactor)
+	if !ok {
+		return fmt.Errorf("targeted session compaction: %w", runtime.ErrUnsupported)
+	}
+	sink := runtime.EventSinkFunc(func(event runtime.Event) {
+		a.sendEvent(ctx, event)
+	})
+	return compactor.CompactLiveSession(ctx, sessionID, additionalPrompt, sink)
 }
 
 // DropAttachedFile removes a file from the current session's attached files

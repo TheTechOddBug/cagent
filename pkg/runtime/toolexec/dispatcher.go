@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -176,7 +175,6 @@ type Dispatcher struct {
 	Recall func(ctx context.Context, sess *session.Session, a *agent.Agent, message string) error
 
 	confirmationMu sync.Mutex
-	approvalMu     sync.Mutex
 }
 
 var (
@@ -447,15 +445,12 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 }
 
 func (c *call) permissionDecision(readOnlyHint bool) PermissionDecision {
-	c.d.approvalMu.Lock()
-	defer c.d.approvalMu.Unlock()
-
 	var checkers []NamedChecker
 	if c.d.Permissions != nil {
 		checkers = c.d.Permissions(c.sess)
 	}
 	return Decide(
-		c.sess.ToolsApproved,
+		c.sess.IsToolsApproved(),
 		checkers,
 		c.tc.Function.Name,
 		ParseToolInput(c.tc.Function.Arguments),
@@ -492,21 +487,26 @@ func (c *call) autoApprovalAfterConfirmationWait() (PermissionDecision, bool) {
 // takes effect. Deny/Ask patterns in the same layer are honored via
 // [permissions.Checker.CheckWithArgs] ordering (Deny > Allow > Ask), so a
 // session-level Deny or explicit Ask never yields an allow here.
+//
+// For the shell tool a matching allow pattern is necessary but not
+// sufficient: the generic matcher's trailing-* patterns are plain prefix
+// matches, so the "T = always allow mkdir*" grant would also cover
+// "mkdir x && rm -rf ~". Silencing a safety verdict demands the stricter
+// word-boundary, no-metacharacter reading — see shellGrantCoversCommand.
 func (c *call) sessionPermissionsAllow() bool {
-	c.d.approvalMu.Lock()
-	defer c.d.approvalMu.Unlock()
-	if c.sess.Permissions == nil {
+	perms := c.sess.ClonePermissions()
+	if perms == nil {
 		return false
 	}
-	checker := permissions.NewCheckerFromRules(
-		c.sess.Permissions.Allow,
-		c.sess.Permissions.Ask,
-		c.sess.Permissions.Deny,
-	)
-	return checker.CheckWithArgs(
-		c.tc.Function.Name,
-		ParseToolInput(c.tc.Function.Arguments),
-	) == permissions.Allow
+	args := ParseToolInput(c.tc.Function.Arguments)
+	checker := permissions.NewCheckerFromRules(perms.Allow, perms.Ask, perms.Deny)
+	if checker.CheckWithArgs(c.tc.Function.Name, args) != permissions.Allow {
+		return false
+	}
+	if c.tc.Function.Name == shellToolName {
+		return shellGrantCoversCommand(perms.Allow, args)
+	}
+	return true
 }
 
 func (c *call) cancellationMessage(ctx context.Context) string {
@@ -846,9 +846,7 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		return runTool()
 	case ResumeTypeApproveSession:
 		slog.DebugContext(ctx, "Resume signal received, approving session", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
-		c.d.approvalMu.Lock()
-		c.sess.ToolsApproved = true
-		c.d.approvalMu.Unlock()
+		c.sess.SetToolsApproved(true)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSession)
 		return runTool()
 	case ResumeTypeApproveTool:
@@ -856,14 +854,7 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		if approvedTool == "" {
 			approvedTool = c.tc.Function.Name
 		}
-		c.d.approvalMu.Lock()
-		if c.sess.Permissions == nil {
-			c.sess.Permissions = &session.PermissionsConfig{}
-		}
-		if !slices.Contains(c.sess.Permissions.Allow, approvedTool) {
-			c.sess.Permissions.Allow = append(c.sess.Permissions.Allow, approvedTool)
-		}
-		c.d.approvalMu.Unlock()
+		c.sess.AppendPermissionAllow(approvedTool)
 		slog.DebugContext(ctx, "Resume signal received, approving tool permanently", "tool", approvedTool, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedTool)
 		return runTool()
