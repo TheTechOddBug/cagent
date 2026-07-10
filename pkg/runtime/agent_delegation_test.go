@@ -85,7 +85,8 @@ func TestNewSubSession(t *testing.T) {
 	t.Parallel()
 
 	parent := session.New(session.WithUserMessage("hello"))
-	childAgent := agent.New("worker", "a worker agent",
+	childAgent := agent.New(
+		"worker", "a worker agent",
 		agent.WithMaxIterations(10),
 	)
 
@@ -190,7 +191,8 @@ func TestSubSessionConfig_InheritsAgentLimits(t *testing.T) {
 	parent := session.New(session.WithUserMessage("hello"))
 
 	t.Run("with custom limits", func(t *testing.T) {
-		childAgent := agent.New("worker", "",
+		childAgent := agent.New(
+			"worker", "",
 			agent.WithMaxIterations(42),
 			agent.WithMaxConsecutiveToolCalls(7),
 		)
@@ -272,7 +274,6 @@ func TestSubSessionWithoutAttachedFilesOmitsBlock(t *testing.T) {
 		assert.NotContains(t, m.Content, "<attached_files>")
 	}
 }
-
 
 func TestSubSessionInheritsPermissions(t *testing.T) {
 	t.Parallel()
@@ -410,7 +411,8 @@ func TestRunAgent_InheritsParentPermissions(t *testing.T) {
 	agent.WithSubAgents(worker)(root)
 
 	tm := team.New(team.WithAgents(root, worker))
-	rt, err := NewLocalRuntime(t.Context(), tm,
+	rt, err := NewLocalRuntime(
+		t.Context(), tm,
 		WithSessionCompaction(false),
 		WithModelStore(mockModelStore{}),
 	)
@@ -466,7 +468,8 @@ func TestTransferTask_PropagatesPermissions(t *testing.T) {
 	agent.WithSubAgents(librarian)(root)
 
 	tm := team.New(team.WithAgents(root, librarian))
-	rt, err := NewLocalRuntime(t.Context(), tm,
+	rt, err := NewLocalRuntime(
+		t.Context(), tm,
 		WithSessionCompaction(false),
 		WithModelStore(mockModelStore{}),
 	)
@@ -517,5 +520,4 @@ func TestTransferTask_PropagatesPermissions(t *testing.T) {
 	parentClone := sess.ClonePermissions()
 	assert.Equal(t, []string{"safe_tool"}, parentClone.Allow,
 		"parent permissions must remain isolated from child mutations after transfer_task")
-
 }
