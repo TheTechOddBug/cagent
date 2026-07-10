@@ -100,7 +100,7 @@ func TestCollapsedInfoLine_ShowsAgentsToolsTodos(t *testing.T) {
 		{Description: "second", Status: "pending"},
 	}}))
 
-	info := ansi.Strip(s.collapsedInfoLine())
+	info := ansi.Strip(s.collapsedInfoLine(60))
 	assert.Contains(t, info, "▶ root")
 	assert.Contains(t, info, "12 tools")
 	assert.Contains(t, info, "1/2 todos")
@@ -118,13 +118,13 @@ func TestCollapsedInfoLine_HonorsVisibility(t *testing.T) {
 	}}))
 
 	s.SetSectionVisibility(SectionVisibility{HideAgents: true, HideTodos: true})
-	info := ansi.Strip(s.collapsedInfoLine())
+	info := ansi.Strip(s.collapsedInfoLine(60))
 	assert.NotContains(t, info, "▶ root")
 	assert.NotContains(t, info, "todos")
 	assert.Contains(t, info, "12 tools", "tools stay visible")
 
 	s.SetSectionVisibility(SectionVisibility{HideAgents: true, HideTools: true, HideTodos: true})
-	assert.Empty(t, s.collapsedInfoLine(), "hiding every section removes the line")
+	assert.Empty(t, s.collapsedInfoLine(60), "hiding every section removes the line")
 }
 
 func TestCollapsedLineCount_GrowsWithInfoLine(t *testing.T) {

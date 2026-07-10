@@ -38,6 +38,43 @@ func transferRelationIndex(m *model) int {
 	return -1
 }
 
+// visibleBoxTitle renders the panel and returns the title embedded in the
+// visible transfer box's top border ("Transfer" or "Return"), or "" when no
+// box renders.
+func visibleBoxTitle(m *model) string {
+	idx := transferRelationIndex(m)
+	if idx <= 0 {
+		return ""
+	}
+	top := agentBody(m)[idx-1]
+	for _, title := range []string{transferBoxTitle, transferReturnBoxTitle} {
+		if strings.Contains(top, " "+title+" ") {
+			return title
+		}
+	}
+	return ""
+}
+
+// fireHopTimer fires the tokenized min or max presentation timer of the live
+// hop identified by from→to.
+func fireHopTimer(t *testing.T, m *model, from, to string, kind transferTimerKind) {
+	t.Helper()
+	for _, hop := range m.agentTransfers {
+		if hop.from == from && hop.to == to {
+			_, _ = m.Update(transferTimerMsg{gen: hop.gen, kind: kind})
+			return
+		}
+	}
+	t.Fatalf("no live hop %s→%s", from, to)
+}
+
+// expireReturn fires the live Return presentation's timer.
+func expireReturn(t *testing.T, m *model) {
+	t.Helper()
+	require.NotNil(t, m.agentReturn, "a Return presentation should be live")
+	_, _ = m.Update(transferTimerMsg{gen: m.agentReturn.gen, kind: transferTimerReturn})
+}
+
 // TestTransferPanelContentAndPlacement verifies the in-flight transfer renders
 // as a compact three-line box — muted bordered title, source ─●─► destination
 // relation — below the whole roster after a blank breathing line, all unowned
@@ -257,10 +294,67 @@ func TestTransferPanelPathologicalWidths(t *testing.T) {
 	m := newAgentPanelSidebar(t, 40, transferRoster()...)
 	m.SetAgentSwitching(true, "Scout", "Coder")
 
+	pres, ok := m.visibleTransfer()
+	require.True(t, ok)
 	for width := 1; width <= 16; width++ {
-		for _, line := range m.renderTransferPanel(m.agentTransfers[0], width) {
+		for _, line := range m.renderTransferPanel(pres, width) {
 			assert.LessOrEqualf(t, lipgloss.Width(line), width, "box line must fit width %d", width)
 		}
+	}
+}
+
+// TestTransferCollapsedSummaryFitsNarrowWidths verifies the collapsed band's
+// transfer summary is budgeted to the content width — long and wide (CJK)
+// names are truncated, never overflowing — so the band's height estimate
+// cannot be undercut by an over-wide info line.
+func TestTransferCollapsedSummaryFitsNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		from, to string
+	}{
+		{"long ascii", "delegation-orchestrator", "implementation-reviewer"},
+		{"wide cjk", "调度协调器智能体", "代码实现者智能体"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newAgentPanelSidebar(t, MinWidth,
+				runtime.AgentDetails{Name: tc.from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+				runtime.AgentDetails{Name: tc.to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+			)
+			m.SetMode(ModeCollapsed)
+			// Isolate the info line to the transfer summary (no agent entry,
+			// no working dir) so the width/height assertions are exact.
+			m.sessionState.SetCurrentAgentName("")
+			m.workingDirectory = ""
+			m.SetAgentSwitching(true, tc.from, tc.to)
+
+			for width := 1; width <= 30; width++ {
+				summary := m.transferSummaryCollapsed(width)
+				assert.LessOrEqualf(t, lipgloss.Width(summary), width,
+					"summary must fit content width %d", width)
+			}
+
+			contentWidth := m.contentWidth(false)
+			summary := ansi.Strip(m.transferSummaryCollapsed(contentWidth))
+			assert.Contains(t, summary, transferArrowHead, "the rail survives truncation")
+			assert.Contains(t, summary, "…", "overflowing names are truncated with ellipses")
+
+			// With every band line fitting the content width, the terminal
+			// wraps nothing, so the height estimate covers the actual lines
+			// (CollapsedHeight additionally counts the divider).
+			vm := m.computeCollapsedViewModel(contentWidth)
+			rendered := strings.Split(RenderCollapsedView(vm), "\n")
+			for i, line := range rendered {
+				assert.LessOrEqualf(t, lipgloss.Width(line), contentWidth,
+					"collapsed band line %d must fit the content width", i)
+			}
+			assert.GreaterOrEqual(t, m.CollapsedHeight(m.width), len(rendered)+1,
+				"the height estimate is not under-evaluated")
+		})
 	}
 }
 
@@ -317,9 +411,10 @@ func TestTransferAnimationTickKeepsLayoutClean(t *testing.T) {
 }
 
 // TestTransferStackNestedRestore replays nested transfers: A→B then B→C shows
-// B→C with the dot restarted on the left; when C returns to B the outer A→B
-// box reappears, again from the left; when B returns to A nothing is left, the
-// subscription ends and the ↔ header marker goes away.
+// B→C with the dot restarted on the left; when C returns to B a transient
+// Return box shows first, then the outer A→B box (still inside its window)
+// reappears, again from the left; when B returns to A the final Return expires
+// into nothing, the subscription ends and the ↔ header marker goes away.
 func TestTransferStackNestedRestore(t *testing.T) {
 	t.Parallel()
 
@@ -345,21 +440,31 @@ func TestTransferStackNestedRestore(t *testing.T) {
 		_, _ = m.Update(animation.TickMsg{Frame: frame})
 	}
 	m.SetAgentSwitching(false, "C", "B") // stop of B→C carries the inverse pair
-	assert.Zero(t, m.transferAnimationFrame, "restoring the parent restarts the dot on the left")
-	assert.True(t, m.transferAnimation.IsActive(), "the animation keeps running for the parent hop")
+	assert.Zero(t, m.transferAnimationFrame, "the Return restarts the dot on the left")
+	assert.True(t, m.transferAnimation.IsActive(), "the animation keeps running for the Return")
+	assert.Equal(t, transferReturnBoxTitle, visibleBoxTitle(m), "the stop presents a Return box first")
+	idx = transferRelationIndex(m)
+	require.GreaterOrEqual(t, idx, 0)
+	assert.Contains(t, agentBody(m)[idx], "C ●──► B", "the Return shows child → parent")
+
+	expireReturn(t, m)
+	assert.Equal(t, transferBoxTitle, visibleBoxTitle(m), "the unacknowledged outer hop resumes after the Return")
 	idx = transferRelationIndex(m)
 	require.GreaterOrEqual(t, idx, 0)
 	assert.Contains(t, agentBody(m)[idx], "A ●──► B", "the outer hop's box reappears")
+	assert.True(t, m.transferAnimation.IsActive())
 
 	m.SetAgentSwitching(false, "B", "A")
+	assert.Equal(t, transferReturnBoxTitle, visibleBoxTitle(m))
+	expireReturn(t, m)
 	assert.Equal(t, -1, transferRelationIndex(m), "no box once all hops returned")
-	assert.False(t, m.transferAnimation.IsActive(), "the last stop ends the animation subscription")
+	assert.False(t, m.transferAnimation.IsActive(), "the final Return's expiry ends the animation subscription")
 	assert.NotContains(t, renderAgentPanel(m)[0], "↔", "the header marker clears with the stack")
 }
 
 // TestTransferStackOutOfOrderStop verifies a stop pops its matching hop (the
-// inverse pair of its start), not blindly the top of the stack, and that the
-// still-visible hop keeps its animation phase.
+// inverse pair of its start), not blindly the top of the stack: after that
+// stop's Return expires, the unmatched inner hop is what resumes.
 func TestTransferStackOutOfOrderStop(t *testing.T) {
 	t.Parallel()
 
@@ -372,43 +477,113 @@ func TestTransferStackOutOfOrderStop(t *testing.T) {
 	m.SetAgentSwitching(true, "A", "B")
 	m.SetAgentSwitching(true, "B", "C")
 	_, _ = m.Update(animation.TickMsg{Frame: 1})
-	frame := m.transferAnimationFrame
-	require.NotZero(t, frame)
 
 	m.SetAgentSwitching(false, "B", "A") // the outer stop arrives first
+	require.Len(t, m.agentTransfers, 1)
+	assert.Equal(t, "B", m.agentTransfers[0].from, "the matching outer hop was removed, not the top")
+	assert.Equal(t, "C", m.agentTransfers[0].to)
+	assert.Equal(t, transferReturnBoxTitle, visibleBoxTitle(m), "the stop presents its Return")
+
+	expireReturn(t, m)
 	idx := transferRelationIndex(m)
 	require.GreaterOrEqual(t, idx, 0)
-	assert.Contains(t, agentBody(m)[idx], "B ●──► C", "the unmatched inner hop stays on top")
-	assert.Equal(t, frame, m.transferAnimationFrame, "the visible hop is unchanged, so the phase is preserved")
+	assert.Contains(t, agentBody(m)[idx], "B ●──► C", "the unmatched inner hop resumes")
 	assert.True(t, m.transferAnimation.IsActive())
 
 	m.SetAgentSwitching(false, "C", "B")
+	expireReturn(t, m)
 	assert.Equal(t, -1, transferRelationIndex(m))
 	assert.False(t, m.transferAnimation.IsActive())
 }
 
-// TestTransferStopFallbackPop verifies a stop that matches no recorded hop
-// still pops the innermost one (stopping the animation with the emptied
-// stack), and a stop on an empty stack is a no-op.
+// TestTransferStopFallbackPop verifies a legacy nameless stop still pops the
+// innermost hop — without presenting a Return — and a stop on an empty stack
+// is a no-op. Named stops that match no hop are covered by
+// TestTransferStaleNamedStopIsNoOp.
 func TestTransferStopFallbackPop(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40, transferRoster()...)
 
 	m.SetAgentSwitching(true, "Scout", "Coder")
-	m.SetAgentSwitching(false, "", "")
-	assert.Empty(t, m.agentTransfers, "an unmatched stop pops the innermost hop")
+	res := m.SetAgentSwitching(false, "", "")
+	assert.False(t, res.Accepted, "a nameless stop is never accepted")
+	assert.Empty(t, res.Timers, "a nameless stop arms no Return timer")
+	assert.Empty(t, m.agentTransfers, "a nameless stop pops the innermost hop")
+	assert.Nil(t, m.agentReturn, "a nameless stop presents no Return")
 	assert.False(t, m.transferAnimation.IsActive(), "an emptied stack stops the animation")
 	assert.Zero(t, m.transferAnimationFrame)
 
-	m.SetAgentSwitching(false, "Coder", "Scout")
+	res = m.SetAgentSwitching(false, "Coder", "Scout")
+	assert.False(t, res.Accepted)
 	assert.Empty(t, m.agentTransfers, "a stop on an empty stack is a no-op")
+	assert.Nil(t, m.agentReturn, "a stop on an empty stack (e.g. after a cancel) presents no Return")
 	assert.False(t, m.transferAnimation.IsActive())
 }
 
+// TestTransferStaleNamedStopIsNoOp verifies a named stop that closes no
+// recorded hop is a complete no-op: it can neither steal a live hop of
+// another delegation nor present a bogus Return.
+func TestTransferStaleNamedStopIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	m := newAgentPanelSidebar(t, 40, transferRoster()...)
+
+	// A hop completes, then a new one starts; its stale duplicate stop
+	// arrives late (e.g. it raced a retry) and must not touch the new hop.
+	m.SetAgentSwitching(true, "Scout", "Coder")
+	res := m.SetAgentSwitching(false, "Coder", "Scout")
+	require.True(t, res.Accepted)
+	expireReturn(t, m)
+
+	m.SetAgentSwitching(true, "Scout", "root")
+	res = m.SetAgentSwitching(false, "Coder", "Scout")
+	assert.False(t, res.Accepted, "the duplicate stop matches no live hop")
+	assert.Nil(t, res.Cmd)
+	assert.Empty(t, res.Timers)
+	require.Len(t, m.agentTransfers, 1, "the live hop is not stolen")
+	assert.Equal(t, "root", m.agentTransfers[0].to)
+	assert.Nil(t, m.agentReturn, "no Return is presented for a stale stop")
+	assert.Equal(t, transferBoxTitle, visibleBoxTitle(m), "the live hop's box stays up")
+
+	// A stop from an unrelated pair is equally ignored.
+	res = m.SetAgentSwitching(false, "root", "Coder")
+	assert.False(t, res.Accepted)
+	require.Len(t, m.agentTransfers, 1)
+	assert.Nil(t, m.agentReturn)
+}
+
+// TestTransferBoundariesIgnoredWhileCancelled verifies hop boundaries
+// arriving between an ESC cancel and the next stream start are dropped — no
+// box, no Return — and that a new stream start restores normal handling.
+func TestTransferBoundariesIgnoredWhileCancelled(t *testing.T) {
+	t.Parallel()
+
+	m := newAgentPanelSidebar(t, 40, transferRoster()...)
+
+	m.SetAgentSwitching(true, "Scout", "Coder")
+	_, _ = m.Update(messages.StreamCancelledMsg{})
+
+	res := m.SetAgentSwitching(false, "Coder", "Scout")
+	assert.False(t, res.Accepted, "a stop of the dying stream is dropped")
+	assert.Nil(t, m.agentReturn)
+
+	res = m.SetAgentSwitching(true, "Scout", "Coder")
+	assert.False(t, res.Accepted, "a late start of the dying stream is dropped")
+	assert.Empty(t, m.agentTransfers)
+	assert.Equal(t, -1, transferRelationIndex(m), "no box reappears after the cancel")
+	assert.False(t, m.transferAnimation.IsActive())
+
+	// The next stream start clears the flag: delegation works again.
+	_, _ = m.Update(runtime.StreamStarted("root-session", "root"))
+	res = m.SetAgentSwitching(true, "Scout", "Coder")
+	assert.True(t, res.Accepted, "a new stream reactivates transfer tracking")
+	assert.Equal(t, transferBoxTitle, visibleBoxTitle(m))
+}
+
 // TestTransferSubscriptionLifecycle verifies the single animation subscription
-// starts with the first hop, is shared by nested hops (never double-registered)
-// and ends with the last stop.
+// starts with the first hop, is shared by nested hops and the Return boxes
+// (never double-registered) and ends when the last Return expires.
 func TestTransferSubscriptionLifecycle(t *testing.T) {
 	t.Parallel()
 
@@ -422,15 +597,22 @@ func TestTransferSubscriptionLifecycle(t *testing.T) {
 	assert.True(t, m.transferAnimation.IsActive(), "a nested hop reuses the single subscription")
 
 	m.SetAgentSwitching(false, "root", "Coder")
-	assert.True(t, m.transferAnimation.IsActive(), "the subscription survives while hops remain")
+	assert.True(t, m.transferAnimation.IsActive(), "the subscription survives for the Return and the remaining hop")
+
+	expireReturn(t, m)
+	assert.True(t, m.transferAnimation.IsActive(), "the outer hop is still inside its own window")
 
 	m.SetAgentSwitching(false, "Coder", "Scout")
-	assert.False(t, m.transferAnimation.IsActive(), "the last stop ends the subscription")
+	assert.True(t, m.transferAnimation.IsActive(), "the last stop still animates its Return")
+
+	expireReturn(t, m)
+	assert.False(t, m.transferAnimation.IsActive(), "the last Return's expiry ends the subscription")
 }
 
 // TestTransferClearedOnCancelResetAndLoad verifies a stream cancel, a
-// stream-tracking reset and a session load all drop any in-flight transfer —
-// no ghost box, subscription stopped, phase back to zero.
+// stream-tracking reset and a session load all drop any in-flight transfer
+// and Return — no ghost box, subscription stopped, phase back to zero — and
+// that the stale presentation timers of the cleared state reactivate nothing.
 func TestTransferClearedOnCancelResetAndLoad(t *testing.T) {
 	t.Parallel()
 
@@ -439,24 +621,45 @@ func TestTransferClearedOnCancelResetAndLoad(t *testing.T) {
 	assertCleared := func(context string) {
 		t.Helper()
 		assert.Empty(t, m.agentTransfers, context)
+		assert.Nil(t, m.agentReturn, context)
 		assert.Equal(t, -1, transferRelationIndex(m), context)
 		assert.False(t, m.transferAnimation.IsActive(), context)
 		assert.Zero(t, m.transferAnimationFrame, context)
 	}
 
+	// The timers armed before each clear must be stale afterwards.
+	fireStaleTimers := func(gen int64) {
+		t.Helper()
+		for _, kind := range []transferTimerKind{transferTimerMin, transferTimerMax, transferTimerReturn} {
+			_, _ = m.Update(transferTimerMsg{gen: gen, kind: kind})
+		}
+	}
+
 	m.SetAgentSwitching(true, "Scout", "Coder")
+	hopGen := m.agentTransfers[0].gen
 	_, _ = m.Update(animation.TickMsg{Frame: 1})
 	require.GreaterOrEqual(t, transferRelationIndex(m), 0)
 	_, _ = m.Update(messages.StreamCancelledMsg{})
 	assertCleared("cancel clears the box and stops the animation")
+	fireStaleTimers(hopGen)
+	assertCleared("stale timers after a cancel reactivate nothing")
 
+	// A new stream start lifts the cancel guard for the next scenarios.
+	_, _ = m.Update(runtime.StreamStarted("root-session", "root"))
 	m.SetAgentSwitching(true, "Scout", "Coder")
+	m.SetAgentSwitching(false, "Coder", "Scout") // leaves a live Return
+	returnGen := m.agentReturn.gen
 	m.ResetStreamTracking()
 	assertCleared("a new top-level run clears the box and stops the animation")
+	fireStaleTimers(returnGen)
+	assertCleared("stale timers after a reset reactivate nothing")
 
 	m.SetAgentSwitching(true, "Scout", "Coder")
+	hopGen = m.agentTransfers[0].gen
 	m.LoadFromSession(session.New())
 	assertCleared("loading a session starts from a clean slate")
+	fireStaleTimers(hopGen)
+	assertCleared("stale timers after a load reactivate nothing")
 }
 
 // TestNoTransferPanelWhenIdle verifies no box (and no header marker) renders
