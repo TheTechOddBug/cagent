@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,8 +93,12 @@ type Settings struct {
 	// ignored with a logged warning so a bad entry never breaks the TUI.
 	Keybindings []Keybinding `yaml:"keybindings,omitempty"`
 	// Layout customizes the TUI chat layout (sidebar position and which
-	// sidebar sections are visible). Managed via the /custom command.
+	// sidebar sections are visible). Managed via the /settings command.
 	Layout *LayoutSettings `yaml:"layout,omitempty"`
+	// BusySendMode controls what happens to messages sent while the agent is
+	// working: "steer" (default) injects them into the ongoing stream,
+	// "queue" holds them until the current turn ends. Managed via /settings.
+	BusySendMode string `yaml:"busy_send_mode,omitempty"`
 	// Extra preserves settings keys this version does not know about (e.g.
 	// written by a newer docker-agent) across a load/save round trip.
 	Extra map[string]any `yaml:",inline"`
@@ -125,6 +130,15 @@ func (s *Settings) GetLayout() LayoutSettings {
 		return LayoutSettings{}
 	}
 	return *s.Layout
+}
+
+// GetBusySendMode returns the raw busy-send mode ("steer", "queue", or ""
+// when unset; unknown values are normalized by the TUI layer).
+func (s *Settings) GetBusySendMode() string {
+	if s == nil {
+		return ""
+	}
+	return s.BusySendMode
 }
 
 // Keybinding maps a single TUI action to the key combinations that trigger it.
@@ -236,8 +250,8 @@ type BoardColumn struct {
 type Board struct {
 	// Projects are the repositories cards can be created against.
 	Projects []BoardProject `yaml:"projects,omitempty"`
-	// Columns overrides the default pipeline (Dev → Simplify → Review →
-	// Fix → Push → Done). Leave empty to keep the defaults.
+	// Columns overrides the default pipeline (Dev → Review → Push → Done).
+	// Leave empty to keep the defaults.
 	Columns []BoardColumn `yaml:"columns,omitempty"`
 }
 
@@ -268,6 +282,12 @@ type Config struct {
 	DefaultModel *latest.FlexibleModelConfig `yaml:"default_model,omitempty"`
 	// Aliases maps alias names to alias configurations
 	Aliases map[string]*Alias `yaml:"aliases,omitempty"`
+	// Providers maps user-defined provider names to reusable provider
+	// configurations (e.g. custom OpenAI-compatible endpoints registered via
+	// `docker agent setup`). They use the same shape as the `providers`
+	// section of an agent file and are merged into every loaded agent config;
+	// definitions in the agent file win on name conflicts.
+	Providers map[string]latest.ProviderConfig `yaml:"providers,omitempty"`
 	// Settings contains global user settings
 	Settings *Settings `yaml:"settings,omitempty"`
 	// Board configures the `docker agent board` Kanban TUI.
@@ -535,6 +555,40 @@ func (c *Config) DeleteAlias(name string) bool {
 		return true
 	}
 	return false
+}
+
+// GetProviders returns a copy of the user-defined provider configurations.
+//
+// This method is safe for concurrent use; the returned map is detached from
+// the config so callers can read it without holding the lock.
+func (c *Config) GetProviders() map[string]latest.ProviderConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.Providers) == 0 {
+		return nil
+	}
+	return maps.Clone(c.Providers)
+}
+
+// SetProvider creates or updates a user-defined provider configuration.
+//
+// This method is safe for concurrent use. Writes to the Providers map are
+// protected by a mutex to avoid concurrent map write panics when providers
+// are modified from multiple goroutines.
+func (c *Config) SetProvider(name string, provider latest.ProviderConfig) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("provider name cannot be empty")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.Providers == nil {
+		c.Providers = make(map[string]latest.ProviderConfig)
+	}
+	c.Providers[name] = provider
+	return nil
 }
 
 // GetSettings returns the global settings with defaults applied.

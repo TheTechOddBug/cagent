@@ -112,6 +112,23 @@ type (
 		colID  string
 		prompt string
 	}
+	// submitColumnMsg adds a column from the columns dialog, or updates the
+	// one with id oldID when set.
+	submitColumnMsg struct {
+		column board.Column
+		oldID  string
+	}
+	// deleteColumnMsg removes a column from the columns dialog.
+	deleteColumnMsg struct{ id string }
+	// moveColumnMsg reorders a column from the columns dialog; delta is the
+	// number of positions to move (negative moves it left).
+	moveColumnMsg struct {
+		id    string
+		delta int
+	}
+	// editColumnPromptMsg opens the prompt editor for a column, from the
+	// columns dialog (prompts are long-form and get the big editor).
+	editColumnPromptMsg struct{ column board.Column }
 	// confirmDeleteMsg deletes a card after confirmation.
 	confirmDeleteMsg struct{ cardID string }
 )
@@ -140,6 +157,7 @@ type keyMap struct {
 	MoveTo   key.Binding
 	Delete   key.Binding
 	Projects key.Binding
+	Columns  key.Binding
 	Prompt   key.Binding
 	Editor   key.Binding
 	Shell    key.Binding
@@ -162,6 +180,7 @@ var keys = keyMap{
 	MoveTo:   key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "move card to column N")),
 	Delete:   key.NewBinding(key.WithKeys("x", "backspace", "delete"), key.WithHelp("x", "delete card")),
 	Projects: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "manage projects")),
+	Columns:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "manage columns")),
 	Prompt:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit column prompt")),
 	Editor:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open worktree in editor")),
 	Shell:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "open shell in worktree")),
@@ -512,6 +531,65 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.setFlash("Prompt saved to the global config", false)
 		return m, cmd
 
+	case submitColumnMsg:
+		var (
+			saved board.Column
+			err   error
+		)
+		if msg.oldID == "" {
+			saved, err = m.app.AddColumn(msg.column)
+		} else {
+			saved, err = m.app.UpdateColumn(msg.oldID, msg.column)
+		}
+		if err != nil {
+			cmd := m.setFlash(err.Error(), true)
+			return m, cmd
+		}
+		m.reload()
+		if d, ok := m.dialog.(*columnsDialog); ok {
+			if d.mode == columnsEditing {
+				d.setColumns(m.columns)
+			} else {
+				// The save is asynchronous and the user may have moved on:
+				// refresh without leaving the dialog's current view.
+				d.refreshColumns(m.columns)
+			}
+			d.selectColumn(saved.ID) // the cursor follows the saved column
+		}
+		action := "added to"
+		if msg.oldID != "" {
+			action = "updated in"
+		}
+		cmd := m.setFlash("Column "+action+" the global config", false)
+		return m, cmd
+
+	case deleteColumnMsg:
+		if err := m.app.RemoveColumn(msg.id); err != nil {
+			cmd := m.setFlash(err.Error(), true)
+			return m, cmd
+		}
+		m.reload()
+		if d, ok := m.dialog.(*columnsDialog); ok {
+			d.setColumns(m.columns)
+		}
+		return m, nil
+
+	case moveColumnMsg:
+		if err := m.app.MoveColumn(msg.id, msg.delta); err != nil {
+			cmd := m.setFlash(err.Error(), true)
+			return m, cmd
+		}
+		m.reload()
+		if d, ok := m.dialog.(*columnsDialog); ok {
+			d.refreshColumns(m.columns)
+			d.selectColumn(msg.id) // the cursor follows the moved column
+		}
+		return m, nil
+
+	case editColumnPromptMsg:
+		cmd := m.openDialog(newPromptDialog(msg.column))
+		return m, cmd
+
 	case confirmDeleteMsg:
 		m.dialog = nil
 		cmd := m.deleteCard(msg.cardID)
@@ -606,6 +684,10 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, keys.Projects):
 		cmd := m.openDialog(newProjectsDialog(m.projects))
+		return m, cmd
+
+	case key.Matches(msg, keys.Columns):
+		cmd := m.openDialog(newColumnsDialog(m.columns))
 		return m, cmd
 
 	case key.Matches(msg, keys.Prompt):

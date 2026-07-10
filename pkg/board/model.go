@@ -8,8 +8,11 @@ package board
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/paths"
@@ -34,16 +37,73 @@ var DefaultColumns = []Column{
 }
 
 // ColumnsFromConfig maps user-configured columns to board columns, falling
-// back to [DefaultColumns] when none are configured.
+// back to [DefaultColumns] when none are configured. The config file is
+// hand-editable, so entries are normalized instead of trusted: a missing id
+// is derived from the name (hashed when the name slugs to nothing, e.g.
+// non-ASCII, so the id stays stable across restarts), an id-less and
+// nameless entry is dropped, and a duplicate id is dropped (card moves
+// address columns by id, so duplicates would be ambiguous).
 func ColumnsFromConfig(cols []userconfig.BoardColumn) []Column {
-	if len(cols) == 0 {
-		return DefaultColumns
-	}
 	out := make([]Column, 0, len(cols))
+	seen := make(map[string]bool, len(cols))
 	for _, c := range cols {
-		out = append(out, Column{ID: c.ID, Name: c.Name, Emoji: c.Emoji, Prompt: c.Prompt})
+		id := strings.TrimSpace(c.ID)
+		name := collapseSpace(c.Name)
+		if id == "" {
+			id = columnID(name)
+		}
+		if id == "" && name != "" {
+			id = fallbackColumnID(name)
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if name == "" {
+			name = id
+		}
+		out = append(out, Column{ID: id, Name: name, Emoji: collapseSpace(c.Emoji), Prompt: c.Prompt})
+	}
+	if len(out) == 0 {
+		// Cloned: the caller may edit the pipeline in place.
+		return slices.Clone(DefaultColumns)
 	}
 	return out
+}
+
+// columnID derives a column id from its display name: lowercased, with
+// runs of separators collapsed to a dash and anything else non-alphanumeric
+// dropped. Names that slug to nothing (e.g. emoji-only) yield "".
+func columnID(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			if s := b.String(); s != "" && !strings.HasSuffix(s, "-") {
+				b.WriteByte('-')
+			}
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
+}
+
+// fallbackColumnID returns a stable id for a name [columnID] slugs to
+// nothing (e.g. non-ASCII or emoji-only): a hash of the name, so the id
+// stays the same across restarts and cards stay attached to their column.
+func fallbackColumnID(name string) string {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return fmt.Sprintf("col-%08x", h.Sum32())
+}
+
+// collapseSpace trims a string and collapses inner whitespace (including
+// newlines) to single spaces. Column names and emoji are rendered on
+// single-line headers whose mouse hitboxes are computed arithmetically, so
+// an embedded newline from a hand-edited config would break the layout.
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // CardStatus tracks what a card's agent is doing.

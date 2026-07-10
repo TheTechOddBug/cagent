@@ -2,12 +2,11 @@ package messages
 
 import "github.com/docker/docker-agent/pkg/session"
 
-// Attachment represents content attached to a message. It is either a reference
-// to a file on disk (FilePath is set) or inline content already in memory
-// (Content is set, e.g. pasted text). When FilePath is set the consumer reads
-// and classifies the file at send time; when only Content is set the consumer
-// uses it directly as inline text. This design lets us add binary-file support
-// (images, PDFs, …) in the future by extending the struct with a MimeType hint.
+// Attachment represents content attached to a message. It can be a reference
+// to a file on disk (FilePath is set), inline text content (Content is set),
+// or inline binary content (Data and MimeType are set). When FilePath is set,
+// the consumer reads and classifies the file at send time; inline content
+// is used directly.
 type Attachment struct {
 	// Name is the human-readable label (e.g. "paste-1", "main.go").
 	Name string
@@ -18,6 +17,10 @@ type Attachment struct {
 	// backing temp file is cleaned up before the message reaches the app layer.
 	// Empty for file-reference attachments that are read from disk.
 	Content string
+	// MimeType is the MIME type of the binary data, if Data is present.
+	MimeType string
+	// Data holds raw binary content for non-text inline attachments.
+	Data []byte
 }
 
 // Session lifecycle messages control session state and persistence.
@@ -39,7 +42,15 @@ type (
 	EvalSessionMsg struct{ Filename string }
 
 	// CompactSessionMsg generates a summary and compacts session history.
-	CompactSessionMsg struct{ AdditionalPrompt string }
+	// SessionID selects the target: empty (or the current root session's ID)
+	// compacts the root session via the classic /compact path, any other ID
+	// requests a targeted compaction of that live sub-agent session.
+	// AgentName is carried along for user-facing feedback only.
+	CompactSessionMsg struct {
+		AdditionalPrompt string
+		SessionID        string
+		AgentName        string
+	}
 
 	// CopySessionToClipboardMsg copies the entire conversation to clipboard.
 	CopySessionToClipboardMsg struct{}
@@ -97,6 +108,7 @@ type (
 		Content     string       // Full content sent to the agent (with file contents expanded)
 		Attachments []Attachment // Attached files or inline content (e.g. pastes)
 		BypassQueue bool         // Process immediately even while the agent is working.
+		Queue       bool         // Force end-of-turn queueing regardless of the configured send mode.
 	}
 
 	// SendAttachmentMsg is a message for the first message with an attachment.

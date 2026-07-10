@@ -224,8 +224,41 @@ func (m *appModel) handleExportSession(filename string) (tea.Model, tea.Cmd) {
 	return m, notification.SuccessCmd("Session exported to " + exportFile)
 }
 
-func (m *appModel) handleCompactSession(additionalPrompt string) (tea.Model, tea.Cmd) {
-	return m, m.chatPage.CompactSession(additionalPrompt)
+func (m *appModel) handleCompactSession(msg messages.CompactSessionMsg) (tea.Model, tea.Cmd) {
+	if compactTargetsCurrentSession(msg, m.application.Session()) {
+		return m, m.chatPage.CompactSession(msg.AdditionalPrompt)
+	}
+	// Targeted compaction of a live sub-agent session: queued onto the
+	// target session's own run loop, so neither the root stream nor the
+	// target stream is cancelled.
+	if err := m.application.CompactLiveSession(m.ctx(), msg.SessionID, msg.AdditionalPrompt); err != nil {
+		return m, notification.ErrorCmd(fmt.Sprintf("Compaction request failed: %v", err))
+	}
+	return m, notification.InfoCmd(fmt.Sprintf(
+		"Compaction requested for %s; it runs at the session's next safe point.",
+		compactTargetLabel(msg)))
+}
+
+// compactTargetsCurrentSession reports whether msg addresses the current
+// root session: an empty target (the /compact command) or the root's own
+// session ID (the main row of the /context team view). Both route through
+// the existing root compaction path.
+func compactTargetsCurrentSession(msg messages.CompactSessionMsg, current *session.Session) bool {
+	return msg.SessionID == "" || (current != nil && msg.SessionID == current.ID)
+}
+
+// compactTargetLabel names the target of a targeted compaction request for
+// notifications: "agent (session 0f9e8d7c)", or just the short session ID
+// when the agent name is unknown.
+func compactTargetLabel(msg messages.CompactSessionMsg) string {
+	shortID := msg.SessionID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	if msg.AgentName == "" {
+		return "session " + shortID
+	}
+	return fmt.Sprintf("%s (session %s)", msg.AgentName, shortID)
 }
 
 func (m *appModel) handleCopySessionToClipboard() (tea.Model, tea.Cmd) {
@@ -455,7 +488,8 @@ func (m *appModel) handleShowCostDialog() (tea.Model, tea.Cmd) {
 // goroutine: the computation lists the agent's tools, which may start
 // not-yet-started toolsets (e.g. MCP servers) and block for a while, so it
 // must not run inside the Update loop. The dialog opens when the data is
-// ready.
+// ready, together with the live-session team view (current root plus every
+// running sub-agent session; empty for runtimes without live tracking).
 func (m *appModel) handleShowContextDialog() (tea.Model, tea.Cmd) {
 	appRef := m.application
 	ctx := m.ctx()
@@ -473,7 +507,7 @@ func (m *appModel) handleShowContextDialog() (tea.Model, tea.Cmd) {
 				Type: notification.TypeError,
 			}
 		}
-		return dialog.OpenDialogMsg{Model: dialog.NewContextDialog(breakdown)}
+		return dialog.OpenDialogMsg{Model: dialog.NewContextDialog(breakdown, appRef.LiveSessions(ctx)...)}
 	}
 }
 
@@ -584,6 +618,51 @@ func (m *appModel) handleOpenModelPicker() (tea.Model, tea.Cmd) {
 	return m, core.CmdHandler(dialog.OpenDialogMsg{
 		Model: modelDialog,
 	})
+}
+
+func (m *appModel) handleRefreshModelPicker(query string) (tea.Model, tea.Cmd) {
+	if !m.application.SupportsModelSwitching() {
+		return m, notification.InfoCmd("Model switching is not supported with remote runtimes")
+	}
+
+	ctx := m.ctx()
+	return m, tea.Batch(
+		notification.InfoCmd("Refreshing models…"),
+		func() tea.Msg {
+			err := m.application.RefreshModelsCatalog(ctx)
+			catalogRefreshed := err == nil
+			if errors.Is(err, runtime.ErrUnsupported) {
+				err = nil
+			}
+			if err != nil {
+				return messages.ModelPickerRefreshedMsg{Query: query, Err: err}
+			}
+			return messages.ModelPickerRefreshedMsg{
+				Models:           m.application.AvailableModels(ctx),
+				Query:            query,
+				CatalogRefreshed: catalogRefreshed,
+			}
+		},
+	)
+}
+
+func (m *appModel) handleModelPickerRefreshed(msg messages.ModelPickerRefreshedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		return m, notification.ErrorCmd(fmt.Sprintf("Failed to refresh models catalog: %v", msg.Err))
+	}
+	if len(msg.Models) == 0 {
+		return m, notification.InfoCmd("No models available for selection")
+	}
+
+	modelDialog := dialog.NewModelPickerDialogWithQuery(msg.Models, msg.Query)
+	toast := "Model list reloaded"
+	if msg.CatalogRefreshed {
+		toast = "Models refreshed"
+	}
+	return m, tea.Batch(
+		notification.SuccessCmd(toast),
+		core.CmdHandler(dialog.OpenDialogMsg{Model: modelDialog}),
+	)
 }
 
 // handleCycleThinkingLevel advances the current agent's thinking-effort level
@@ -789,21 +868,37 @@ func (m *appModel) handleThemeFileChanged(themeRef string) (tea.Model, tea.Cmd) 
 	)
 }
 
-// --- Layout customization ---
+// --- Settings (/settings) ---
 
-// handleOpenCustomizeDialog opens the /custom layout dialog.
-func (m *appModel) handleOpenCustomizeDialog() (tea.Model, tea.Cmd) {
-	if m.hideSidebar {
-		return m, notification.InfoCmd("Sidebar is disabled; there is no layout to customize")
-	}
+// handleOpenSettingsDialog opens the /settings dialog. The Visuals tab is
+// omitted when there is no sidebar to customize (--sidebar=false); lean mode
+// never gets here (it has no overlay support, the message is dropped).
+func (m *appModel) handleOpenSettingsDialog() (tea.Model, tea.Cmd) {
 	return m, core.CmdHandler(dialog.OpenDialogMsg{
-		Model: dialog.NewCustomizeDialog(m.layoutSettings),
+		Model: dialog.NewSettingsDialog(m.layoutSettings, m.sendMode, !m.hideSidebar),
 	})
 }
 
+// handleApplySettings applies the settings chosen in the /settings dialog
+// and persists them to the user config.
+func (m *appModel) handleApplySettings(msg messages.ApplySettingsMsg) (tea.Model, tea.Cmd) {
+	model, cmd := m.applyLayoutSettings(msg.Layout)
+
+	m.sendMode = messages.ParseSendMode(string(msg.SendMode))
+	for _, page := range m.chatPages {
+		page.SetSendMode(m.sendMode)
+	}
+
+	if err := saveSettingsToUserConfig(m.layoutSettings, m.sendMode); err != nil {
+		slog.Warn("Failed to save settings to user config", "error", err)
+		return model, tea.Batch(cmd, notification.WarningCmd("Settings applied but could not be saved"))
+	}
+	return model, tea.Batch(cmd, notification.SuccessCmd("Settings updated"))
+}
+
 // applyLayoutSettings applies the given layout to every chat page (all tabs
-// share the same layout) and optionally persists it to the user config.
-func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings, persist bool) (tea.Model, tea.Cmd) {
+// share the same layout) without persisting it.
+func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings) (tea.Model, tea.Cmd) {
 	settings.SidebarPosition = messages.ParseSidebarPosition(string(settings.SidebarPosition))
 	settings.SectionSpacing = messages.ParseSectionSpacing(string(settings.SectionSpacing))
 	m.layoutSettings = settings
@@ -815,15 +910,6 @@ func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings, persist
 		}
 	}
 	cmds = append(cmds, m.resizeAll())
-
-	if persist {
-		if err := saveLayoutToUserConfig(settings); err != nil {
-			slog.Warn("Failed to save layout to user config", "error", err)
-			cmds = append(cmds, notification.WarningCmd("Layout applied but could not be saved"))
-		} else {
-			cmds = append(cmds, notification.SuccessCmd("Layout updated"))
-		}
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -840,12 +926,18 @@ func layoutSettingsFromConfig(l userconfig.LayoutSettings) messages.LayoutSettin
 	}
 }
 
-// saveLayoutToUserConfig persists layout settings to the user config file.
-// Default settings clear the layout entry to keep the config file minimal.
-func saveLayoutToUserConfig(s messages.LayoutSettings) error {
+// saveSettingsToUserConfig persists the dialog settings to the user config
+// file. Default values clear their entries to keep the config file minimal.
+func saveSettingsToUserConfig(s messages.LayoutSettings, mode messages.SendMode) error {
 	return userconfig.Update(func(cfg *userconfig.Config) error {
 		if cfg.Settings == nil {
 			cfg.Settings = &userconfig.Settings{}
+		}
+
+		if mode == messages.SendModeQueue {
+			cfg.Settings.BusySendMode = string(messages.SendModeQueue)
+		} else {
+			cfg.Settings.BusySendMode = ""
 		}
 
 		if s == (messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal}) {

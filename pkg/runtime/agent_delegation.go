@@ -93,6 +93,8 @@ type SubSessionConfig struct {
 	Title string
 	// ToolsApproved overrides whether tools are pre-approved in the child session.
 	ToolsApproved bool
+	// Permissions defines session-level tool permission overrides.
+	Permissions *session.PermissionsConfig
 	// NonInteractive marks the child session as running without a user present
 	// (e.g. MCP server, A2A adapter, background agent). This causes the runtime
 	// to auto-stop on max iterations instead of blocking for user input.
@@ -184,9 +186,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
 	}
-	if parent.Permissions != nil {
-		opts = append(opts, session.WithPermissions(parent.Permissions.Clone()))
-	}
+	opts = append(opts, session.WithPermissions(cfg.Permissions))
 	// Merge parent's excluded tools with config's excluded tools so that
 	// nested sub-sessions (e.g. skill → transfer_task → child) inherit
 	// exclusions from all ancestors and don't re-introduce filtered tools.
@@ -322,11 +322,12 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 		return nil, subSessionErr
 	}
 
-	// Only propagate ToolsApproved on success. A failed sub-session must not
-	// silently escalate the parent's tool-approval gate: the user approved
+	// Only propagate ToolsApproved and Permissions on success. A failed sub-session
+	// must not silently escalate the parent's tool-approval gate: the user approved
 	// tools within a sub-session scope that ended in error, and that approval
 	// should not carry over to the parent's remaining turns.
-	parent.ToolsApproved = s.ToolsApproved
+	parent.SetToolsApproved(s.IsToolsApproved())
+	parent.SetPermissions(s.ClonePermissions())
 	span.SetStatus(codes.Ok, "sub-session completed")
 	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
 }
@@ -479,19 +480,18 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 // RunAgent implements agenttool.Runner. It starts a sub-agent synchronously
 // and blocks until completion or cancellation.
 //
-// Background tasks run with tools pre-approved because there is no user
-// present to respond to interactive approval prompts during async
-// execution. This is a deliberate design trade-off: the user implicitly
-// authorises all tool calls made by the sub-agent when they approve
-// run_background_agent. Callers should be aware that prompt injection in
-// the sub-agent's context could exploit this gate-bypass.
+// Background tasks inherit the parent session's permissions because there is no user
+// present to respond to interactive approval prompts during async execution.
+// Tool calls that result in an "Ask" outcome will be auto-denied by the dispatcher
+// due to the non-interactive context.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
 	return r.runCollecting(ctx, params.ParentSession, SubSessionConfig{
 		Task:           params.Task,
 		ExpectedOutput: params.ExpectedOutput,
 		AgentName:      params.AgentName,
 		Title:          "Background agent task",
-		ToolsApproved:  true,
+		ToolsApproved:  params.ParentSession.IsToolsApproved(),
+		Permissions:    params.ParentSession.ClonePermissions(),
 		NonInteractive: true,
 		PinAgent:       true,
 	}, params.OnContent)
@@ -550,7 +550,8 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 			ExpectedOutput: params.ExpectedOutput,
 			AgentName:      params.Agent,
 			Title:          "Transferred task",
-			ToolsApproved:  sess.ToolsApproved,
+			ToolsApproved:  sess.IsToolsApproved(),
+			Permissions:    sess.ClonePermissions(),
 			NonInteractive: sess.NonInteractive,
 		},
 		SwitchCurrentAgent: true,

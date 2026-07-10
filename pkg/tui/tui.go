@@ -240,8 +240,13 @@ type appModel struct {
 	hideSidebar bool
 
 	// layoutSettings is the active TUI layout customization (sidebar position
-	// and section visibility). Shared by every tab and managed via /custom.
+	// and section visibility). Shared by every tab and managed via /settings.
 	layoutSettings messages.LayoutSettings
+
+	// sendMode is what happens to messages sent while the agent is working:
+	// steer into the ongoing stream (default) or queue until the turn ends.
+	// Shared by every tab and managed via /settings.
+	sendMode messages.SendMode
 
 	// buildCommandCategories is a function that returns the list of command categories.
 	buildCommandCategories func(context.Context, tea.Model) []commands.Category
@@ -463,6 +468,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		focusedPanel:                  PanelEditor,
 		editorLines:                   3,
 		layoutSettings:                layoutSettingsFromConfig(userSettings.GetLayout()),
+		sendMode:                      messages.ParseSendMode(userSettings.GetBusySendMode()),
 		keyboardEnhancementsSupported: termfeatures.SupportsModifiedEnter(os.Getenv),
 		dockerDesktop:                 os.Getenv("TERM_PROGRAM") == "docker_desktop",
 		appName:                       "docker agent",
@@ -590,6 +596,7 @@ func (m *appModel) chatPageOpts() []chat.PageOption {
 	opts := []chat.PageOption{
 		chat.WithCommandParser(commands.NewParser(m.commandCategories()...)),
 		chat.WithLayoutSettings(m.layoutSettings),
+		chat.WithSendMode(m.sendMode),
 	}
 
 	if m.leanMode {
@@ -765,7 +772,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case messages.SpawnSessionMsg, messages.SwitchTabMsg,
 			messages.CloseTabMsg, messages.ReorderTabMsg,
-			messages.ToggleSidebarMsg, messages.OpenCustomizeDialogMsg:
+			messages.ToggleSidebarMsg, messages.OpenSettingsDialogMsg:
 			return m, nil
 		}
 	}
@@ -1133,7 +1140,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.forwardChat(msg)
 
 	case messages.CompactSessionMsg:
-		return m.handleCompactSession(msg.AdditionalPrompt)
+		return m.handleCompactSession(msg)
 
 	case messages.CopySessionToClipboardMsg:
 		return m.handleCopySessionToClipboard()
@@ -1208,6 +1215,14 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.OpenModelPickerMsg:
 		return m.handleOpenModelPicker()
 
+	case messages.RefreshModelPickerMsg:
+		_, closeCmd := m.dialogMgr.Update(dialog.CloseDialogMsg{})
+		model, refreshCmd := m.handleRefreshModelPicker(msg.Query)
+		return model, tea.Batch(closeCmd, refreshCmd)
+
+	case messages.ModelPickerRefreshedMsg:
+		return m.handleModelPickerRefreshed(msg)
+
 	case messages.ChangeModelMsg:
 		return m.handleChangeModel(msg.ModelRef)
 
@@ -1234,19 +1249,19 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.ThemeFileChangedMsg:
 		return m.handleThemeFileChanged(msg.ThemeRef)
 
-	// --- Layout customization ---
+	// --- Settings (/settings) ---
 
-	case messages.OpenCustomizeDialogMsg:
-		return m.handleOpenCustomizeDialog()
+	case messages.OpenSettingsDialogMsg:
+		return m.handleOpenSettingsDialog()
 
 	case messages.PreviewLayoutMsg:
-		return m.applyLayoutSettings(msg.Layout, false)
+		return m.applyLayoutSettings(msg.Layout)
 
-	case messages.ApplyLayoutMsg:
-		return m.applyLayoutSettings(msg.Layout, true)
+	case messages.ApplySettingsMsg:
+		return m.handleApplySettings(msg)
 
 	case messages.CancelLayoutPreviewMsg:
-		return m.applyLayoutSettings(msg.Original, false)
+		return m.applyLayoutSettings(msg.Original)
 
 	// --- Speech-to-text ---
 

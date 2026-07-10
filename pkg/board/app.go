@@ -95,13 +95,6 @@ func (a *App) Columns() []Column {
 	return slices.Clone(a.columns)
 }
 
-// ColumnIndex returns the position of a column in the pipeline, or -1.
-func (a *App) ColumnIndex(colID string) int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == colID })
-}
-
 // SetColumnPrompt updates a column's prompt and persists it to the user's
 // global config file.
 func (a *App) SetColumnPrompt(colID, prompt string) error {
@@ -113,6 +106,121 @@ func (a *App) SetColumnPrompt(colID, prompt string) error {
 	}
 	a.columns[i].Prompt = prompt
 	return a.saveConfigLocked()
+}
+
+// AddColumn validates and appends a column to the pipeline, persisting it
+// to the user's global config file. The column's id is derived from its
+// name and kept unique; the saved column (with its id) is returned so the
+// UI can select it.
+func (a *App) AddColumn(col Column) (Column, error) {
+	col, err := normalizeColumn(col)
+	if err != nil {
+		return Column{}, err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	col.ID = a.uniqueColumnIDLocked(col.Name)
+	a.columns = append(a.columns, col)
+	if err := a.saveConfigLocked(); err != nil {
+		return Column{}, err
+	}
+	return col, nil
+}
+
+// UpdateColumn replaces the column with the given id, applying the same
+// validation as AddColumn and persisting the change. The id never changes
+// on an update, so existing cards stay attached to the column across a
+// rename.
+func (a *App) UpdateColumn(id string, col Column) (Column, error) {
+	col, err := normalizeColumn(col)
+	if err != nil {
+		return Column{}, err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	if idx < 0 {
+		return Column{}, fmt.Errorf("unknown column %q", id)
+	}
+	col.ID = id
+	a.columns[idx] = col
+	if err := a.saveConfigLocked(); err != nil {
+		return Column{}, err
+	}
+	return col, nil
+}
+
+// MoveColumn moves the column with the given id delta positions in the
+// pipeline (negative moves it left) and persists the new order. The
+// destination is clamped, so moves past either end are safe no-ops.
+func (a *App) MoveColumn(id string, delta int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	if idx < 0 {
+		return fmt.Errorf("unknown column %q", id)
+	}
+	dst := min(max(idx+delta, 0), len(a.columns)-1)
+	if dst == idx {
+		return nil
+	}
+	col := a.columns[idx]
+	a.columns = slices.Insert(slices.Delete(a.columns, idx, idx+1), dst, col)
+	return a.saveConfigLocked()
+}
+
+// RemoveColumn deletes a column by id and persists the change. A column
+// that still holds cards cannot be removed (its cards would silently pile
+// up in the first column), and neither can the last remaining column. The
+// cards check is advisory: a card creation or move in flight can still
+// land in the removed column, where the UI rescues it into the first one.
+func (a *App) RemoveColumn(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	if idx < 0 {
+		return fmt.Errorf("unknown column %q", id)
+	}
+	if len(a.columns) == 1 {
+		return errors.New("the board needs at least one column")
+	}
+	for _, card := range a.store.ListCards() {
+		if card.Column == id {
+			return fmt.Errorf("column %q still has cards; move or delete them first", a.columns[idx].Name)
+		}
+	}
+	a.columns = slices.Delete(a.columns, idx, idx+1)
+	return a.saveConfigLocked()
+}
+
+// normalizeColumn checks a column's name and normalizes its fields: name
+// and emoji are single-line display strings (inner whitespace collapses to
+// spaces), the prompt keeps inner newlines — multi-line prompts are the
+// norm.
+func normalizeColumn(col Column) (Column, error) {
+	col.Name = collapseSpace(col.Name)
+	if col.Name == "" {
+		return Column{}, errors.New("column name is required")
+	}
+	col.Emoji = collapseSpace(col.Emoji)
+	col.Prompt = strings.TrimSpace(col.Prompt)
+	return col, nil
+}
+
+// uniqueColumnIDLocked derives an id from a column name, suffixing it until
+// it collides with no existing column. Callers must hold a.mu.
+func (a *App) uniqueColumnIDLocked(name string) string {
+	base := columnID(name)
+	if base == "" {
+		base = fallbackColumnID(name)
+	}
+	id := base
+	for n := 2; slices.ContainsFunc(a.columns, func(c Column) bool { return c.ID == id }); n++ {
+		id = fmt.Sprintf("%s-%d", base, n)
+	}
+	return id
 }
 
 // saveConfigLocked persists the projects and columns to the global config
@@ -379,11 +487,16 @@ func (a *App) MoveCard(cardID, colID string) error {
 		return err
 	}
 
-	dstIdx := a.ColumnIndex(colID)
+	// One pipeline snapshot for the whole move: columns can be edited
+	// concurrently from the UI, and re-indexing a fresh snapshot later
+	// could deliver another column's prompt (or panic on a removed one).
+	columns := a.Columns()
+	dstIdx := slices.IndexFunc(columns, func(c Column) bool { return c.ID == colID })
 	if dstIdx < 0 {
 		return fmt.Errorf("unknown column %q", colID)
 	}
-	movedForward := dstIdx > a.ColumnIndex(card.Column)
+	srcIdx := slices.IndexFunc(columns, func(c Column) bool { return c.ID == card.Column })
+	movedForward := dstIdx > srcIdx
 
 	moved, err := a.store.MoveCard(cardID, colID, movedForward)
 	if err != nil {
@@ -393,7 +506,7 @@ func (a *App) MoveCard(cardID, colID string) error {
 	a.onChanged()
 
 	if movedForward {
-		return a.controller.SendPrompt(moved, a.Columns()[dstIdx].Prompt)
+		return a.controller.SendPrompt(moved, columns[dstIdx].Prompt)
 	}
 	return nil
 }

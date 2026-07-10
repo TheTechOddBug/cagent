@@ -159,7 +159,7 @@ type model struct {
 	inlineEditOriginal      string         // Original content (for cancel)
 	inlineEditPrevSelection int            // Previous selection index before entering inline edit (-1 = was not in selection mode)
 
-	// Hover state for showing copy button on assistant messages
+	// Hover state for showing action labels (copy, edit) on messages
 	hoveredMessageIndex int // Index of message under mouse (-1 = none)
 
 	// Transient "copied" confirmation over the last clicked copy label
@@ -347,7 +347,8 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cmd) 
 			}
 		}
 
-		if clicked, msg := m.isEditLabelClick(msgIdx, localLine, col); clicked {
+		if m.isEditLabelClick(msgIdx, localLine, col) {
+			msg := m.messages[msgIdx]
 			return m, core.CmdHandler(messages.EditUserMessageMsg{
 				MsgIndex:        msgIdx,
 				SessionPosition: *msg.SessionPosition,
@@ -458,11 +459,12 @@ func (m *model) handleMouseMotion(msg tea.MouseMotionMsg) (layout.Model, tea.Cmd
 		return m, cmd
 	}
 
-	// Track hovered message for showing copy button on assistant messages
+	// Track hovered message for showing the action labels (copy, edit)
 	line, col := m.mouseToLineCol(msg.X, msg.Y)
 	newHovered := -1
 	if msgIdx, _ := m.globalLineToMessageLine(line); msgIdx >= 0 && msgIdx < len(m.messages) {
-		if m.messages[msgIdx].Type == types.MessageTypeAssistant {
+		switch m.messages[msgIdx].Type {
+		case types.MessageTypeAssistant, types.MessageTypeUser:
 			newHovered = msgIdx
 		}
 	}
@@ -1386,6 +1388,7 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 
 		// Create new reasoning block
 		block := reasoningblock.New(nextBlockID(), agentName, m.sessionState)
+		block.SetShowAgentBadge(showReasoningAgentBadge(m.lastMessage(), agentName))
 		block.SetSize(m.contentWidth(), 0)
 
 		blockMsg := &types.Message{
@@ -1688,6 +1691,35 @@ func (m *model) AppendReasoning(agentName, content string) tea.Cmd {
 	return m.addReasoningBlock(agentName, content)
 }
 
+// lastMessage returns the most recently appended message, or nil when empty.
+func (m *model) lastMessage() *types.Message {
+	if len(m.messages) == 0 {
+		return nil
+	}
+	return m.messages[len(m.messages)-1]
+}
+
+// showReasoningAgentBadge reports whether a new reasoning block for agentName
+// should render its agent badge. Mirrors message.sameAgentAsPrevious: the
+// badge is hidden only when the block visually continues content from the
+// same agent (assistant text, reasoning, or tool activity). In particular, a
+// transfer_task tool call is sent by the parent agent, so reasoning from the
+// sub-agent that follows it shows the sub-agent's badge.
+func showReasoningAgentBadge(previous *types.Message, agentName string) bool {
+	if previous == nil || previous.Sender != agentName {
+		return true
+	}
+	switch previous.Type {
+	case types.MessageTypeAssistant,
+		types.MessageTypeAssistantReasoningBlock,
+		types.MessageTypeToolCall,
+		types.MessageTypeToolResult:
+		return false
+	default:
+		return true
+	}
+}
+
 // addReasoningBlock creates a new reasoning block message.
 //
 // Reasoning blocks routinely interleave with an actively streaming assistant
@@ -1708,6 +1740,7 @@ func (m *model) addReasoningBlock(agentName, content string) tea.Cmd {
 	}
 
 	block := reasoningblock.New(nextBlockID(), agentName, m.sessionState)
+	block.SetShowAgentBadge(showReasoningAgentBadge(m.lastMessage(), agentName))
 	block.SetReasoning(content)
 	block.SetSize(m.contentWidth(), 0)
 
@@ -1862,36 +1895,52 @@ func (m *model) stopReasoningBlockAnimations() {
 	}
 }
 
-func (m *model) isEditLabelClick(msgIdx, localLine, col int) (bool, *types.Message) {
-	if msgIdx < 0 || msgIdx >= len(m.messages) {
-		return false, nil
-	}
-	msg := m.messages[msgIdx]
-	if msg.Type != types.MessageTypeUser || msg.SessionPosition == nil {
-		return false, nil
-	}
-	if msgIdx >= len(m.views) {
-		return false, nil
+// labelHit reports whether a click at (localLine, col) lands on the given
+// label within the rendered lines of message msgIdx. It matches the label
+// text in the ANSI-stripped rendered line, so callers must gate on the state
+// that makes the label visible (hover, selection, message type).
+func (m *model) labelHit(msgIdx, localLine, col int, label string) bool {
+	if msgIdx < 0 || msgIdx >= len(m.messages) || msgIdx >= len(m.views) {
+		return false
 	}
 
 	item := m.renderItem(msgIdx, m.views[msgIdx])
 	if localLine < 0 || localLine >= len(item.lines) {
-		return false, nil
+		return false
 	}
 
 	plainLine := ansi.Strip(item.lines[localLine])
-	before, _, ok := strings.Cut(plainLine, types.UserMessageEditLabel)
+	before, _, ok := strings.Cut(plainLine, label)
 	if !ok {
-		return false, nil
+		return false
 	}
 
 	labelStart := ansi.StringWidth(before)
-	labelEnd := labelStart + ansi.StringWidth(types.UserMessageEditLabel)
-	if col >= labelStart && col < labelEnd {
-		return true, msg
-	}
+	return col >= labelStart && col < labelStart+ansi.StringWidth(label)
+}
 
-	return false, nil
+// isActionRowVisible reports whether the hover-action labels (edit, copy)
+// are currently rendered for the message: under the mouse, or keyboard-selected.
+func (m *model) isActionRowVisible(msgIdx int) bool {
+	return msgIdx == m.hoveredMessageIndex || (m.focused && msgIdx == m.selectedMessageIndex)
+}
+
+// isEditLabelClick checks if the click is on the edit label of a user message.
+// The label lives on the action row — the first line of the user bubble — so
+// the hit test is pinned to localLine 0: message content that happens to
+// contain the label text can never become a click target.
+func (m *model) isEditLabelClick(msgIdx, localLine, col int) bool {
+	if msgIdx < 0 || msgIdx >= len(m.messages) {
+		return false
+	}
+	msg := m.messages[msgIdx]
+	if msg.Type != types.MessageTypeUser || msg.SessionPosition == nil {
+		return false
+	}
+	if localLine != 0 || !m.isActionRowVisible(msgIdx) {
+		return false
+	}
+	return m.labelHit(msgIdx, localLine, col, types.UserMessageEditLabel)
 }
 
 // codeBlockAt returns the raw code of the fenced code block whose copy label
@@ -1939,65 +1988,34 @@ func (m *model) codeBlockAt(msgIdx, localLine, col int) (string, bool) {
 	return target.Content, true
 }
 
-// isCopyLabelClick checks if the click is on the copy label of an assistant message.
+// isCopyLabelClick checks if the click is on the copy label of a message.
 func (m *model) isCopyLabelClick(msgIdx, localLine, col int) bool {
 	if msgIdx < 0 || msgIdx >= len(m.messages) {
 		return false
 	}
-	msg := m.messages[msgIdx]
-	if msg.Type != types.MessageTypeAssistant {
+	if !m.isActionRowVisible(msgIdx) {
 		return false
 	}
-	// Only clickable when hovered or selected
-	if msgIdx != m.hoveredMessageIndex && (!m.focused || msgIdx != m.selectedMessageIndex) {
+	switch m.messages[msgIdx].Type {
+	case types.MessageTypeUser:
+		// The action row is the first line of the user bubble; pinning the
+		// hit test there rules out collisions with message content.
+		if localLine != 0 {
+			return false
+		}
+	case types.MessageTypeAssistant:
+	default:
 		return false
 	}
-	if msgIdx >= len(m.views) {
-		return false
-	}
-
-	item := m.renderItem(msgIdx, m.views[msgIdx])
-	if localLine < 0 || localLine >= len(item.lines) {
-		return false
-	}
-
-	plainLine := ansi.Strip(item.lines[localLine])
-	before, _, ok := strings.Cut(plainLine, types.AssistantMessageCopyLabel)
-	if !ok {
-		return false
-	}
-
-	labelStart := ansi.StringWidth(before)
-	labelEnd := labelStart + ansi.StringWidth(types.AssistantMessageCopyLabel)
-	return col >= labelStart && col < labelEnd
+	return m.labelHit(msgIdx, localLine, col, types.MessageCopyLabel)
 }
 
 // isRetryLabelClick checks if the click is on the retry label of an error message.
 func (m *model) isRetryLabelClick(msgIdx, localLine, col int) bool {
-	if msgIdx < 0 || msgIdx >= len(m.messages) {
+	if msgIdx < 0 || msgIdx >= len(m.messages) || m.messages[msgIdx].Type != types.MessageTypeError {
 		return false
 	}
-	if m.messages[msgIdx].Type != types.MessageTypeError {
-		return false
-	}
-	if msgIdx >= len(m.views) {
-		return false
-	}
-
-	item := m.renderItem(msgIdx, m.views[msgIdx])
-	if localLine < 0 || localLine >= len(item.lines) {
-		return false
-	}
-
-	plainLine := ansi.Strip(item.lines[localLine])
-	before, _, ok := strings.Cut(plainLine, types.ErrorRetryLabel)
-	if !ok {
-		return false
-	}
-
-	labelStart := ansi.StringWidth(before)
-	labelEnd := labelStart + ansi.StringWidth(types.ErrorRetryLabel)
-	return col >= labelStart && col < labelEnd
+	return m.labelHit(msgIdx, localLine, col, types.ErrorRetryLabel)
 }
 
 // copyMessageToClipboard copies the content of a specific message to clipboard.

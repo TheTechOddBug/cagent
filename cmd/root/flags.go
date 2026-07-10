@@ -144,6 +144,13 @@ func addGatewayFlags(cmd *cobra.Command, runConfig *config.RuntimeConfig, loadUs
 			runConfig.DefaultModel = &userCfg.DefaultModel.ModelConfig
 		}
 
+		// User-level custom providers (registered via `docker agent setup` or
+		// hand-written in the user config) apply to every run; agent-file
+		// definitions with the same name win when configs are loaded.
+		if runConfig.Providers == nil {
+			runConfig.Providers = userCfg.GetProviders()
+		}
+
 		return setupWorkingDirectory(runConfig.WorkingDir)
 	}
 }

@@ -98,6 +98,55 @@ func TestConfig_SetAlias_Validation(t *testing.T) {
 	}
 }
 
+func TestConfig_SetGetProviders(t *testing.T) {
+	t.Parallel()
+
+	config := &Config{}
+
+	require.Error(t, config.SetProvider("", latest.ProviderConfig{}))
+	require.Error(t, config.SetProvider("   ", latest.ProviderConfig{}))
+	assert.Nil(t, config.GetProviders())
+
+	provider := latest.ProviderConfig{
+		BaseURL:  "https://llm.corp.example.com/v1",
+		APIType:  "openai_chatcompletions",
+		TokenKey: "MYPROVIDER_API_KEY",
+	}
+	require.NoError(t, config.SetProvider("myprovider", provider))
+
+	providers := config.GetProviders()
+	require.Len(t, providers, 1)
+	assert.Equal(t, provider, providers["myprovider"])
+
+	// The returned map is a copy: mutating it must not affect the config.
+	delete(providers, "myprovider")
+	assert.Len(t, config.GetProviders(), 1)
+}
+
+func TestConfig_ProvidersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	config := &Config{}
+	require.NoError(t, config.SetProvider("myprovider", latest.ProviderConfig{
+		BaseURL:  "https://llm.corp.example.com/v1",
+		APIType:  "openai_responses",
+		TokenKey: "MYPROVIDER_API_KEY",
+	}))
+	require.NoError(t, config.saveTo(configFile))
+
+	loaded, err := loadFrom(configFile, "")
+	require.NoError(t, err)
+
+	providers := loaded.GetProviders()
+	require.Len(t, providers, 1)
+	assert.Equal(t, "https://llm.corp.example.com/v1", providers["myprovider"].BaseURL)
+	assert.Equal(t, "openai_responses", providers["myprovider"].APIType)
+	assert.Equal(t, "MYPROVIDER_API_KEY", providers["myprovider"].TokenKey)
+}
+
 func TestValidateAliasName(t *testing.T) {
 	t.Parallel()
 
@@ -1072,6 +1121,48 @@ func TestConfig_SandboxAllowlistRoundTrip(t *testing.T) {
 	loaded, err := loadFrom(configFile, "")
 	require.NoError(t, err)
 	assert.Equal(t, original.SandboxAllowlist, loaded.SandboxAllowlist)
+}
+
+// Regression test for docker/docker-agent#3536: a hand-written config using
+// the single-mapping hook form must not fail the whole config load, which
+// silently dropped aliases and reset every setting.
+func TestConfig_SingleMappingHooksKeepAliases(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `version: v1
+aliases:
+  default:
+    path: /Users/blabla/dev/tools/cagent/agent.yaml
+settings:
+  theme: catppuccin-mocha
+  hooks:
+    on_user_input:
+      type: command
+      command: terminal-notifier -message "needs input"
+    stop:
+      type: command
+      command: terminal-notifier -message "completed"
+`
+	require.NoError(t, os.WriteFile(configFile, []byte(content), 0o600))
+
+	cfg, err := loadFrom(configFile, "")
+	require.NoError(t, err)
+
+	alias, ok := cfg.GetAlias("default")
+	require.True(t, ok, "alias must survive a config with single-mapping hooks")
+	assert.Equal(t, "/Users/blabla/dev/tools/cagent/agent.yaml", alias.Path)
+
+	require.NotNil(t, cfg.Settings)
+	assert.Equal(t, "catppuccin-mocha", cfg.Settings.Theme)
+
+	hooks := cfg.Settings.GlobalHooks()
+	require.NotNil(t, hooks)
+	require.Len(t, hooks.OnUserInput, 1)
+	require.Len(t, hooks.Stop, 1)
+	assert.Equal(t, "command", hooks.OnUserInput[0].Type)
 }
 
 func TestConfig_HooksRoundTrip(t *testing.T) {
