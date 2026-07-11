@@ -9,6 +9,8 @@ canonical: https://docs.docker.com/ai/docker-agent/configuration/agents/
 
 _Complete reference for defining agents in your YAML configuration._
 
+A configuration must define at least one agent under `agents`.
+
 ## Full Schema
 
 <!-- yaml-lint:skip -->

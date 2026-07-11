@@ -48,7 +48,8 @@
     },
     "agents": {
       "type": "object",
-      "description": "Map of agent configurations",
+      "description": "Map of agent configurations. At least one agent is required.",
+      "minProperties": 1,
       "additionalProperties": {
         "$ref": "#/definitions/AgentConfig"
       }
