@@ -1360,10 +1360,18 @@ func (s *Session) buildSessionSummaryMessages(items []Item) ([]chat.Message, int
 // have hidden), supplies its own system/user prompt, and runs through
 // a sub-runtime that re-applies sanitization on its own session.
 //
+// The third return value is the snapshot's total item count
+// (len(s.Messages) at the instant the snapshot was taken). Callers that
+// need an out-of-range sentinel for a split computed against messages/
+// sessIndices (i.e. "keep nothing of the tail") must use this value rather
+// than a fresh call to ItemCount(): the live count can already include an
+// append that happened after this snapshot, which would describe a longer
+// session than the one messages/sessIndices actually cover.
+//
 // All work is performed under s.mu.RLock via snapshotItems, so this
 // method is safe to call concurrently with AddMessage / ApplyCompaction
 // on the same session.
-func (s *Session) CompactionInput() ([]chat.Message, []int) {
+func (s *Session) CompactionInput() ([]chat.Message, []int, int) {
 	items := s.snapshotItems()
 
 	lastSummaryIndex := -1
@@ -1411,7 +1419,7 @@ func (s *Session) CompactionInput() ([]chat.Message, []int) {
 		messages = append(messages, msg)
 		sessIndices = append(sessIndices, i)
 	}
-	return messages, sessIndices
+	return messages, sessIndices, len(items)
 }
 
 func (s *Session) GetMessages(a *agent.Agent, extraSystemMessages ...chat.Message) []chat.Message {

@@ -39,7 +39,7 @@ func TestCompactionInputConcurrent(t *testing.T) {
 			s.AddMessage(&Message{Message: chat.Message{Role: chat.MessageRoleUser, Content: "u"}})
 		})
 		wg.Go(func() {
-			_, _ = s.CompactionInput()
+			_, _, _ = s.CompactionInput()
 		})
 	}
 	// One concurrent ApplyCompaction-shaped write to exercise the same
