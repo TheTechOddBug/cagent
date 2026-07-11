@@ -110,6 +110,9 @@
     }
   },
   "additionalProperties": false,
+  "required": [
+    "agents"
+  ],
   "definitions": {
     "Lifecycle": {
       "type": "object",
