@@ -443,6 +443,46 @@ func TestForkSession_CopiesHistoryBeforeUserMessage(t *testing.T) {
 	assert.Equal(t, forked.ID, loaded.ID)
 }
 
+// TestForkSession_ConcurrentWithLiveSessionMutation pins the data-race fix
+// for issue #3590: InMemorySessionStore.GetSession returns the live, shared
+// *Session pointer (not a copy), so ForkSession's index computation
+// (userMessageOrdinalToItemIndex) and session.ForkSession's own copy must
+// both go through locked snapshots to stay safe against a concurrent
+// AddMessage on that same live session — e.g. the HTTP AddMessage handler
+// racing a TUI fork action. Run with -race; before the fix, iterating
+// s.Messages directly races the concurrent AddMessage goroutine below.
+func TestForkSession_ConcurrentWithLiveSessionMutation(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := session.NewInMemorySessionStore()
+	parent := session.New()
+	parent.Title = "Parent Title"
+	parent.Messages = []session.Item{
+		session.NewMessageItem(session.UserMessage("first user")),
+		session.NewMessageItem(session.NewAgentMessage("root", &chat.Message{
+			Role:    chat.MessageRoleAssistant,
+			Content: "first answer",
+		})),
+	}
+	require.NoError(t, store.AddSession(ctx, parent))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Go(func() {
+			parent.AddMessage(session.UserMessage("concurrent"))
+		})
+		wg.Go(func() {
+			if _, err := sm.ForkSession(ctx, parent.ID, 0); err != nil {
+				t.Errorf("ForkSession: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
 // Regression: repeated forks of the same parent must pick (fork 1),
 // (fork 2), (fork 3) rather than three copies of (fork 1).
 func TestForkSession_TitleIncrementsAcrossSiblings(t *testing.T) {

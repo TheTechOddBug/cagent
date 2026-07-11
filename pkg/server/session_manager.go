@@ -460,12 +460,18 @@ func (sm *SessionManager) ForkSession(ctx context.Context, sessionID string, use
 // userMessageOrdinalToItemIndex maps a 0-based user-message ordinal
 // into an index in the parent's Session.Messages Item slice. Returns
 // ErrForkOutOfRange or ErrForkInSubSession on invalid input.
+//
+// It walks a MessagesSnapshot rather than s.Messages directly: s is the
+// live, shared session pointer returned by InMemorySessionStore.GetSession,
+// which a concurrent HTTP AddMessage or the runtime's own compaction can
+// still be mutating while ForkSession runs.
 func userMessageOrdinalToItemIndex(s *session.Session, ordinal int) (int, error) {
 	if ordinal < 0 {
 		return 0, fmt.Errorf("%w: %d", ErrForkOutOfRange, ordinal)
 	}
+	items := s.MessagesSnapshot()
 	seen := 0
-	for i, item := range s.Messages {
+	for i, item := range items {
 		switch {
 		case item.IsMessage():
 			// Mirror GetAllMessages: system messages don't count.
