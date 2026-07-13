@@ -58,6 +58,28 @@ func TestServer_EmptyList(t *testing.T) {
 	assert.Equal(t, "[]\n", string(buf)) // We don't want null, but an empty array
 }
 
+// TestServer_ZeroAgentSource pins the fix for docker/docker-agent#3588:
+// a config source with no agents must never make GET /api/agents panic
+// (latest.Agents.First() panics on an empty slice). Today validateConfig
+// rejects the agent-less config at load time, so the handler's own
+// len(cfg.Agents)==0 guard (agentsAPIEntry) never even gets exercised by
+// this path — the request still yields a clean, empty listing rather than
+// a panic either way.
+func TestServer_ZeroAgentSource(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	lnPath := startServer(t, ctx, prepareAgentsDir(t, "no_agents.yaml", "pirate.yaml"))
+
+	buf := httpGET(t, ctx, lnPath, "/api/agents")
+
+	var agents []api.Agent
+	unmarshal(t, buf, &agents)
+
+	require.Len(t, agents, 1)
+	assert.Contains(t, agents[0].Name, "pirate")
+}
+
 func TestServer_ListSessions(t *testing.T) {
 	t.Parallel()
 
