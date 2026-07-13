@@ -143,6 +143,36 @@ The **effort gauge** is a fixed-width six-cell indicator (`▰` filled, `▱` em
 
 Harness-backed agents (e.g. `claude-code`) show the harness type as their model and no thinking gauge. Press **Shift+Tab** to cycle the current model's thinking-effort level; a `✻ Thinking: <level>` toast confirms the change (useful when the sidebar is hidden).
 
+### Agent Delegation Feedback
+
+When a parent agent calls `transfer_task` to delegate work to a sub-agent, the TUI provides live visual feedback in both the sidebar and the chat.
+
+**Sidebar — Transfer box:** As soon as the delegation starts, an animated **Transfer** box appears below the agent roster, showing the direction of the handoff with a traveling dot:
+
+```text
+╭─ Transfer ─────────────────╮
+│  parent  ●──────►  child   │
+╰────────────────────────────╯
+```
+
+The box stays visible for at least 1.5 seconds. Once the sub-agent produces its first message, reasoning, or tool output, the box hides (still honoring the minimum window) to keep the sidebar focused on the active agent. If the sub-agent is slow or silent, the box hides after a 3-second maximum cutoff. The header shows a `↔` marker while any delegation is still in flight, even after the box hides.
+
+**Sidebar — Return box:** When the sub-agent finishes and control returns to the parent, a brief **Return** box animates the reverse direction for up to 1.5 seconds, then disappears:
+
+```text
+╭─ Return ───────────────────╮
+│  child  ●──────►  parent   │
+╰────────────────────────────╯
+```
+
+**Chat — return transition:** Alongside the sidebar Return animation, the chat shows a one-line static transition between the two agent badges:
+
+```text
+[child]  returned control to  [parent]
+```
+
+This transition is not persisted — it does not reappear when you reload the session.
+
 ### Context-Usage Gauge
 
 The context percentage shown in the sidebar token-usage section, and the fill bar in the lean TUI status line, both color-escalate as the active session approaches the auto-compaction threshold:
@@ -352,7 +382,7 @@ The **Visuals** tab customizes the layout. It shows a live schematic preview of 
 
 - **Sidebar position**: `Right` (default), `Left`, `Top`, or `Bottom`. Left/right keep the full vertical sidebar next to the chat; top/bottom render it as a compact horizontal band above or below the chat (session title, working directory, usage, plus a one-line summary of the current agent, tools, and todos).
 - **Section spacing**: `Compact`, `Normal` (default), or `Relaxed`, the number of blank lines between the sidebar sections (1, 2, or 3).
-- **Sidebar sections**: toggle the visibility of the **Token usage**, **Agents**, **Tools**, and **Todos** sections. The session block (title and working directory) is always shown.
+- **Sidebar sections**: toggle the visibility of the **Session path** (the working directory line, including its git branch) and the **Token usage**, **Agents**, **Tools**, and **Todos** sections. The session title is always shown.
 
 The **Behavior** tab controls how messages are handled:
 
@@ -367,6 +397,7 @@ settings:
   layout:
     sidebar_position: left # right (default), left, top, bottom
     section_spacing: compact # normal (default), compact, relaxed
+    hide_session_path: false
     hide_usage: true
     hide_agents: false
     hide_tools: false

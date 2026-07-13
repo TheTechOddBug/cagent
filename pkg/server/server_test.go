@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,47 @@ func TestServer_EmptyList(t *testing.T) {
 
 	buf := httpGET(t, ctx, lnPath, "/api/agents")
 	assert.Equal(t, "[]\n", string(buf)) // We don't want null, but an empty array
+}
+
+// TestServer_ZeroAgentSource pins the fix for docker/docker-agent#3588:
+// a config source with no agents must never make GET /api/agents panic
+// (latest.Agents.First() panics on an empty slice). Today validateConfig
+// rejects the agent-less config at load time, so the handler's own
+// len(cfg.Agents)==0 guard (agentsAPIEntry) never even gets exercised by
+// this path — the request still yields a clean, empty listing rather than
+// a panic either way.
+func TestServer_ZeroAgentSource(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	lnPath := startServer(t, ctx, prepareAgentsDir(t, "no_agents.yaml", "pirate.yaml"))
+
+	buf := httpGET(t, ctx, lnPath, "/api/agents")
+
+	var agents []api.Agent
+	unmarshal(t, buf, &agents)
+
+	require.Len(t, agents, 1)
+	assert.Contains(t, agents[0].Name, "pirate")
+}
+
+// TestServer_OversizedBodyRejected pins the fix for docker/docker-agent#3595:
+// a request body over the 1 MiB cap must be rejected with 413 before it
+// reaches a JSON-decoding handler. The Content-Length header alone triggers
+// the rejection, so no SessionManager is needed.
+func TestServer_OversizedBodyRejected(t *testing.T) {
+	t.Parallel()
+
+	srv := NewWithManager(nil, "")
+
+	body := bytes.Repeat([]byte("a"), int(defaultMaxRequestBytes)+1)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 }
 
 func TestServer_ListSessions(t *testing.T) {

@@ -133,17 +133,11 @@ func buildRuntime(ctx context.Context, cfg *latest.Config, env environment.Provi
 				if transport == "" {
 					transport = "streamable-http"
 				}
-				var headerFactory func(context.Context) map[string]string
-				if len(ts.Remote.Headers) > 0 {
-					headerFactory = func(context.Context) map[string]string {
-						return ts.Remote.Headers
-					}
-				}
 				mcpTS := mcptools.NewRemoteToolsetWithAllowPrivateIPs(
 					ts.Name,
 					ts.Remote.URL,
 					transport,
-					headerFactory,
+					ts.Remote.Headers,
 					ts.Remote.OAuth,
 					ts.AllowPrivateIPsEnabled(),
 				)
@@ -151,17 +145,11 @@ func buildRuntime(ctx context.Context, cfg *latest.Config, env environment.Provi
 			case ts.URL != "":
 				// URL directly on the toolset (legacy format)
 				transport := "streamable-http"
-				var headerFactory func(context.Context) map[string]string
-				if len(ts.Headers) > 0 {
-					headerFactory = func(context.Context) map[string]string {
-						return ts.Headers
-					}
-				}
 				mcpTS := mcptools.NewRemoteToolsetWithAllowPrivateIPs(
 					ts.Name,
 					ts.URL,
 					transport,
-					headerFactory,
+					ts.Headers,
 					nil,
 					ts.AllowPrivateIPsEnabled(),
 				)

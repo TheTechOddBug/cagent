@@ -34,29 +34,40 @@ func Handler(next http.Handler) http.Handler {
 	})
 }
 
+// HeaderResolver resolves configured header values into the final values to
+// set on an outbound request. It is invoked once per request with the
+// request's context, so implementations can consult dynamic sources (e.g.
+// upstream headers stored in the context, or environment providers backed
+// by rotating credentials) without going stale on long-lived connections.
+type HeaderResolver func(ctx context.Context, headers map[string]string) map[string]string
+
 // NewHeaderTransport wraps an http.RoundTripper to set custom headers on
-// every outbound request. The headerFactory is evaluated on each request
-// to allow dynamic resolution of headers (e.g. from the environment).
-// Header values may also contain ${headers.NAME} placeholders that are
-// resolved at request time from upstream headers stored in the request context.
-func NewHeaderTransport(base http.RoundTripper, headerFactory func(context.Context) map[string]string) http.RoundTripper {
-	return &headerTransport{base: base, headerFactory: headerFactory}
+// every outbound request. Header values may contain ${headers.NAME}
+// placeholders that are resolved at request time from upstream headers
+// stored in the request context.
+func NewHeaderTransport(base http.RoundTripper, headers map[string]string) http.RoundTripper {
+	return NewHeaderTransportWithResolver(base, headers, nil)
+}
+
+// NewHeaderTransportWithResolver is like NewHeaderTransport but resolves the
+// header values through resolve on every request. A nil resolve falls back
+// to ResolveHeaders (i.e. ${headers.NAME} placeholder resolution only).
+func NewHeaderTransportWithResolver(base http.RoundTripper, headers map[string]string, resolve HeaderResolver) http.RoundTripper {
+	if resolve == nil {
+		resolve = ResolveHeaders
+	}
+	return &headerTransport{base: base, headers: headers, resolve: resolve}
 }
 
 type headerTransport struct {
-	base          http.RoundTripper
-	headerFactory func(context.Context) map[string]string
+	base    http.RoundTripper
+	headers map[string]string
+	resolve HeaderResolver
 }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
-
-	var headers map[string]string
-	if t.headerFactory != nil {
-		headers = t.headerFactory(req.Context())
-	}
-
-	for key, value := range ResolveHeaders(req.Context(), headers) {
+	for key, value := range t.resolve(req.Context(), t.headers) {
 		req.Header.Set(key, value)
 	}
 	return t.base.RoundTrip(req)

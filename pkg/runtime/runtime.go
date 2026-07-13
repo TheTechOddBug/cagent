@@ -224,7 +224,7 @@ type LocalRuntime struct {
 	managedOAuth              bool
 	unmanagedOAuthRedirectURI string
 	nonInteractive            bool
-	startupInfoEmitted        bool                   // Track if startup info has been emitted to avoid unnecessary duplication
+	startupInfoEmitted        atomic.Bool            // Track if startup info has been emitted to avoid unnecessary duplication
 	elicitationRequestCh      chan ElicitationResult // Channel for receiving elicitation responses
 	elicitation               elicitationBridge      // Owns the per-stream events channel for outbound elicitation requests
 	sessionStore              session.Store
@@ -303,7 +303,11 @@ type LocalRuntime struct {
 	recallMu      sync.RWMutex
 	recallHandler RecallHandler
 
-	// onToolsChanged is called when an MCP toolset reports a tool list change.
+	// onToolsChanged is called when an MCP toolset reports a tool list
+	// change. Protected by toolsChangedMu because MCP change-notification
+	// goroutines call emitToolsChanged concurrently, mirroring
+	// onBackgroundEvent/backgroundEventMu below.
+	toolsChangedMu sync.RWMutex
 	onToolsChanged func(Event)
 
 	// onBackgroundEvent is called for events surfaced from detached
@@ -1421,14 +1425,16 @@ func (r *LocalRuntime) PermissionsInfo() *PermissionsInfo {
 // This should be called when replacing a session to allow re-emission of
 // agent, team, and toolset info to the UI.
 func (r *LocalRuntime) ResetStartupInfo() {
-	r.startupInfoEmitted = false
+	r.startupInfoEmitted.Store(false)
 }
 
 // OnToolsChanged registers a handler that is called when an MCP toolset
 // reports a tool list change outside of a RunStream. This allows the UI
 // to update the tool count immediately.
 func (r *LocalRuntime) OnToolsChanged(handler func(Event)) {
+	r.toolsChangedMu.Lock()
 	r.onToolsChanged = handler
+	r.toolsChangedMu.Unlock()
 
 	for _, name := range r.team.AgentNames() {
 		a, err := r.team.Agent(name)
@@ -1446,7 +1452,10 @@ func (r *LocalRuntime) OnToolsChanged(handler func(Event)) {
 // emitToolsChanged is the callback registered on MCP toolsets. It re-reads
 // the current agent's full tool list and pushes a ToolsetInfo event.
 func (r *LocalRuntime) emitToolsChanged() {
-	if r.onToolsChanged == nil {
+	r.toolsChangedMu.RLock()
+	handler := r.onToolsChanged
+	r.toolsChangedMu.RUnlock()
+	if handler == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.ctx(), toolsChangedTimeout)
@@ -1456,7 +1465,7 @@ func (r *LocalRuntime) emitToolsChanged() {
 	if err != nil {
 		return
 	}
-	r.onToolsChanged(ToolsetInfo(len(agentTools), false, r.currentAgentName()))
+	handler(ToolsetInfo(len(agentTools), false, r.currentAgentName()))
 }
 
 // OnBackgroundEvent registers a handler that receives events surfaced from
@@ -1526,11 +1535,13 @@ func (r *LocalRuntime) EmitAgentInfo(ctx context.Context, events EventSink) {
 // When sess is non-nil and contains token data, a TokenUsageEvent is also emitted so that the
 // sidebar can display context usage percentage on session restore.
 func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events EventSink) {
-	// Prevent duplicate emissions
-	if r.startupInfoEmitted {
+	// CompareAndSwap makes the check-and-set atomic: App.Start emits from a
+	// spawned goroutine while reEmitStartupInfo (e.g. on /new session) resets
+	// and re-emits from another, and a plain bool check-then-set race would
+	// let both goroutines through or miss an emission.
+	if !r.startupInfoEmitted.CompareAndSwap(false, true) {
 		return
 	}
-	r.startupInfoEmitted = true
 
 	a := r.CurrentAgent()
 
@@ -1570,8 +1581,13 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 		// parent agent's state: this event carries the parent session_id,
 		// and sub-agents emit their own token_usage events with their own
 		// session_id during live streaming.
-		for i := range slices.Backward(sess.Messages) {
-			item := &sess.Messages[i]
+		//
+		// MessagesSnapshot takes sess.mu so this cannot race a concurrent
+		// AddMessage/ApplyCompaction (e.g. a live HTTP AddMessage arriving
+		// while startup info is being emitted for a restored session).
+		items := sess.MessagesSnapshot()
+		for i := range slices.Backward(items) {
+			item := &items[i]
 			if !item.IsMessage() || item.Message.Message.Role != chat.MessageRoleAssistant {
 				continue
 			}

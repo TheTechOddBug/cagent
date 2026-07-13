@@ -17,10 +17,12 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/echolog"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
@@ -43,12 +45,15 @@ func New(ctx context.Context, sessionStore session.Store, runConfig *config.Runt
 	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig), authToken), nil
 }
 
+const defaultMaxRequestBytes int64 = 1 << 20 // 1 MiB
+
 // NewWithManager builds a Server around an already-constructed SessionManager.
 // Useful when the runtime is owned by another component (e.g. the TUI) and
 // only needs to be exposed over HTTP.
 func NewWithManager(sm *SessionManager, authToken string) *Server {
 	e := echo.New()
 	e.Use(echolog.RedactedRequestLogger())
+	e.Use(middleware.BodyLimit(strconv.FormatInt(defaultMaxRequestBytes, 10)))
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
 	// Add bearer token middleware if token is configured
@@ -157,31 +162,18 @@ func (s *Server) getAgents(c echo.Context) error {
 	for k, agentSource := range s.sm.Sources {
 		slog.Debug("API source", "source", agentSource.Name())
 
-		c, err := config.Load(c.Request().Context(), agentSource)
+		cfg, err := config.Load(c.Request().Context(), agentSource)
 		if err != nil {
 			slog.Error("Failed to load config from API source", "key", k, "error", err)
 			continue
 		}
 
-		desc := c.Agents.First().Description
-
-		switch {
-		case len(c.Agents) > 1:
-			agents = append(agents, api.Agent{
-				Name:        k,
-				Multi:       true,
-				Description: desc,
-			})
-		case len(c.Agents) == 1:
-			agents = append(agents, api.Agent{
-				Name:        k,
-				Multi:       false,
-				Description: desc,
-			})
-		default:
+		agent, ok := agentsAPIEntry(k, cfg)
+		if !ok {
 			slog.Warn("No agents found in config from API source", "key", k)
 			continue
 		}
+		agents = append(agents, agent)
 	}
 
 	slices.SortFunc(agents, func(a, b api.Agent) int {
@@ -189,6 +181,23 @@ func (s *Server) getAgents(c echo.Context) error {
 	})
 
 	return c.JSON(http.StatusOK, agents)
+}
+
+// agentsAPIEntry summarizes a loaded config into the api.Agent listing
+// entry for /api/agents. The len(cfg.Agents)==0 check MUST run before any
+// access to cfg.Agents (e.g. First()), which panics on an empty slice: this
+// guards the handler even though validateConfig already rejects agent-less
+// configs at load time (defense in depth against a bypass or future
+// regression in that check).
+func agentsAPIEntry(name string, cfg *latest.Config) (api.Agent, bool) {
+	if len(cfg.Agents) == 0 {
+		return api.Agent{}, false
+	}
+	return api.Agent{
+		Name:        name,
+		Multi:       len(cfg.Agents) > 1,
+		Description: cfg.Agents.First().Description,
+	}, true
 }
 
 func (s *Server) getAgentConfig(c echo.Context) error {
@@ -730,6 +739,9 @@ func (s *Server) addMessage(c echo.Context) error {
 	}
 
 	if err := s.sm.AddMessage(c.Request().Context(), sessionID, req.Message); err != nil {
+		if errors.Is(err, ErrSessionBusy) {
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add message: %v", err))
 	}
 
@@ -749,6 +761,9 @@ func (s *Server) updateMessage(c echo.Context) error {
 	}
 
 	if err := s.sm.UpdateMessage(c.Request().Context(), sessionID, msgID, req.Message); err != nil {
+		if errors.Is(err, ErrSessionBusy) {
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to update message: %v", err))
 	}
 
