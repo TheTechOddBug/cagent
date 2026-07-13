@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/docker/docker-agent/pkg/api"
@@ -44,12 +45,15 @@ func New(ctx context.Context, sessionStore session.Store, runConfig *config.Runt
 	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig), authToken), nil
 }
 
+const defaultMaxRequestBytes int64 = 1 << 20 // 1 MiB
+
 // NewWithManager builds a Server around an already-constructed SessionManager.
 // Useful when the runtime is owned by another component (e.g. the TUI) and
 // only needs to be exposed over HTTP.
 func NewWithManager(sm *SessionManager, authToken string) *Server {
 	e := echo.New()
 	e.Use(echolog.RedactedRequestLogger())
+	e.Use(middleware.BodyLimit(strconv.FormatInt(defaultMaxRequestBytes, 10)))
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
 	// Add bearer token middleware if token is configured

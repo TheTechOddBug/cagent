@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,25 @@ func TestServer_ZeroAgentSource(t *testing.T) {
 
 	require.Len(t, agents, 1)
 	assert.Contains(t, agents[0].Name, "pirate")
+}
+
+// TestServer_OversizedBodyRejected pins the fix for docker/docker-agent#3595:
+// a request body over the 1 MiB cap must be rejected with 413 before it
+// reaches a JSON-decoding handler. The Content-Length header alone triggers
+// the rejection, so no SessionManager is needed.
+func TestServer_OversizedBodyRejected(t *testing.T) {
+	t.Parallel()
+
+	srv := NewWithManager(nil, "")
+
+	body := bytes.Repeat([]byte("a"), int(defaultMaxRequestBytes)+1)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 }
 
 func TestServer_ListSessions(t *testing.T) {
