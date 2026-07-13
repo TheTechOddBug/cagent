@@ -10,10 +10,10 @@ concurrency:
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [ main ]
+    tags: [ "v*" ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
   lint:
@@ -25,8 +25,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: "1.26.4"
-          cache: true
+        go-version-file: go.mod
+        cache-dependency-path: go.sum
 
       - name: Lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
@@ -51,8 +51,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: "1.26.4"
-          cache: true
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Install Task
         uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
@@ -79,8 +79,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: "1.26.4"
-          cache: true
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Install go-licences
         run: go install github.com/google/go-licenses@latest
@@ -141,7 +141,7 @@ jobs:
 
   build-and-push-image:
     if: github.event_name != 'pull_request' && !github.event.repository.fork
-    needs: [lint, build-and-test, license-check]
+    needs: [ lint, build-and-test, license-check ]
     # Build each platform on its own native runner in parallel, push by digest,
     # then assemble the multi-arch manifest in the merge job below.
     strategy:
@@ -243,7 +243,7 @@ jobs:
 
   merge-and-push-image:
     if: github.event_name != 'pull_request' && !github.event.repository.fork
-    needs: [build-and-push-image]
+    needs: [ build-and-push-image ]
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -288,7 +288,7 @@ jobs:
 
   merge-and-push-template:
     if: github.event_name != 'pull_request' && !github.event.repository.fork
-    needs: [build-and-push-image]
+    needs: [ build-and-push-image ]
     runs-on: ubuntu-latest
     steps:
       - name: Download template digests
