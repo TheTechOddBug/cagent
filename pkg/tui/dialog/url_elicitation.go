@@ -20,21 +20,23 @@ type URLElicitationDialog struct {
 
 	ctx func() context.Context
 
-	message     string
-	url         string
-	keyMap      ConfirmKeyMap
-	escape      key.Binding
-	openBrowser key.Binding
+	message       string
+	url           string
+	elicitationID string
+	keyMap        ConfirmKeyMap
+	escape        key.Binding
+	openBrowser   key.Binding
 }
 
 // NewURLElicitationDialog creates a new URL elicitation dialog.
-func NewURLElicitationDialog(ctx context.Context, message, url string) Dialog {
+func NewURLElicitationDialog(ctx context.Context, message, url, elicitationID string) Dialog {
 	return &URLElicitationDialog{
-		ctx:     func() context.Context { return context.WithoutCancel(ctx) },
-		message: message,
-		url:     url,
-		keyMap:  DefaultConfirmKeyMap(),
-		escape:  key.NewBinding(key.WithKeys("esc")),
+		ctx:           func() context.Context { return context.WithoutCancel(ctx) },
+		message:       message,
+		url:           url,
+		elicitationID: elicitationID,
+		keyMap:        DefaultConfirmKeyMap(),
+		escape:        key.NewBinding(key.WithKeys("esc")),
 		openBrowser: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open"),
@@ -79,7 +81,7 @@ func (d *URLElicitationDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 }
 
 func (d *URLElicitationDialog) respond(action tools.ElicitationAction) tea.Cmd {
-	return CloseWithElicitationResponse(action, nil)
+	return CloseWithElicitationResponse(action, nil, d.elicitationID)
 }
 
 func (d *URLElicitationDialog) openURLInBrowser() tea.Cmd {

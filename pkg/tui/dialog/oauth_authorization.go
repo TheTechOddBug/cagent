@@ -18,18 +18,20 @@ type oauthAuthorizationDialog struct {
 
 	ctx func() context.Context
 
-	serverURL string
-	app       *app.App
-	keyMap    ConfirmKeyMap
+	serverURL     string
+	elicitationID string
+	app           *app.App
+	keyMap        ConfirmKeyMap
 }
 
 // NewOAuthAuthorizationDialog creates a new OAuth authorization confirmation dialog
-func NewOAuthAuthorizationDialog(ctx context.Context, serverURL string, appInstance *app.App) Dialog {
+func NewOAuthAuthorizationDialog(ctx context.Context, serverURL, elicitationID string, appInstance *app.App) Dialog {
 	return &oauthAuthorizationDialog{
-		ctx:       func() context.Context { return context.WithoutCancel(ctx) },
-		serverURL: serverURL,
-		app:       appInstance,
-		keyMap:    DefaultConfirmKeyMap(),
+		ctx:           func() context.Context { return context.WithoutCancel(ctx) },
+		serverURL:     serverURL,
+		elicitationID: elicitationID,
+		app:           appInstance,
+		keyMap:        DefaultConfirmKeyMap(),
 	}
 }
 
@@ -52,11 +54,11 @@ func (d *oauthAuthorizationDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 
 		model, cmd, handled := HandleConfirmKeys(msg, d.keyMap,
 			func() (layout.Model, tea.Cmd) {
-				_ = d.app.ResumeElicitation(d.ctx(), tools.ElicitationActionAccept, nil)
+				_ = d.app.ResumeElicitation(d.ctx(), tools.ElicitationActionAccept, nil, d.elicitationID)
 				return d, core.CmdHandler(CloseDialogMsg{})
 			},
 			func() (layout.Model, tea.Cmd) {
-				_ = d.app.ResumeElicitation(d.ctx(), tools.ElicitationActionDecline, nil)
+				_ = d.app.ResumeElicitation(d.ctx(), tools.ElicitationActionDecline, nil, d.elicitationID)
 				return d, core.CmdHandler(CloseDialogMsg{})
 			},
 		)

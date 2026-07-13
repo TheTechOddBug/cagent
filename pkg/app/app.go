@@ -194,6 +194,18 @@ func (a *App) Start(ctx context.Context) {
 			case <-ctx.Done():
 			}
 		})
+
+		// Forward elicitation requests raised anywhere in the runtime —
+		// including background-job (run_background_agent) sub-sessions whose
+		// RunStream has no live UI reading its own events channel — so they
+		// always reach the TUI as a dialog. This is the runtime's single,
+		// exactly-once delivery point for elicitation requests (#3584); the
+		// swap-based bridge is a separate best-effort path for remote/SSE
+		// consumers only and never also reaches this sink, so no App-side
+		// dedupe is needed here.
+		a.runtime.OnElicitationRequest(func(event runtime.Event) {
+			a.sendEvent(ctx, event)
+		})
 	})
 }
 
@@ -974,9 +986,11 @@ func (a *App) TogglePause() (paused, supported bool) {
 	return p, true
 }
 
-// ResumeElicitation resumes an elicitation request with the given action and content
-func (a *App) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
-	return a.runtime.ResumeElicitation(ctx, action, content)
+// ResumeElicitation resumes an elicitation request with the given action and
+// content. elicitationID is additive: pass "" to fall back to resolving the
+// sole pending request (see runtime.Runtime.ResumeElicitation).
+func (a *App) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any, elicitationID string) error {
+	return a.runtime.ResumeElicitation(ctx, action, content, elicitationID)
 }
 
 func (a *App) NewSession() {

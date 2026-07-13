@@ -293,6 +293,113 @@ func TestApp_Start_ForwardsBackgroundEvents(t *testing.T) {
 	}
 }
 
+// elicitationRequestMockRuntime captures the handler App.Start registers via
+// OnElicitationRequest and records every ResumeElicitation call, so tests can
+// drive the sink and assert on what App forwards back to the runtime.
+type elicitationRequestMockRuntime struct {
+	mockRuntime
+
+	handler func(runtime.Event)
+
+	mu             sync.Mutex
+	resumedIDs     []string
+	resumedActions []tools.ElicitationAction
+}
+
+// firstOrEmpty returns the first element of ids, or "" when empty. Mirrors
+// runtime.firstElicitationID for tests that record a variadic call's ID.
+func firstOrEmpty(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
+}
+
+func (m *elicitationRequestMockRuntime) OnElicitationRequest(handler func(runtime.Event)) {
+	m.handler = handler
+}
+
+func (m *elicitationRequestMockRuntime) ResumeElicitation(_ context.Context, action tools.ElicitationAction, _ map[string]any, elicitationID ...string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.resumedIDs = append(m.resumedIDs, firstOrEmpty(elicitationID))
+	m.resumedActions = append(m.resumedActions, action)
+	return nil
+}
+
+// TestApp_Start_ForwardsElicitationRequests verifies Start wires the
+// runtime's OnElicitationRequest sink into the app's event stream, so
+// background-job elicitations (which have no live channel of their own
+// reaching the TUI) are surfaced (#3584).
+func TestApp_Start_ForwardsElicitationRequests(t *testing.T) {
+	t.Parallel()
+
+	rt := &elicitationRequestMockRuntime{}
+	events := make(chan tea.Msg, 16)
+	app := &App{
+		runtime: rt,
+		session: session.New(),
+		events:  events,
+	}
+
+	app.Start(t.Context())
+	require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
+
+	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "sess-1", nil, "worker")
+	rt.handler(ev)
+
+	select {
+	case msg := <-events:
+		assert.Equal(t, ev, msg, "the elicitation request must reach the app's event stream unchanged")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the forwarded elicitation request")
+	}
+}
+
+// TestApp_SendEvent_DeliversElicitationWithoutDedupe pins the #3584 fix that
+// removed the App-side ElicitationID dedupe: the runtime's
+// OnElicitationRequest sink is now the single, exactly-once delivery point
+// (elicitationHandler calls it directly, synchronously, and unconditionally,
+// and runCollecting no longer re-forwards a bridge-observed copy), so
+// sendEvent must forward every event unconditionally — including two
+// distinct events that happen to share an ElicitationID, which a stateful
+// dedupe would have incorrectly collapsed.
+func TestApp_SendEvent_DeliversElicitationWithoutDedupe(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan tea.Msg, 16)
+	app := &App{events: events}
+	ctx := t.Context()
+
+	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-dup", "", "sess-1", nil, "worker")
+	app.sendEvent(ctx, ev)
+	require.Len(t, events, 1, "the sink's single delivery must reach the app's event stream")
+	<-events
+
+	// A second event that happens to carry the same ElicitationID (e.g. a
+	// canceled request's ID reused later) must still go through: nothing in
+	// the App layer keys off ElicitationID any more.
+	app.sendEvent(ctx, ev)
+	require.Len(t, events, 1, "sendEvent must not drop a delivery based on ElicitationID")
+}
+
+// TestApp_ResumeElicitation_ForwardsID verifies ResumeElicitation passes the
+// elicitation ID through to the runtime unchanged. There is no dedupe state
+// to clear any more (#3584): the runtime's per-request waiter registry is
+// the sole source of truth for whether an ID is still answerable.
+func TestApp_ResumeElicitation_ForwardsID(t *testing.T) {
+	t.Parallel()
+
+	rt := &elicitationRequestMockRuntime{}
+	app := &App{runtime: rt, events: make(chan tea.Msg, 16)}
+
+	require.NoError(t, app.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, "eid-clear"))
+
+	require.Len(t, rt.resumedIDs, 1)
+	assert.Equal(t, "eid-clear", rt.resumedIDs[0])
+	assert.Equal(t, tools.ElicitationActionAccept, rt.resumedActions[0])
+}
+
 // stubSnapshotController is a tiny SnapshotController used by the app
 // tests to drive /undo without spinning up a real shadow-git
 // repository. enabled gates SnapshotsEnabled(), and the (files, ok,

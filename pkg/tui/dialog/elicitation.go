@@ -59,6 +59,7 @@ type ElicitationDialog struct {
 
 	title         string
 	message       string
+	elicitationID string
 	fields        []ElicitationField
 	inputs        []textinput.Model
 	boolValues    map[int]bool
@@ -119,7 +120,7 @@ func (d *ElicitationDialog) hasFreeFormInput() bool {
 }
 
 // NewElicitationDialog creates a new elicitation dialog.
-func NewElicitationDialog(message string, schema any, meta map[string]any) Dialog {
+func NewElicitationDialog(message string, schema any, meta map[string]any, elicitationID string) Dialog {
 	fields := parseElicitationSchema(schema)
 
 	// Determine dialog title from meta, defaulting to "Question"
@@ -131,13 +132,14 @@ func NewElicitationDialog(message string, schema any, meta map[string]any) Dialo
 	}
 
 	d := &ElicitationDialog{
-		title:       title,
-		message:     message,
-		fields:      fields,
-		inputs:      make([]textinput.Model, len(fields)),
-		boolValues:  make(map[int]bool),
-		enumIndexes: make(map[int]int),
-		fieldErrors: make(map[int]string),
+		title:         title,
+		message:       message,
+		elicitationID: elicitationID,
+		fields:        fields,
+		inputs:        make([]textinput.Model, len(fields)),
+		boolValues:    make(map[int]bool),
+		enumIndexes:   make(map[int]int),
+		fieldErrors:   make(map[int]string),
 		keyMap: elicitationKeyMap{
 			Up:       key.NewBinding(key.WithKeys("up")),
 			Down:     key.NewBinding(key.WithKeys("down")),
@@ -384,7 +386,7 @@ func (d *ElicitationDialog) isTextInputField() bool {
 }
 
 func (d *ElicitationDialog) close(action tools.ElicitationAction, content map[string]any) tea.Cmd {
-	return CloseWithElicitationResponse(action, content)
+	return CloseWithElicitationResponse(action, content, d.elicitationID)
 }
 
 // collectAndValidate validates all fields and returns the collected values.
