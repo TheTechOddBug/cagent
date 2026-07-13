@@ -360,7 +360,7 @@ func (m *Manager) Query(ctx context.Context, query string) (results []database.S
 				"error", result.err)
 			return nil, types.Usage{}, fmt.Errorf("strategy %s failed: %w", result.name, result.err)
 		}
-		
+
 		usage.Add(result.usage)
 
 		slog.DebugContext(ctx, "[RAG Manager] Strategy returned results",

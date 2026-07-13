@@ -50,7 +50,6 @@ func New(p provider.Provider, opts ...Option) *Embedder {
 	return e
 }
 
-
 // Embed generates an embedding for a single text
 func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, int64, float64, error) {
 	// Try to use the provider's embedding API if it implements EmbeddingProvider.
