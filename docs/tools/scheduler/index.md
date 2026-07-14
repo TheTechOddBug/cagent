@@ -79,7 +79,13 @@ agents:
       - type: shell
 ```
 
-The agent calls `create_schedule(prompt="Run `git fetch` and report if origin/main moved", when="every:15m")`. Every 15 minutes it is reminded, runs the command with the `shell` tool, and reports back.
+The agent calls:
+
+```text
+create_schedule(prompt="Run git fetch and report if origin/main moved", when="every:15m")
+```
+
+Every 15 minutes it is reminded, runs the command with the `shell` tool, and reports back.
 
 > [!TIP]
 > **When to use**
