@@ -109,8 +109,10 @@ func gatherEnvVarsForModel(ctx context.Context, cfg *latest.Config, modelName st
 	rootBypassed := model.BypassModelsGateway
 
 	// The model's own provider/model is a leaf: either the model itself or, for
-	// a router, its fallback model. It bypasses iff the model bypasses.
-	if !bypassOnly || rootBypassed {
+	// a router, its fallback model. It bypasses iff the model bypasses. A custom
+	// base_url implies the bypass: such endpoints are never routed through the
+	// models gateway (see createDirectProvider).
+	if !bypassOnly || rootBypassed || hasCustomBaseURL(&model, cfg.Providers) {
 		addEnvVarsForModelConfig(ctx, &model, cfg.Providers, requiredEnv, env)
 	}
 
@@ -119,16 +121,17 @@ func gatherEnvVarsForModel(ctx context.Context, cfg *latest.Config, modelName st
 		ruleModelName := rule.Model
 		if ruleModel, exists := cfg.Models[ruleModelName]; exists {
 			// Named model reference. A routed target bypasses when the router
-			// does (propagation) or when it sets its own flag.
-			if !bypassOnly || rootBypassed || ruleModel.BypassModelsGateway {
+			// does (propagation), when it sets its own flag, or when it dials a
+			// custom base_url (implied bypass).
+			if !bypassOnly || rootBypassed || ruleModel.BypassModelsGateway || hasCustomBaseURL(&ruleModel, cfg.Providers) {
 				addEnvVarsForModelConfig(ctx, &ruleModel, cfg.Providers, requiredEnv, env)
 			}
 		} else if providerName, _, ok := strings.Cut(ruleModelName, "/"); ok {
 			// Inline spec (e.g., "openai/gpt-4o") - infer env vars from provider.
-			// Inline specs carry no flag of their own; they bypass only via the
-			// router's propagated bypass.
-			if !bypassOnly || rootBypassed {
-				inlineModel := latest.ModelConfig{Provider: providerName}
+			// Inline specs carry no flag of their own; they bypass via the
+			// router's propagated bypass or a custom provider's base_url.
+			inlineModel := latest.ModelConfig{Provider: providerName}
+			if !bypassOnly || rootBypassed || hasCustomBaseURL(&inlineModel, cfg.Providers) {
 				addEnvVarsForModelConfig(ctx, &inlineModel, cfg.Providers, requiredEnv, env)
 			}
 		}
