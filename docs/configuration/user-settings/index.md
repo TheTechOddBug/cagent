@@ -50,6 +50,7 @@ You rarely need to hand-edit this file. Most fields are managed from the TUI's `
 | `sound_threshold` | int | `10` | Minimum duration in seconds a task must run before a success sound plays (failures always play). |
 | `snapshot` | boolean | `false` | Enable automatic shadow-git snapshots at turn boundaries globally. See [Snapshots](../../features/snapshots/index.md). |
 | `cache_stable_prompts` | boolean | `false` | Keep changing trusted context (date, environment info, dynamic prompt files) out of the frozen system prefix and append chronological updates instead, improving prompt-cache hit rates on long sessions. |
+| `warn_on_cache_miss` | boolean | `false` | Warn when a model call after the first one in a session reports no cached input tokens (a prompt-cache miss). Managed from the **Notifications** tab of `/settings`. |
 | `busy_send_mode` | string | `steer` | What happens to a message sent while the agent is working: `steer` injects it into the ongoing stream; `queue` holds it until the current turn ends. |
 | `permissions` | object | _unset_ | Global tool-permission rules (`allow` / `ask` / `deny`), merged with agent-level and session-level permissions. See [Permissions](../permissions/index.md#global-permissions). |
 | `hooks` | object | _unset_ | Global lifecycle hooks applied to every agent, additive with agent-config and CLI hooks. See [Global (user-level) hooks](../hooks/index.md#global-user-level-hooks). |
@@ -94,6 +95,7 @@ settings:
   sound_threshold: 10
   snapshot: true
   cache_stable_prompts: true
+  warn_on_cache_miss: true
   busy_send_mode: queue
   restore_tabs: true
   tab_title_max_length: 24
@@ -118,8 +120,8 @@ settings:
 
 User settings are the **lowest-priority** source: they establish defaults, and anything more specific wins.
 
-- **CLI flags over user settings.** Where a `docker agent run` flag mirrors a setting — `--yolo` / `YOLO`, `--hide-tool-results` / `hide_tool_results`, `--lean` / `lean`, `--theme` / `theme` — passing the flag for a specific run takes precedence over the setting for that run only. The flag never modifies the saved user config file.
+- **CLI flags over user settings — except plain boolean flags going from `true` to `false`.** Where a `docker agent run` flag mirrors a setting, passing the flag for a specific run takes precedence over the setting for that run only, and the flag never modifies the saved user config file. This holds cleanly for `--lean` / `lean` and `--theme` / `theme`, which track whether the flag was explicitly passed on the command line. `--yolo` / `YOLO` and `--hide-tool-results` / `hide_tool_results` don't: they're plain booleans with no "was this explicitly set" tracking, so passing `--yolo=false` or `--hide-tool-results=false` cannot turn a saved `YOLO: true` / `hide_tool_results: true` setting off for that run — the saved `true` wins and is reapplied on top of the flag. Passing the flag to turn either *on* (`--yolo`, `--hide-tool-results`) works as expected regardless of the saved setting.
 - **Aliases sit between CLI flags and user settings.** An [alias](../../features/cli/index.md#docker-agent-alias) (`docker agent alias add ...`) can bundle its own `yolo`, `model`, `hide_tool_results`, and `sandbox` defaults; those apply when the corresponding flag was not explicitly passed, the same way user settings do, but are resolved after user settings so an alias's own choices take priority over your global defaults.
 - **Permissions are merged, not overridden.** Global `settings.permissions` and an agent's own `permissions:` are combined into a single set of `deny` → `allow` → `ask` patterns before evaluation — a global deny always blocks, regardless of what the agent config allows. See [Merging Behavior](../permissions/index.md#merging-behavior).
 - **Hooks are additive, not overridden.** For a given lifecycle event, hooks from the agent config, `settings.hooks`, `hooks.d/` drop-ins, and `--hook-*` CLI flags **all** run, in that order. Global hooks cannot be suppressed by an individual agent.
-- **Everything else is a plain default.** Fields with no CLI or agent-config equivalent (`sound`, `sound_threshold`, `restore_tabs`, `tab_title_max_length`, `split_diff_view`, `cache_stable_prompts`, `busy_send_mode`, `keybindings`, `layout`) only ever come from `settings:` (or the `/settings` dialog that writes it) — there is nothing to override them per run.
+- **Everything else is a plain default.** Fields with no CLI or agent-config equivalent (`sound`, `sound_threshold`, `restore_tabs`, `tab_title_max_length`, `split_diff_view`, `cache_stable_prompts`, `warn_on_cache_miss`, `busy_send_mode`, `keybindings`, `layout`) only ever come from `settings:` (or the `/settings` dialog that writes it) — there is nothing to override them per run.
