@@ -1566,13 +1566,12 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	// The context limit comes from the model definition (models.dev), which
 	// is a model property — not persisted in the session.
 	//
-	// Use TotalCost (not OwnCost) because this is a restore/branch context:
-	// sub-sessions won't emit their own events, so the parent must include
-	// their costs.
+	// SessionUsage folds embedded sub-session costs into the parent's cost,
+	// which is what a restore/branch context needs: those sub-sessions
+	// won't emit their own events.
 	if sess != nil && (sess.InputTokens > 0 || sess.OutputTokens > 0) {
 		contextLimit := r.contextLimitForAgentModel(ctx, a, modelID)
 		usage := SessionUsage(sess, contextLimit, a.CompactionThreshold())
-		usage.Cost = sess.TotalCost()
 
 		// Reconstruct LastMessage from the parent session's last assistant
 		// message so that FinishReason (and other per-message fields) are

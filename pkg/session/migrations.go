@@ -401,6 +401,12 @@ func getAllMigrations() []Migration {
 			Description: "Add first_kept_entry column to session_items for compaction-preserved messages",
 			UpSQL:       `ALTER TABLE session_items ADD COLUMN first_kept_entry INTEGER DEFAULT 0`,
 		},
+		{
+			ID:          22,
+			Name:        "022_add_cost_to_session_items",
+			Description: "Add cost column to session_items so compaction summary costs survive reload",
+			UpSQL:       `ALTER TABLE session_items ADD COLUMN cost REAL NOT NULL DEFAULT 0`,
+		},
 	}
 }
 
