@@ -23,6 +23,10 @@ const (
 	// session to SafetyPolicySafeAuto so subsequent classifier-verified
 	// safe calls auto-approve.
 	ResumeTypeApproveSafe = toolexec.ResumeTypeApproveSafe
+	// ResumeTypeApproveSafer approves the pending call and flips the
+	// session to SafetyPolicySafer so subsequent non-destructive calls
+	// auto-approve (superset of safe-auto — includes unclassified).
+	ResumeTypeApproveSafer = toolexec.ResumeTypeApproveSafer
 	// ResumeTypeApproveTool approves the pending call and every future
 	// call to the same tool name within the session.
 	ResumeTypeApproveTool = toolexec.ResumeTypeApproveTool
@@ -52,6 +56,12 @@ func ResumeApproveSafe() ResumeRequest {
 	return ResumeRequest{Type: ResumeTypeApproveSafe}
 }
 
+// ResumeApproveSafer creates a ResumeRequest that approves the pending
+// call and flips the session to SafetyPolicySafer.
+func ResumeApproveSafer() ResumeRequest {
+	return ResumeRequest{Type: ResumeTypeApproveSafer}
+}
+
 // ResumeApproveTool creates a ResumeRequest to always approve a specific tool for the session.
 func ResumeApproveTool(toolName string) ResumeRequest {
 	return ResumeRequest{Type: ResumeTypeApproveTool, ToolName: toolName}
@@ -73,6 +83,7 @@ func IsValidResumeType(t ResumeType) bool {
 	case ResumeTypeApprove,
 		ResumeTypeApproveSession,
 		ResumeTypeApproveSafe,
+		ResumeTypeApproveSafer,
 		ResumeTypeApproveTool,
 		ResumeTypeReject:
 		return true
@@ -87,6 +98,7 @@ func ValidResumeTypes() []ResumeType {
 		ResumeTypeApprove,
 		ResumeTypeApproveSession,
 		ResumeTypeApproveSafe,
+		ResumeTypeApproveSafer,
 		ResumeTypeApproveTool,
 		ResumeTypeReject,
 	}

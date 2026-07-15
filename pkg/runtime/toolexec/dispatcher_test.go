@@ -647,6 +647,107 @@ func TestDispatcher_SafeAutoBypassesAskForReadOnlyTools(t *testing.T) {
 		"safe-auto + ReadOnlyHint must not prompt the user")
 }
 
+func TestDispatcher_SaferBypassesAskForUnclassifiedTools(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New(session.WithSafetyPolicy(session.SafetyPolicySafer))
+	perms := session.PermissionsConfig{Ask: []string{"*"}}
+	sess.Permissions = &perms
+
+	var ran bool
+	tool := tools.Tool{
+		Name: "custom_tool",
+		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+			ran = true
+			return tools.ResultSuccess("ok"), nil
+		},
+	}
+
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Permissions: func(s *session.Session) []toolexec.NamedChecker {
+			return []toolexec.NamedChecker{{
+				Checker: permissions.NewCheckerFromRules(nil, s.Permissions.Ask, nil),
+				Source:  "session",
+			}}
+		},
+	}
+	em := &captureEmitter{}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "custom_tool", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	assert.True(t, ran, "safer + unclassified tool must auto-approve")
+	assert.Empty(t, em.confirmations)
+}
+
+func TestDispatcher_SaferPromptsForDestructiveHintTools(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New(session.WithSafetyPolicy(session.SafetyPolicySafer))
+
+	destructive := true
+	tool := tools.Tool{
+		Name: "delete_task",
+		Annotations: tools.ToolAnnotations{
+			DestructiveHint: &destructive,
+		},
+		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+			return tools.ResultSuccess("ok"), nil
+		},
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeReject}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "delete_task", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	require.Len(t, em.confirmations, 1)
+}
+
+func TestDispatcher_ResumeApproveSaferFlipsSessionToSafer(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New()
+
+	var ran bool
+	tool := tools.Tool{
+		Name: "shell",
+		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+			ran = true
+			return tools.ResultSuccess("ok"), nil
+		},
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeApproveSafer}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	assert.True(t, ran)
+	assert.Equal(t, session.SafetyPolicySafer, sess.SafetyPolicy)
+}
+
 func TestDispatcher_DenyByPermissionsEmitsErrorResponse(t *testing.T) {
 	t.Parallel()
 	a := newAgent()

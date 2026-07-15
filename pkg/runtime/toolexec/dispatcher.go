@@ -46,6 +46,7 @@ const (
 	ApprovalSourceUserApproved               = "user_approved"
 	ApprovalSourceUserApprovedSession        = "user_approved_session"
 	ApprovalSourceUserApprovedSafe           = "user_approved_safe"
+	ApprovalSourceUserApprovedSafer          = "user_approved_safer"
 	ApprovalSourceUserApprovedTool           = "user_approved_tool"
 	ApprovalSourceUserRejected               = "user_rejected"
 	ApprovalSourceContextCanceled            = "context_canceled"
@@ -138,6 +139,7 @@ const (
 	ResumeTypeApprove        ResumeType = "approve"
 	ResumeTypeApproveSession ResumeType = "approve-session"
 	ResumeTypeApproveSafe    ResumeType = "approve-safe"
+	ResumeTypeApproveSafer   ResumeType = "approve-safer"
 	ResumeTypeApproveTool    ResumeType = "approve-tool"
 	ResumeTypeReject         ResumeType = "reject"
 )
@@ -410,10 +412,10 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 		// DecisionAllow / "" → advisory; fall through to Decide().
 	}
 
-	// Under safe-auto, tools with a positive safe verdict bypass the
-	// permissions layer. Otherwise permissions.ask: "*" would defeat
-	// the whole point of opting into safe-auto.
-	if source, ok := c.safeAutoAutoApprove(); ok {
+	// safe-auto / safer opt-ins bypass the permissions layer for the
+	// calls each policy considers auto-approvable. Otherwise
+	// permissions.ask: "*" would defeat the opt-in.
+	if source, ok := c.policyAutoApprove(); ok {
 		c.notifyApproval(ctx, ApprovalDecisionAllow, source)
 		return runTool()
 	}
@@ -519,20 +521,26 @@ func (c *call) sessionPermissionsAllow() bool {
 	return true
 }
 
-// safeAutoAutoApprove returns (source, true) when the session opted
-// into safe-auto and this call carries a positive safe verdict — a
-// preempt-yolo classifier that returned Allow, or a tool that
-// self-declares read-only. Returning true short-circuits the
-// permissions layer so the user is not re-prompted after opting in.
-func (c *call) safeAutoAutoApprove() (string, bool) {
-	if c.sess.SafetyPolicy != session.SafetyPolicySafeAuto {
-		return "", false
-	}
-	if c.preYoloResult != nil && c.preYoloResult.Decision == hooks.DecisionAllow {
+// policyAutoApprove returns (source, true) when the session's safety
+// policy allows this call to skip the permissions layer. Under
+// safe-auto that requires a positive safe verdict (preempt-yolo Allow
+// or ReadOnlyHint). Under safer it just requires the tool not to
+// declare itself destructive — destructive preempt-yolo verdicts
+// already short-circuited to askUser at Stage 0.
+func (c *call) policyAutoApprove() (string, bool) {
+	switch c.sess.SafetyPolicy {
+	case session.SafetyPolicySafeAuto:
+		if c.preYoloResult != nil && c.preYoloResult.Decision == hooks.DecisionAllow {
+			return ApprovalSourcePreToolUseHookAllow, true
+		}
+		if c.tool.Annotations.ReadOnlyHint {
+			return ApprovalSourceReadOnlyHint, true
+		}
+	case session.SafetyPolicySafer:
+		if c.tool.Annotations.DestructiveHint != nil && *c.tool.Annotations.DestructiveHint {
+			return "", false
+		}
 		return ApprovalSourcePreToolUseHookAllow, true
-	}
-	if c.tool.Annotations.ReadOnlyHint {
-		return ApprovalSourceReadOnlyHint, true
 	}
 	return "", false
 }
@@ -897,6 +905,11 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		slog.DebugContext(ctx, "Resume signal received, opting into safe-auto", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.sess.SetSafetyPolicy(session.SafetyPolicySafeAuto)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSafe)
+		return runTool()
+	case ResumeTypeApproveSafer:
+		slog.DebugContext(ctx, "Resume signal received, opting into safer", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		c.sess.SetSafetyPolicy(session.SafetyPolicySafer)
+		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSafer)
 		return runTool()
 	case ResumeTypeApproveTool:
 		approvedTool := req.ToolName

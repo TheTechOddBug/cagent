@@ -17,6 +17,7 @@ func TestIsValidResumeType(t *testing.T) {
 		{"approve", ResumeTypeApprove, true},
 		{"approve-session", ResumeTypeApproveSession, true},
 		{"approve-safe", ResumeTypeApproveSafe, true},
+		{"approve-safer", ResumeTypeApproveSafer, true},
 		{"approve-tool", ResumeTypeApproveTool, true},
 		{"reject", ResumeTypeReject, true},
 		{"empty", ResumeType(""), false},
@@ -45,6 +46,7 @@ func TestValidResumeTypes(t *testing.T) {
 		ResumeTypeApprove,
 		ResumeTypeApproveSession,
 		ResumeTypeApproveSafe,
+		ResumeTypeApproveSafer,
 		ResumeTypeApproveTool,
 		ResumeTypeReject,
 	}, got)
@@ -73,6 +75,14 @@ func TestResumeApproveHelpers(t *testing.T) {
 		t.Parallel()
 		r := ResumeApproveSafe()
 		assert.Equal(t, ResumeTypeApproveSafe, r.Type)
+		assert.Empty(t, r.Reason)
+		assert.Empty(t, r.ToolName)
+	})
+
+	t.Run("approve-safer", func(t *testing.T) {
+		t.Parallel()
+		r := ResumeApproveSafer()
+		assert.Equal(t, ResumeTypeApproveSafer, r.Type)
 		assert.Empty(t, r.Reason)
 		assert.Empty(t, r.ToolName)
 	})
