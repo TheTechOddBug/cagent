@@ -24,12 +24,15 @@ type oauthAuthorizationDialog struct {
 	keyMap        ConfirmKeyMap
 }
 
-// NewOAuthAuthorizationDialog creates a new OAuth authorization confirmation dialog
-func NewOAuthAuthorizationDialog(ctx context.Context, serverURL, elicitationID string, appInstance *app.App) Dialog {
+// NewOAuthAuthorizationDialog creates a new OAuth authorization confirmation dialog.
+// elicitationID is variadic for the same backward-compatibility reason as
+// NewElicitationDialog (see firstElicitationID); at most the first value is
+// meaningful.
+func NewOAuthAuthorizationDialog(ctx context.Context, serverURL string, appInstance *app.App, elicitationID ...string) Dialog {
 	return &oauthAuthorizationDialog{
 		ctx:           func() context.Context { return context.WithoutCancel(ctx) },
 		serverURL:     serverURL,
-		elicitationID: elicitationID,
+		elicitationID: firstElicitationID(elicitationID),
 		app:           appInstance,
 		keyMap:        DefaultConfirmKeyMap(),
 	}

@@ -1902,7 +1902,7 @@ func (m *appModel) replayElicitationEvent(ev *runtime.ElicitationRequestEvent) t
 				serverURL = url
 			}
 			return core.CmdHandler(dialog.OpenDialogMsg{
-				Model:            dialog.NewOAuthAuthorizationDialog(m.ctx(), serverURL, ev.ElicitationID, m.application),
+				Model:            dialog.NewOAuthAuthorizationDialog(m.ctx(), serverURL, m.application, ev.ElicitationID),
 				OriginatingEvent: ev,
 			})
 		}

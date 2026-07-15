@@ -28,13 +28,16 @@ type URLElicitationDialog struct {
 	openBrowser   key.Binding
 }
 
-// NewURLElicitationDialog creates a new URL elicitation dialog.
-func NewURLElicitationDialog(ctx context.Context, message, url, elicitationID string) Dialog {
+// NewURLElicitationDialog creates a new URL elicitation dialog. elicitationID
+// is variadic for the same backward-compatibility reason as
+// NewElicitationDialog (see firstElicitationID); at most the first value is
+// meaningful.
+func NewURLElicitationDialog(ctx context.Context, message, url string, elicitationID ...string) Dialog {
 	return &URLElicitationDialog{
 		ctx:           func() context.Context { return context.WithoutCancel(ctx) },
 		message:       message,
 		url:           url,
-		elicitationID: elicitationID,
+		elicitationID: firstElicitationID(elicitationID),
 		keyMap:        DefaultConfirmKeyMap(),
 		escape:        key.NewBinding(key.WithKeys("esc")),
 		openBrowser: key.NewBinding(

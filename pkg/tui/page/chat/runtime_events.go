@@ -449,7 +449,7 @@ func (p *chatPage) handleElicitationRequest(msg *runtime.ElicitationRequestEvent
 				serverURL = url
 			}
 			dialogCmd := core.CmdHandler(dialog.OpenDialogMsg{
-				Model:            dialog.NewOAuthAuthorizationDialog(p.ctx(), serverURL, msg.ElicitationID, p.app),
+				Model:            dialog.NewOAuthAuthorizationDialog(p.ctx(), serverURL, p.app, msg.ElicitationID),
 				OriginatingEvent: msg,
 			})
 			return tea.Batch(spinnerCmd, dialogCmd)

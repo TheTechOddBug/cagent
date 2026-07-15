@@ -119,9 +119,25 @@ func (d *ElicitationDialog) hasFreeFormInput() bool {
 	return len(d.fields) == 0
 }
 
-// NewElicitationDialog creates a new elicitation dialog.
-func NewElicitationDialog(message string, schema any, meta map[string]any, elicitationID string) Dialog {
+// firstElicitationID extracts the (at most one meaningful) elicitation ID
+// from a variadic parameter. Shared by the elicitation dialog constructors
+// in this package, whose elicitationID parameter is variadic rather than a
+// required positional string purely so pre-#3584 3-arg call sites keep
+// compiling unchanged (mirrors pkg/runtime.firstElicitationID).
+func firstElicitationID(elicitationID []string) string {
+	if len(elicitationID) == 0 {
+		return ""
+	}
+	return elicitationID[0]
+}
+
+// NewElicitationDialog creates a new elicitation dialog. elicitationID is
+// variadic purely so pre-existing 3-arg callers keep compiling unchanged
+// (see firstElicitationID for the same #3584 precedent); at most the first
+// value is meaningful.
+func NewElicitationDialog(message string, schema any, meta map[string]any, elicitationID ...string) Dialog {
 	fields := parseElicitationSchema(schema)
+	id := firstElicitationID(elicitationID)
 
 	// Determine dialog title from meta, defaulting to "Question"
 	title := "Question"
@@ -134,7 +150,7 @@ func NewElicitationDialog(message string, schema any, meta map[string]any, elici
 	d := &ElicitationDialog{
 		title:         title,
 		message:       message,
-		elicitationID: elicitationID,
+		elicitationID: id,
 		fields:        fields,
 		inputs:        make([]textinput.Model, len(fields)),
 		boolValues:    make(map[int]bool),

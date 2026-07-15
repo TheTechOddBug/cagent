@@ -1023,10 +1023,12 @@ func (a *App) TogglePause() (paused, supported bool) {
 }
 
 // ResumeElicitation resumes an elicitation request with the given action and
-// content. elicitationID is additive: pass "" to fall back to resolving the
-// sole pending request (see runtime.Runtime.ResumeElicitation).
-func (a *App) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any, elicitationID string) error {
-	return a.runtime.ResumeElicitation(ctx, action, content, elicitationID)
+// content. elicitationID is variadic, mirroring runtime.Runtime.ResumeElicitation,
+// purely so pre-#3584 3-arg callers keep compiling unchanged; at most the
+// first value is meaningful, and "" (or omitting it) falls back to resolving
+// the sole pending request.
+func (a *App) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any, elicitationID ...string) error {
+	return a.runtime.ResumeElicitation(ctx, action, content, elicitationID...)
 }
 
 func (a *App) NewSession() {
