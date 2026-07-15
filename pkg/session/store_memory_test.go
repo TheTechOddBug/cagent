@@ -76,12 +76,12 @@ func TestNewSQLiteSessionStoreFromDB_RoundTripWithMessages(t *testing.T) {
 	assert.Equal(t, "world", got.Messages[1].Message.Message.Content)
 }
 
-// TestMigration22_LegacySummaryRowsReadAsZeroCost simulates a database
-// created before migration 022 (no cost column on session_items, summary
+// TestMigration23_LegacySummaryRowsReadAsZeroCost simulates a database
+// created before migration 023 (no cost column on session_items, summary
 // rows written without one): opening the store applies the migration and
 // the legacy summary must hydrate with cost 0 — historical summary costs
 // cannot be reconstructed.
-func TestMigration22_LegacySummaryRowsReadAsZeroCost(t *testing.T) {
+func TestMigration23_LegacySummaryRowsReadAsZeroCost(t *testing.T) {
 	t.Parallel()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -90,7 +90,7 @@ func TestMigration22_LegacySummaryRowsReadAsZeroCost(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	ctx := t.Context()
 
-	// Bootstrap schema plus migrations 1..21 only — the pre-cost layout.
+	// Bootstrap schema plus migrations 1..22 only — the pre-cost layout.
 	_, err = db.ExecContext(ctx, `CREATE TABLE sessions (id TEXT PRIMARY KEY, messages TEXT, created_at TEXT)`)
 	require.NoError(t, err)
 	all := getAllMigrations()
