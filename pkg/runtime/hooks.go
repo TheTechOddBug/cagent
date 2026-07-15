@@ -450,6 +450,7 @@ const (
 	ApprovalSourceReadOnlyHint            = "readonly_hint"
 	ApprovalSourceUserApproved            = "user_approved"
 	ApprovalSourceUserApprovedSession     = "user_approved_session"
+	ApprovalSourceUserApprovedSafe        = "user_approved_safe"
 	ApprovalSourceUserApprovedTool        = "user_approved_tool"
 	ApprovalSourceUserRejected            = "user_rejected"
 	ApprovalSourceContextCanceled         = "context_canceled"

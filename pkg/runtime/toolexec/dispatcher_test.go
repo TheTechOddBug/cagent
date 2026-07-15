@@ -431,6 +431,40 @@ func TestDispatcher_ResumeRejectEmitsErrorResponseWithReason(t *testing.T) {
 	assert.Contains(t, em.responses[0].Output, "wrong arguments")
 }
 
+func TestDispatcher_ResumeApproveSafeFlipsSessionToSafeAuto(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New()
+
+	var ran bool
+	tool := tools.Tool{
+		Name: "shell",
+		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+			ran = true
+			return tools.ResultSuccess("ok"), nil
+		},
+	}
+
+	resume := make(chan toolexec.ResumeRequest, 1)
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Resume:   resume,
+	}
+	em := &captureEmitter{}
+
+	resume <- toolexec.ResumeRequest{Type: toolexec.ResumeTypeApproveSafe}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "x",
+		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	assert.True(t, ran, "approve-safe must run the pending tool")
+	assert.Equal(t, session.SafetyPolicySafeAuto, sess.SafetyPolicy,
+		"approve-safe must persist safe-auto on the session")
+	assert.False(t, sess.ToolsApproved, "safe-auto must not backfill ToolsApproved")
+}
+
 func TestDispatcher_ResumeApproveToolPersistsToSessionPermissions(t *testing.T) {
 	t.Parallel()
 	a := newAgent()

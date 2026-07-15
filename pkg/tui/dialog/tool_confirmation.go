@@ -145,6 +145,8 @@ var safetyConventionKeys = map[string]struct{}{
 func blastRadiusBadge(value string) string {
 	style := styles.BaseStyle.Bold(true)
 	switch value {
+	case "safe":
+		style = style.Foreground(styles.Success)
 	case "low":
 		style = style.Foreground(styles.Success)
 	case "medium":
@@ -159,19 +161,24 @@ func blastRadiusBadge(value string) string {
 	return style.Render(value)
 }
 
-// renderSafetyWarning composes the destructive-command warning block
-// when the confirmation event carries the safer_shell builtin's
-// `blast_radius` metadata. The block names the severity prominently
-// (with a colored badge) and surfaces the matched reason as
-// supporting context. Returns "" when no blast radius is present.
+// renderSafetyWarning composes the classifier's verdict block from
+// the safer_shell metadata. Safe verdicts render a reassuring
+// heading; destructive / unknown verdicts render a warning. Returns
+// "" when no blast_radius is present.
 func (d *toolConfirmationDialog) renderSafetyWarning(contentWidth int) string {
 	radius, ok := d.msg.Metadata["blast_radius"]
 	if !ok {
 		return ""
 	}
 
-	heading := styles.BaseStyle.Bold(true).Foreground(styles.Warning).
-		Render(fmt.Sprintf("⚠  Destructive command — %s blast radius", blastRadiusBadge(radius)))
+	var heading string
+	if radius == "safe" {
+		heading = styles.BaseStyle.Bold(true).Foreground(styles.Success).
+			Render("✓ Read-only command — " + blastRadiusBadge(radius))
+	} else {
+		heading = styles.BaseStyle.Bold(true).Foreground(styles.Warning).
+			Render(fmt.Sprintf("⚠  Destructive command — %s blast radius", blastRadiusBadge(radius)))
+	}
 
 	lines := []string{heading}
 	if reason := d.msg.Metadata["reason"]; reason != "" {

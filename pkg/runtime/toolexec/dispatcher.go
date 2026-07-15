@@ -45,6 +45,7 @@ const (
 	ApprovalSourceReadOnlyHint               = "readonly_hint"
 	ApprovalSourceUserApproved               = "user_approved"
 	ApprovalSourceUserApprovedSession        = "user_approved_session"
+	ApprovalSourceUserApprovedSafe           = "user_approved_safe"
 	ApprovalSourceUserApprovedTool           = "user_approved_tool"
 	ApprovalSourceUserRejected               = "user_rejected"
 	ApprovalSourceContextCanceled            = "context_canceled"
@@ -136,6 +137,7 @@ type ResumeType string
 const (
 	ResumeTypeApprove        ResumeType = "approve"
 	ResumeTypeApproveSession ResumeType = "approve-session"
+	ResumeTypeApproveSafe    ResumeType = "approve-safe"
 	ResumeTypeApproveTool    ResumeType = "approve-tool"
 	ResumeTypeReject         ResumeType = "reject"
 )
@@ -848,6 +850,11 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		slog.DebugContext(ctx, "Resume signal received, approving session", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.sess.SetToolsApproved(true)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSession)
+		return runTool()
+	case ResumeTypeApproveSafe:
+		slog.DebugContext(ctx, "Resume signal received, opting into safe-auto", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		c.sess.SetSafetyPolicy(session.SafetyPolicySafeAuto)
+		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSafe)
 		return runTool()
 	case ResumeTypeApproveTool:
 		approvedTool := req.ToolName

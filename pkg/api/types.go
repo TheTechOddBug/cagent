@@ -147,6 +147,7 @@ type SessionResponse struct {
 	Messages      []session.Message          `json:"messages,omitempty"`
 	CreatedAt     time.Time                  `json:"created_at"`
 	ToolsApproved bool                       `json:"tools_approved"`
+	SafetyPolicy  session.SafetyPolicy       `json:"safety_policy,omitempty"`
 	InputTokens   int64                      `json:"input_tokens"`
 	OutputTokens  int64                      `json:"output_tokens"`
 	WorkingDir    string                     `json:"working_dir,omitempty"`
@@ -156,6 +157,12 @@ type SessionResponse struct {
 // UpdateSessionPermissionsRequest represents a request to update session permissions.
 type UpdateSessionPermissionsRequest struct {
 	Permissions *session.PermissionsConfig `json:"permissions"`
+}
+
+// UpdateSessionSafetyPolicyRequest represents a request to change a
+// session's SafetyPolicy mid-session.
+type UpdateSessionSafetyPolicyRequest struct {
+	SafetyPolicy session.SafetyPolicy `json:"safety_policy"`
 }
 
 // ResumeSessionRequest represents a request to resume a session
@@ -335,6 +342,7 @@ type SessionSnapshotResponse struct {
 	WorkingDir    string                     `json:"working_dir,omitempty"`
 	Messages      []session.Message          `json:"messages"`
 	ToolsApproved bool                       `json:"tools_approved"`
+	SafetyPolicy  session.SafetyPolicy       `json:"safety_policy,omitempty"`
 	Permissions   *session.PermissionsConfig `json:"permissions,omitempty"`
 	InputTokens   int64                      `json:"input_tokens"`
 	OutputTokens  int64                      `json:"output_tokens"`

@@ -354,6 +354,7 @@ func (sm *SessionManager) GetSessionSnapshot(ctx context.Context, id string) (*a
 		WorkingDir:    sess.WorkingDir,
 		Messages:      sess.GetAllMessages(),
 		ToolsApproved: sess.ToolsApproved,
+		SafetyPolicy:  sess.SafetyPolicy,
 		Permissions:   sess.Permissions,
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
@@ -374,6 +375,9 @@ func (sm *SessionManager) CreateSession(ctx context.Context, sessionTemplate *se
 		session.WithMaxToolResultTokens(sessionTemplate.MaxToolResultTokens),
 		session.WithToolsApproved(sessionTemplate.ToolsApproved),
 	)
+	if sessionTemplate.SafetyPolicy != "" {
+		opts = append(opts, session.WithSafetyPolicy(sessionTemplate.SafetyPolicy))
+	}
 
 	// Carry a caller-supplied title (from the POST /api/sessions request body)
 	// into the new session. When set, RunSession's needsTitle check skips the
@@ -953,6 +957,21 @@ func (sm *SessionManager) ToggleToolApproval(ctx context.Context, sessionID stri
 
 	sess.ToolsApproved = !sess.ToolsApproved
 
+	return sm.sessionStore.UpdateSession(ctx, sess)
+}
+
+// SetSessionSafetyPolicy updates the SafetyPolicy for a session.
+func (sm *SessionManager) SetSessionSafetyPolicy(ctx context.Context, sessionID string, policy session.SafetyPolicy) error {
+	if !policy.IsValid() {
+		return fmt.Errorf("invalid safety_policy: %q", policy)
+	}
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	sess.SetSafetyPolicy(policy)
 	return sm.sessionStore.UpdateSession(ctx, sess)
 }
 
