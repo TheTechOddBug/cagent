@@ -410,6 +410,14 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 		// DecisionAllow / "" → advisory; fall through to Decide().
 	}
 
+	// Under safe-auto, tools with a positive safe verdict bypass the
+	// permissions layer. Otherwise permissions.ask: "*" would defeat
+	// the whole point of opting into safe-auto.
+	if source, ok := c.safeAutoAutoApprove(); ok {
+		c.notifyApproval(ctx, ApprovalDecisionAllow, source)
+		return runTool()
+	}
+
 	// readOnlyHint is intentionally false here so the pre_tool_use hook
 	// gets a turn before the read-only fast-path applies.
 	decision := c.permissionDecision(false)
@@ -509,6 +517,24 @@ func (c *call) sessionPermissionsAllow() bool {
 		return shellGrantCoversCommand(perms.Allow, args)
 	}
 	return true
+}
+
+// safeAutoAutoApprove returns (source, true) when the session opted
+// into safe-auto and this call carries a positive safe verdict — a
+// preempt-yolo classifier that returned Allow, or a tool that
+// self-declares read-only. Returning true short-circuits the
+// permissions layer so the user is not re-prompted after opting in.
+func (c *call) safeAutoAutoApprove() (string, bool) {
+	if c.sess.SafetyPolicy != session.SafetyPolicySafeAuto {
+		return "", false
+	}
+	if c.preYoloResult != nil && c.preYoloResult.Decision == hooks.DecisionAllow {
+		return ApprovalSourcePreToolUseHookAllow, true
+	}
+	if c.tool.Annotations.ReadOnlyHint {
+		return ApprovalSourceReadOnlyHint, true
+	}
+	return "", false
 }
 
 func (c *call) cancellationMessage(ctx context.Context) string {
@@ -827,14 +853,30 @@ func (c *call) confirmationMetadata(permissionMeta map[string]string) map[string
 	if c.preYoloResult != nil {
 		safetyMeta = c.preYoloResult.Metadata
 	}
-	if len(c.tool.Metadata) == 0 && len(permissionMeta) == 0 && len(safetyMeta) == 0 {
+	annotationMeta := blastRadiusFromAnnotations(c.tool.Annotations)
+	if len(annotationMeta) == 0 && len(c.tool.Metadata) == 0 && len(permissionMeta) == 0 && len(safetyMeta) == 0 {
 		return nil
 	}
-	merged := make(map[string]string, len(c.tool.Metadata)+len(permissionMeta)+len(safetyMeta))
+	merged := make(map[string]string, len(annotationMeta)+len(c.tool.Metadata)+len(permissionMeta)+len(safetyMeta))
+	maps.Copy(merged, annotationMeta)
 	maps.Copy(merged, c.tool.Metadata)
 	maps.Copy(merged, permissionMeta)
 	maps.Copy(merged, safetyMeta)
 	return merged
+}
+
+// blastRadiusFromAnnotations derives a blast_radius verdict from a tool's
+// MCP annotations. ReadOnlyHint → safe; DestructiveHint == true → high.
+// Returns nil when neither hint applies so callers keep the empty-map
+// short-circuit path.
+func blastRadiusFromAnnotations(a tools.ToolAnnotations) map[string]string {
+	if a.ReadOnlyHint {
+		return map[string]string{"blast_radius": "safe"}
+	}
+	if a.DestructiveHint != nil && *a.DestructiveHint {
+		return map[string]string{"blast_radius": "high"}
+	}
+	return nil
 }
 
 // handleResume applies the user's confirmation decision: run the tool
