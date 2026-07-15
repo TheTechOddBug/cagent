@@ -214,6 +214,8 @@
           url: /guides/secrets/
         - title: Go SDK
           url: /guides/go-sdk/
+        - title: Managing Context & Compaction
+          url: /guides/compaction/
     - label: Community
       items:
         - title: Contributing
