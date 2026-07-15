@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +16,7 @@ const (
 	ToolNameListSchedules  = "list_schedules"
 	ToolNameCancelSchedule = "cancel_schedule"
 
-	category = "scheduler"
+	category    = "scheduler"
 	loopMaxWait = time.Minute
 )
 
@@ -50,7 +51,7 @@ func New() *ToolSet {
 
 type CreateScheduleArgs struct {
 	Prompt string `json:"prompt" jsonschema:"The instruction to deliver to the agent when the schedule fires"`
-	When   string `json:"when" jsonschema:"When to fire: in:<dur> (e.g. in:10m), at:<RFC3339> (e.g. at:2026-07-14T09:00:00Z), every:<dur> (e.g. every:1h), or one of minutely, hourly, daily, weekly"`
+	When   string `json:"when" jsonschema:"When to fire: in:<dur> (e.g. in:10m), at:<RFC3339> (e.g. at:2026-07-14T09:00:00Z), every:<dur> (e.g. every:1h, minimum 1m), or one of minutely, hourly, daily, weekly"`
 	Name   string `json:"name,omitempty" jsonschema:"Optional human-readable label for the schedule"`
 }
 
@@ -68,12 +69,12 @@ func (t *ToolSet) createSchedule(_ context.Context, args CreateScheduleArgs, rt 
 		return tools.ResultError("Error: scheduling requires host recall support, which is unavailable in this session."), nil
 	}
 
+	t.setRuntime(rt)
+
 	sc, err := t.store.add(args.Name, args.Prompt, args.When, t.now())
 	if err != nil {
 		return tools.ResultError("Error: " + err.Error()), nil
 	}
-
-	t.setRuntime(rt)
 	t.signalWake()
 
 	return tools.ResultSuccess(formatCreated(sc)), nil
@@ -92,12 +93,13 @@ func (t *ToolSet) cancelSchedule(_ context.Context, args CancelScheduleArgs) (*t
 
 func (t *ToolSet) fireDue(ctx context.Context, now time.Time) {
 	rt := t.runtime()
+	if rt == nil {
+		return
+	}
 	for _, sc := range t.store.popDue(now) {
-		if rt == nil {
-			continue
-		}
 		if err := rt.Recall(ctx, formatFire(sc)); err != nil {
-			return
+			slog.WarnContext(ctx, "Failed to enqueue scheduled recall",
+				"schedule_id", sc.ID, "schedule_name", sc.Name, "error", err)
 		}
 	}
 }
@@ -209,6 +211,8 @@ cadence during this session.
   your normal tools (shell, api, fetch, …).
 - when accepts: in:<dur> (in:10m), at:<RFC3339> (at:2026-07-14T09:00:00Z),
   every:<dur> (every:1h), or minutely / hourly / daily / weekly.
+- Recurring schedules must be at least 1m apart; each fire costs a turn, so
+  prefer the longest cadence that still meets the need.
 - list_schedules shows active schedules; cancel_schedule removes one by id.
 
 Schedules only fire while this session is running and are not persisted across
