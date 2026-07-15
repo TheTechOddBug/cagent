@@ -46,6 +46,11 @@ const (
 	// SafetyPolicySafer: auto-approve except classifier-flagged
 	// destructive calls (blast_radius low/medium/high).
 	SafetyPolicySafer SafetyPolicy = "safer"
+	// SafetyPolicySafeAuto: auto-approve shell calls the classifier
+	// positively recognises as safe (blast_radius=safe); ask on
+	// destructive and unknown. Sits between safer and strict:
+	// safer waves through unknown too, strict prompts for safe.
+	SafetyPolicySafeAuto SafetyPolicy = "safe-auto"
 	// SafetyPolicyStrict: today's no-yolo CLI default — prompt for
 	// anything not auto-approved by a checker rule.
 	SafetyPolicyStrict SafetyPolicy = "strict"
@@ -53,7 +58,7 @@ const (
 
 func (p SafetyPolicy) IsValid() bool {
 	switch p {
-	case "", SafetyPolicyUnsafe, SafetyPolicySafer, SafetyPolicyStrict:
+	case "", SafetyPolicyUnsafe, SafetyPolicySafer, SafetyPolicySafeAuto, SafetyPolicyStrict:
 		return true
 	}
 	return false
@@ -1439,6 +1444,20 @@ func (s *Session) SetToolsApproved(approved bool) {
 	s.ToolsApproved = approved
 	if approved && s.SafetyPolicy == "" {
 		s.SafetyPolicy = SafetyPolicyUnsafe
+	}
+}
+
+// SetSafetyPolicy updates the session's SafetyPolicy under s.mu.
+// Mirrors WithSafetyPolicy: setting unsafe also flips ToolsApproved
+// so legacy branches on ToolsApproved keep working. Runtime callers
+// use this to persist a user's mid-session mode change (e.g. opting
+// into safe-auto from a confirmation prompt).
+func (s *Session) SetSafetyPolicy(policy SafetyPolicy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.SafetyPolicy = policy
+	if policy == SafetyPolicyUnsafe {
+		s.ToolsApproved = true
 	}
 }
 

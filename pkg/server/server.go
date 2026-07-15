@@ -82,6 +82,7 @@ func (s *Server) registerRoutes() {
 	group.GET("/sessions/:id/snapshot", s.getSessionSnapshot)
 	group.POST("/sessions/:id/resume", s.resumeSession)
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
+	group.PATCH("/sessions/:id/safety-policy", s.updateSessionSafetyPolicy)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
 	group.PATCH("/sessions/:id/title", s.updateSessionTitle)
 	group.PATCH("/sessions/:id/tokens", s.updateSessionTokens)
@@ -286,6 +287,7 @@ func (s *Server) forkSession(c echo.Context) error {
 		CreatedAt:     forked.CreatedAt,
 		Messages:      forked.GetAllMessages(),
 		ToolsApproved: forked.ToolsApproved,
+		SafetyPolicy:  forked.SafetyPolicy,
 		InputTokens:   forked.InputTokens,
 		OutputTokens:  forked.OutputTokens,
 		WorkingDir:    forked.WorkingDir,
@@ -307,6 +309,7 @@ func (s *Server) getSession(c echo.Context) error {
 		CreatedAt:     sess.CreatedAt,
 		Messages:      sess.GetAllMessages(),
 		ToolsApproved: sess.ToolsApproved,
+		SafetyPolicy:  sess.SafetyPolicy,
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
 		WorkingDir:    sess.WorkingDir,
@@ -374,6 +377,17 @@ func (s *Server) toggleSessionYolo(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to toggle session tool approval mode: %v", err))
 	}
 	return c.JSON(http.StatusOK, nil)
+}
+
+func (s *Server) updateSessionSafetyPolicy(c echo.Context) error {
+	var req api.UpdateSessionSafetyPolicyRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+	if err := s.sm.SetSessionSafetyPolicy(c.Request().Context(), c.Param("id"), req.SafetyPolicy); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "session safety policy updated"})
 }
 
 func (s *Server) getAgentToolCount(c echo.Context) error {
