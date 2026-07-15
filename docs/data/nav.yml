@@ -46,6 +46,8 @@
       url: /configuration/structured-output/
     - title: Model Routing
       url: /configuration/routing/
+    - title: User Settings
+      url: /configuration/user-settings/
 
 - section: Built-in Tools
   groups:
