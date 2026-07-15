@@ -4,24 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/useragent"
 )
 
 const (
 	ToolNameSendWebhook = "send_webhook"
 
-	category       = "webhook"
-	requestTimeout = 30 * time.Second
-	maxRespRead    = 64 << 10
+	category    = "webhook"
+	maxRespRead = 64 << 10
 )
 
 type httpDoer interface {
@@ -38,7 +38,7 @@ var (
 )
 
 func New() *ToolSet {
-	return &ToolSet{client: httpclient.NewSafeClient(requestTimeout, false)}
+	return &ToolSet{client: httpclient.NewSafeClient(httpclient.DefaultToolHTTPTimeout, false)}
 }
 
 func CreateToolSet(_ *config.RuntimeConfig) (tools.ToolSet, error) {
@@ -91,7 +91,7 @@ func buildPayload(provider, message, value2, value3, chatID string) (string, []b
 		}
 	case "telegram":
 		if strings.TrimSpace(chatID) == "" {
-			return "", nil, fmt.Errorf("telegram requires chat_id")
+			return "", nil, errors.New("telegram requires chat_id")
 		}
 		payload = map[string]string{"chat_id": chatID, "text": message}
 	default:
@@ -125,6 +125,7 @@ func (t *ToolSet) send(ctx context.Context, args SendArgs) (*tools.ToolCallResul
 		return tools.ResultError("Error: " + err.Error()), nil
 	}
 	req.Header.Set("Content-Type", contentType)
+	useragent.SetIdentity(req)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -144,7 +145,7 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 		{
 			Name:                    ToolNameSendWebhook,
 			Category:                category,
-			Description:             "Send a message to a webhook (Slack, Discord, IFTTT, or a generic URL). POSTs a provider-shaped JSON payload and reports delivery status.",
+			Description:             "Send a message to a webhook (Slack, Discord, IFTTT, Telegram, Mattermost, Rocket.Chat, Google Chat, Teams, or a generic URL). POSTs a provider-shaped JSON payload and reports delivery status.",
 			Parameters:              tools.MustSchemaFor[SendArgs](),
 			OutputSchema:            tools.MustSchemaFor[string](),
 			Handler:                 tools.NewHandler(t.send),
