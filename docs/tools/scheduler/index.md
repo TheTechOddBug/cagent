@@ -65,6 +65,9 @@ The `when` argument accepts:
 
 Durations use Go's duration syntax (`30s`, `15m`, `2h`). Preset and `every:` intervals are measured from the schedule's creation time (for example `hourly` fires every hour after it is created), not aligned to wall-clock slots.
 
+> [!IMPORTANT]
+> **Recurring schedules have a one-minute minimum.** Every fire injects a message into the agent loop and typically costs an LLM turn, so `every:` values below `1m` are rejected — a typo such as `every:1s` in place of `every:1h` would otherwise become a runaway token burn. One-shot schedules (`in:` / `at:`) are not restricted, since they fire once.
+
 ## Example
 
 ```yaml
