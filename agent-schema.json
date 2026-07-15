@@ -2019,6 +2019,7 @@
             "open_url",
             "model_picker",
             "background_agents",
+            "scheduler",
             "rag"
           ]
         },
@@ -2354,7 +2355,8 @@
                 "lsp",
                 "user_prompt",
                 "model_picker",
-                "background_agents"
+                "background_agents",
+                "scheduler"
               ]
             }
           }
