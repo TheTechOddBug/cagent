@@ -638,16 +638,16 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
   color: var(--text-secondary);
 }
 
-.content a {
+.content a:not(.btn) {
   color: var(--accent-hover);
   text-decoration: none;
   font-weight: 500;
   transition: color 0.12s;
 }
-[data-theme="light"] .content a {
+[data-theme="light"] .content a:not(.btn) {
   color: var(--accent);
 }
-.content a:hover {
+.content a:not(.btn):hover {
   color: var(--docker-blue-light);
   text-decoration: underline;
 }
@@ -870,7 +870,7 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
   color: var(--text-secondary);
   font-size: 0.85rem;
 }
-.preview-banner a { color: var(--accent); }
+.preview-banner a { color: var(--accent-on-card); }  /* --accent (blue-400) read 4.08:1 on bg-card in dark -- same fix as elevator/usecase/glossary text-on-card */
 
 /* ===== Callouts / Admonitions =====
  * docs.docker.com-style: rounded panel with a filled, circular icon
