@@ -460,6 +460,14 @@ func (t *oauthTransport) handleServerRejectedToken(ctx context.Context, prev *OA
 	return t.startInteractiveFlowLocked(ctx, t.baseURL, wwwAuth)
 }
 
+// interactiveOAuthMu serializes interactive OAuth flows across transports
+// (per-toolset oauthFlowMu only serializes flows for one server). Toolsets
+// now start concurrently, so two OAuth-requiring servers could otherwise
+// prompt the user at the same time and race to bind a fixed callback port.
+// One flow at a time restores the sequential-start behavior; queued flows
+// run as soon as the user finishes (or cancels) the current one.
+var interactiveOAuthMu sync.Mutex
+
 // startInteractiveFlowLocked runs the interactive OAuth flow while oauthFlowMu
 // is already held. It enforces the sticky-decline guard: a prior user cancel
 // short-circuits immediately and returns OAuthDeclinedError, and a new cancel
@@ -477,6 +485,12 @@ func (t *oauthTransport) startInteractiveFlowLocked(ctx context.Context, authSer
 		slog.DebugContext(ctx, "OAuth flow short-circuited: user already declined on this transport", "url", t.baseURL)
 		return &OAuthDeclinedError{URL: t.baseURL}
 	}
+
+	// Queue behind other transports' flows only after the cheap decline
+	// short-circuit; flows on this transport are already serialized by
+	// oauthFlowMu, so the latch cannot change while we wait here.
+	interactiveOAuthMu.Lock()
+	defer interactiveOAuthMu.Unlock()
 
 	err := t.handleOAuthFlow(ctx, authServer, wwwAuth)
 	if err != nil {
