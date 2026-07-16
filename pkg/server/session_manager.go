@@ -919,11 +919,8 @@ func (sm *SessionManager) ResumeSession(ctx context.Context, sessionID, confirma
 		return errors.New("session not found")
 	}
 
-	// approve-safe / approve-safer / approve-session mutate the session
-	// mid-turn from the dispatcher, but PersistenceObserver only persists
-	// on OnRunStart — the mutation would otherwise not survive to the
-	// next turn. Apply and persist synchronously here so the state is
-	// durable regardless of when the dispatcher processes the resume.
+	// Mirror + persist mid-turn session mutations synchronously —
+	// PersistenceObserver only persists on OnRunStart.
 	if rt.session != nil {
 		mutated := false
 		switch runtime.ResumeType(confirmation) {
@@ -936,6 +933,13 @@ func (sm *SessionManager) ResumeSession(ctx context.Context, sessionID, confirma
 		case runtime.ResumeTypeApproveSession:
 			rt.session.SetToolsApproved(true)
 			mutated = true
+		case runtime.ResumeTypeApproveTool:
+			// Skip when toolName is empty — the dispatcher's own
+			// fallback (pending tool call name) isn't reachable here.
+			if toolName != "" {
+				rt.session.AppendPermissionAllow(toolName)
+				mutated = true
+			}
 		}
 		if mutated {
 			if err := sm.sessionStore.UpdateSession(ctx, rt.session); err != nil {
@@ -1156,9 +1160,8 @@ func (sm *SessionManager) SetSessionSafetyPolicy(ctx context.Context, sessionID 
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 
-	// Mirror onto the live runtime session (if any) so the running
-	// dispatcher picks up the new policy on the very next tool call,
-	// then persist so it survives to the next turn.
+	// Mirror onto the live runtime session so the dispatcher picks up
+	// the new policy on the next tool call, not just the next turn.
 	if rt, ok := sm.runtimeSessions.Load(sessionID); ok && rt.session != nil {
 		rt.session.SetSafetyPolicy(policy)
 		return sm.sessionStore.UpdateSession(ctx, rt.session)
