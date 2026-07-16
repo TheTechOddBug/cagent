@@ -101,11 +101,12 @@ type Message struct {
 	// excess marks against the API's breakpoint limit).
 	//
 	// Contract: this is request-assembly state, not conversation state.
-	// The session sets it on assembled prompt copies (never on stored
-	// transcript items, and session.CompactionInput strips it
-	// defensively). It stays JSON-serialized because the assembled
-	// messages round-trip through before_llm_call hooks as JSON and the
-	// marks must survive hook rewrites.
+	// The session sets it on assembled prompt copies; transcripts never
+	// carry it (session.AddMessage strips it on ingestion and
+	// session.CompactionInput strips it defensively for legacy persisted
+	// rows). It stays JSON-serialized because the assembled messages
+	// round-trip through before_llm_call hooks as JSON and the marks
+	// must survive hook rewrites.
 	CacheControl bool `json:"cache_control,omitempty"`
 }
 
