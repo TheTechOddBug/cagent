@@ -389,24 +389,13 @@ func convertBetaTools(t []tools.Tool) ([]anthropic.BetaToolUnionParam, error) {
 // of the last `breakpoints` messages for prompt caching.
 func applyBetaMessageCacheControl(messages []anthropic.BetaMessageParam, breakpoints int) {
 	for i := len(messages) - 1; i >= 0 && i >= len(messages)-breakpoints; i-- {
-		msg := &messages[i]
-		if len(msg.Content) == 0 {
+		content := messages[i].Content
+		if len(content) == 0 {
 			continue
 		}
-		lastIdx := len(msg.Content) - 1
-		block := &msg.Content[lastIdx]
-		cacheCtrl := anthropic.NewBetaCacheControlEphemeralParam()
-		switch {
-		case block.OfText != nil:
-			block.OfText.CacheControl = cacheCtrl
-		case block.OfToolUse != nil:
-			block.OfToolUse.CacheControl = cacheCtrl
-		case block.OfToolResult != nil:
-			block.OfToolResult.CacheControl = cacheCtrl
-		case block.OfImage != nil:
-			block.OfImage.CacheControl = cacheCtrl
-		case block.OfDocument != nil:
-			block.OfDocument.CacheControl = cacheCtrl
+		// nil for block kinds without cache control (e.g. thinking blocks).
+		if cc := content[len(content)-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewBetaCacheControlEphemeralParam()
 		}
 	}
 }
