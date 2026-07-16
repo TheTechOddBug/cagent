@@ -216,17 +216,64 @@ function buildSearchIndex() {
   }
 }
 
+// WAI-ARIA dialog pattern: keep Tab/Shift-Tab cycling inside the modal
+// instead of leaking focus into the page behind the overlay, and
+// restore focus to whatever opened it on close.
+let previouslyFocused = null;
+
 function openSearch() {
+  previouslyFocused = document.activeElement;
   $searchOverlay?.classList.add('active');
   if ($searchModal) {
     $searchModal.value = '';
     $searchModal.focus();
   }
   renderSearchResults('');
+  document.addEventListener('keydown', trapSearchFocus);
 }
 
 function closeSearch() {
   $searchOverlay?.classList.remove('active');
+  document.removeEventListener('keydown', trapSearchFocus);
+  previouslyFocused?.focus();
+  previouslyFocused = null;
+}
+
+function searchFocusables() {
+  const results = $searchResults ? Array.from($searchResults.querySelectorAll('.search-result')) : [];
+  return $searchModal ? [$searchModal, ...results] : results;
+}
+
+function trapSearchFocus(e) {
+  if (e.key !== 'Tab') return;
+  const focusables = searchFocusables();
+  if (focusables.length === 0) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+// Arrow-key navigation: move real DOM focus between the query input and
+// the result links (avoids needing an aria-activedescendant wiring).
+function navigateSearchResults(e) {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const results = $searchResults ? Array.from($searchResults.querySelectorAll('.search-result')) : [];
+  if (results.length === 0) return;
+  const idx = results.indexOf(document.activeElement);
+  e.preventDefault();
+  if (e.key === 'ArrowDown') {
+    results[idx + 1] ? results[idx + 1].focus() : results[0].focus();
+  } else if (idx <= 0) {
+    $searchModal?.focus();
+  } else {
+    results[idx - 1].focus();
+  }
 }
 
 function renderSearchResults(query) {
@@ -275,8 +322,9 @@ function renderSearchResults(query) {
 
 // ---------- Event listeners ----------
 $searchInput?.addEventListener('click', openSearch);
-$searchInput?.addEventListener('focus', openSearch);
 $searchModal?.addEventListener('input', (e) => renderSearchResults(e.target.value));
+$searchModal?.addEventListener('keydown', navigateSearchResults);
+$searchResults?.addEventListener('keydown', navigateSearchResults);
 $searchOverlay?.addEventListener('click', (e) => { if (e.target === $searchOverlay) closeSearch(); });
 
 document.addEventListener('keydown', (e) => {
