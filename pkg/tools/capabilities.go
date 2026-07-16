@@ -13,6 +13,15 @@ type Startable interface {
 	Stop(ctx context.Context) error
 }
 
+// PeerDependent is implemented by toolsets whose Start reads from the
+// agent's other toolsets (e.g. the deferred aggregator lists its source
+// toolsets' tools). Callers that start an agent's toolsets concurrently
+// must start these only after every other toolset has settled, or their
+// Start would race the very toolsets it depends on.
+type PeerDependent interface {
+	StartsAfterPeers()
+}
+
 // Statable is implemented by toolsets that expose a lifecycle state
 // snapshot (Stopped/Starting/Ready/Degraded/Restarting/Failed) plus the
 // most recent error and restart count. The TUI uses this to render

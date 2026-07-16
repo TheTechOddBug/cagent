@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/cache"
+	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/model/provider"
@@ -436,12 +437,27 @@ func (a *Agent) collectTools(ctx context.Context) ([]tools.Tool, error) {
 		}
 	}
 
-	for _, toolSet := range a.toolsets {
+	// List every started toolset concurrently — a remote MCP tools/list is a
+	// network round-trip — then merge in configuration order so dedup
+	// ("first toolset in config wins") and warning semantics are unchanged.
+	type listResult struct {
+		tools   []tools.Tool
+		err     error
+		started bool
+	}
+	results := concurrent.MapSlice(a.toolsets, func(toolSet *tools.StartableToolSet) listResult {
 		if !toolSet.IsStarted() {
+			return listResult{}
+		}
+		ts, err := toolSet.Tools(ctx)
+		return listResult{tools: ts, err: err, started: true}
+	})
+	for i, toolSet := range a.toolsets {
+		if !results[i].started {
 			// Toolset not started; skip it
 			continue
 		}
-		ta, err := toolSet.Tools(ctx)
+		ta, err := results[i].tools, results[i].err
 		if err != nil {
 			desc := tools.DescribeToolSet(toolSet)
 			// Route through the once-per-streak guard so a toolset stuck
@@ -524,9 +540,32 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 // not surface a "now available" notice (the OAuth dialog completing or
 // the model just using the tool already makes a successful start
 // obvious; a follow-up notification just reads as a spurious warning).
+//
+// Starts run concurrently so one slow toolset (e.g. an MCP server
+// handshake) doesn't delay the others; Start() is single-flight per
+// toolset and warnings are recorded in configuration order afterwards.
+// Peer-dependent toolsets (e.g. the deferred aggregator, whose Start
+// lists its source toolsets' tools) start in a second wave, after the
+// toolsets they depend on have settled.
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
-	for _, toolSet := range a.toolsets {
-		err := toolSet.Start(ctx)
+	var independent, dependent []int
+	for i, toolSet := range a.toolsets {
+		if _, ok := tools.As[tools.PeerDependent](toolSet); ok {
+			dependent = append(dependent, i)
+		} else {
+			independent = append(independent, i)
+		}
+	}
+
+	errs := make([]error, len(a.toolsets))
+	for _, wave := range [][]int{independent, dependent} {
+		concurrent.ForEach(wave, func(i int) {
+			errs[i] = a.toolsets[i].Start(ctx)
+		})
+	}
+
+	for i, toolSet := range a.toolsets {
+		err := errs[i]
 		if err == nil {
 			continue
 		}
