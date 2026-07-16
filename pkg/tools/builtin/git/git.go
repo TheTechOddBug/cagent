@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -25,6 +26,7 @@ const (
 
 	category        = "git"
 	defaultLogLimit = 20
+	maxLogLimit     = 200
 	maxBlameLines   = 400
 )
 
@@ -62,7 +64,7 @@ func (t *ToolSet) open() (*gogit.Repository, error) {
 type StatusArgs struct{}
 
 type LogArgs struct {
-	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of commits to return (default 20)"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of commits to return (default 20, capped at 200)"`
 	Path  string `json:"path,omitempty" jsonschema:"Only show commits that touch this path"`
 }
 
@@ -91,9 +93,13 @@ func (t *ToolSet) status(_ context.Context, _ StatusArgs) (*tools.ToolCallResult
 		return tools.ResultError("Error: reading status: " + err.Error()), nil
 	}
 
-	branch := "(detached HEAD)"
-	if head, err := repo.Head(); err == nil && head.Name().IsBranch() {
-		branch = head.Name().Short()
+	branch := "(no commits yet)"
+	if head, err := repo.Head(); err == nil {
+		if head.Name().IsBranch() {
+			branch = head.Name().Short()
+		} else {
+			branch = "(detached HEAD)"
+		}
 	}
 
 	var b strings.Builder
@@ -132,6 +138,9 @@ func (t *ToolSet) log(_ context.Context, args LogArgs) (*tools.ToolCallResult, e
 	}
 	iter, err := repo.Log(opts)
 	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return tools.ResultSuccess("No commits yet."), nil
+		}
 		return tools.ResultError("Error: reading log: " + err.Error()), nil
 	}
 	defer iter.Close()
@@ -139,6 +148,9 @@ func (t *ToolSet) log(_ context.Context, args LogArgs) (*tools.ToolCallResult, e
 	limit := args.Limit
 	if limit <= 0 {
 		limit = defaultLogLimit
+	}
+	if limit > maxLogLimit {
+		limit = maxLogLimit
 	}
 
 	var b strings.Builder
@@ -279,15 +291,11 @@ func resolveRev(repo *gogit.Repository, rev string) (plumbing.Hash, error) {
 }
 
 func firstLine(msg string) string {
-	msg = strings.TrimSpace(msg)
-	if i := strings.IndexByte(msg, '\n'); i >= 0 {
-		return msg[:i]
-	}
-	return msg
+	first, _, _ := strings.Cut(strings.TrimSpace(msg), "\n")
+	return first
 }
 
 func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
-	ro := tools.ToolAnnotations{ReadOnlyHint: true}
 	return []tools.Tool{
 		{
 			Name:                    ToolNameGitStatus,
@@ -316,7 +324,7 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 			Parameters:              tools.MustSchemaFor[BranchesArgs](),
 			OutputSchema:            tools.MustSchemaFor[string](),
 			Handler:                 tools.NewHandler(t.branches),
-			Annotations:             ro,
+			Annotations:             tools.ToolAnnotations{ReadOnlyHint: true, Title: "Git Branches"},
 			AddDescriptionParameter: true,
 		},
 		{
