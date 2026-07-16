@@ -524,9 +524,22 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 // not surface a "now available" notice (the OAuth dialog completing or
 // the model just using the tool already makes a successful start
 // obvious; a follow-up notification just reads as a spurious warning).
+//
+// Starts run concurrently so one slow toolset (e.g. an MCP server
+// handshake) doesn't delay the others; Start() is single-flight per
+// toolset and warnings are recorded in configuration order afterwards.
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
-	for _, toolSet := range a.toolsets {
-		err := toolSet.Start(ctx)
+	errs := make([]error, len(a.toolsets))
+	var wg sync.WaitGroup
+	for i, toolSet := range a.toolsets {
+		wg.Go(func() {
+			errs[i] = toolSet.Start(ctx)
+		})
+	}
+	wg.Wait()
+
+	for i, toolSet := range a.toolsets {
+		err := errs[i]
 		if err == nil {
 			continue
 		}
