@@ -826,10 +826,15 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
 
 /* ===== Tables ===== */
 .content table {
+  display: block;
+  overflow-x: auto;
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 24px;
   font-size: 0.875rem;
+  /* Wide reference tables would otherwise force page-level horizontal
+   * scroll at narrow viewports / high zoom; scope the scroll region to
+   * the table itself instead (WCAG 1.4.10 reflow). */
 }
 .content th {
   text-align: left;
@@ -1763,6 +1768,9 @@ kbd {
   color: var(--gray-400);  /* #64748B read 3.38:1 on the dark code block */
   cursor: pointer;
   padding: 3px 8px;
+  min-height: 24px;        /* WCAG 2.5.8 24px target minimum — was ~22px */
+  display: inline-flex;
+  align-items: center;
   font-size: 0.7rem;
   font-family: var(--font-mono);
   opacity: 0;
