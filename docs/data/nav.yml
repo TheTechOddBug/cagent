@@ -142,6 +142,8 @@
       url: /features/evaluation/
     - title: Skills
       url: /features/skills/
+    - title: Code Mode
+      url: /features/code-mode/
     - title: Remote MCP Servers
       url: /features/remote-mcp/
 
