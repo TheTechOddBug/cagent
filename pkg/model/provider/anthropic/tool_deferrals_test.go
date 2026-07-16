@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,4 +70,37 @@ func TestDeferredToolsAreReferencedAtTheirLoadPoint(t *testing.T) {
 	betaJSON, err := json.Marshal(beta)
 	require.NoError(t, err)
 	assert.Contains(t, string(betaJSON), `"tool_name":"search","type":"tool_reference"`)
+}
+
+func TestDeferredToolsKeepSingleMessageCacheBreakpoint(t *testing.T) {
+	messages := []chat.Message{
+		{Role: chat.MessageRoleUser, Content: "first"},
+		{Role: chat.MessageRoleAssistant, Content: "second"},
+		{Role: chat.MessageRoleUser, Content: "third"},
+	}
+	deferredTools := []tools.Tool{{Name: "search", Parameters: map[string]any{"type": "object"}, Deferred: true}}
+
+	countBreakpoints := func(v any) int {
+		data, err := json.Marshal(v)
+		require.NoError(t, err)
+		return strings.Count(string(data), `"cache_control"`)
+	}
+
+	standard, err := testClient().convertMessagesWithDeferred(t.Context(), messages, deferredTools)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countBreakpoints(standard))
+
+	beta, err := testClient().convertBetaMessagesWithDeferred(t.Context(), messages, deferredTools)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countBreakpoints(beta))
+
+	// Without deferred tools the tool list carries no breakpoint, so two
+	// message breakpoints remain in use.
+	standard, err = testClient().convertMessagesWithDeferred(t.Context(), messages, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, countBreakpoints(standard))
+
+	beta, err = testClient().convertBetaMessagesWithDeferred(t.Context(), messages, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, countBreakpoints(beta))
 }
