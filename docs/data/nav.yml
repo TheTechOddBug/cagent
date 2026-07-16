@@ -122,6 +122,8 @@
       url: /features/snapshots/
     - title: Kanban Board
       url: /features/board/
+    - title: Sessions
+      url: /features/sessions/
     - title: CLI Reference
       url: /features/cli/
     - title: MCP Mode
