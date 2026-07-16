@@ -17,6 +17,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/session"
@@ -209,23 +210,18 @@ func (d *Dispatcher) Process(ctx context.Context, sess *session.Session, calls [
 	batchCtx, cancelBatch := context.WithCancelCause(ctx)
 	defer cancelBatch(nil)
 
-	outcomes := make([]CallOutcome, len(calls))
 	var stopOnce sync.Once
-	var wg sync.WaitGroup
-	for i, tc := range calls {
-		wg.Go(func() {
-			c := d.newCall(sess, em, a, tc, toolByName)
-			outcome := c.run(batchCtx)
-			outcomes[i] = outcome
-			switch {
-			case outcome.Canceled:
-				stopOnce.Do(func() { cancelBatch(errBatchCanceledByUser) })
-			case outcome.StopRun:
-				stopOnce.Do(func() { cancelBatch(errBatchStoppedByHook) })
-			}
-		})
-	}
-	wg.Wait()
+	outcomes := concurrent.MapSlice(calls, func(tc tools.ToolCall) CallOutcome {
+		c := d.newCall(sess, em, a, tc, toolByName)
+		outcome := c.run(batchCtx)
+		switch {
+		case outcome.Canceled:
+			stopOnce.Do(func() { cancelBatch(errBatchCanceledByUser) })
+		case outcome.StopRun:
+			stopOnce.Do(func() { cancelBatch(errBatchStoppedByHook) })
+		}
+		return outcome
+	})
 
 	for _, outcome := range outcomes {
 		if outcome.StopRun {

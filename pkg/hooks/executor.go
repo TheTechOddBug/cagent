@@ -9,13 +9,13 @@ import (
 	"maps"
 	"regexp"
 	"strings"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 )
 
@@ -215,12 +215,9 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 		return nil, fmt.Errorf("failed to serialize hook input: %w", err)
 	}
 
-	results := make([]hookResult, len(hooks))
-	var wg sync.WaitGroup
-	for i, hook := range hooks {
-		wg.Go(func() { results[i] = e.runHook(ctx, hook, inputJSON) })
-	}
-	wg.Wait()
+	results := concurrent.MapSlice(hooks, func(hook Hook) hookResult {
+		return e.runHook(ctx, hook, inputJSON)
+	})
 
 	final := aggregate(results, event)
 	annotateHookSpan(span, event, final)

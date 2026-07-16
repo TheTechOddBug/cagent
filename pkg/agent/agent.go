@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/cache"
+	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/model/provider"
@@ -444,19 +445,13 @@ func (a *Agent) collectTools(ctx context.Context) ([]tools.Tool, error) {
 		err     error
 		started bool
 	}
-	results := make([]listResult, len(a.toolsets))
-	var wg sync.WaitGroup
-	for i, toolSet := range a.toolsets {
+	results := concurrent.MapSlice(a.toolsets, func(toolSet *tools.StartableToolSet) listResult {
 		if !toolSet.IsStarted() {
-			continue
+			return listResult{}
 		}
-		results[i].started = true
-		wg.Go(func() {
-			results[i].tools, results[i].err = toolSet.Tools(ctx)
-		})
-	}
-	wg.Wait()
-
+		ts, err := toolSet.Tools(ctx)
+		return listResult{tools: ts, err: err, started: true}
+	})
 	for i, toolSet := range a.toolsets {
 		if !results[i].started {
 			// Toolset not started; skip it
@@ -550,14 +545,9 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 // handshake) doesn't delay the others; Start() is single-flight per
 // toolset and warnings are recorded in configuration order afterwards.
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
-	errs := make([]error, len(a.toolsets))
-	var wg sync.WaitGroup
-	for i, toolSet := range a.toolsets {
-		wg.Go(func() {
-			errs[i] = toolSet.Start(ctx)
-		})
-	}
-	wg.Wait()
+	errs := concurrent.MapSlice(a.toolsets, func(toolSet *tools.StartableToolSet) error {
+		return toolSet.Start(ctx)
+	})
 
 	for i, toolSet := range a.toolsets {
 		err := errs[i]

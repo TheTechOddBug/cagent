@@ -20,6 +20,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
@@ -1675,18 +1676,13 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 	// non-interactive here so no start can block on a user-driven flow. Each
 	// start keeps its own bounded timeout. Results are then processed in
 	// configuration order so progress events and warnings are deterministic.
-	startErrs := make([]error, totalToolsets)
-	var wg sync.WaitGroup
-	for i, toolset := range toolsets {
+	startErrs := concurrent.MapSlice(toolsets, func(toolset tools.ToolSet) error {
 		startable, ok := toolset.(*tools.StartableToolSet)
 		if !ok {
-			continue
+			return nil
 		}
-		wg.Go(func() {
-			startErrs[i] = startToolsetWithTimeout(ctx, startable, r.toolStartTimeout)
-		})
-	}
-	wg.Wait()
+		return startToolsetWithTimeout(ctx, startable, r.toolStartTimeout)
+	})
 
 	// Load tools from each toolset and emit progress
 	var totalTools int
