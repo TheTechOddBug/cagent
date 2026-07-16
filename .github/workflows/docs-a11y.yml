@@ -4,6 +4,13 @@
 # docs-a11y-audit remediation (docs-a11y-audit plan, PR 9): the fixes
 # in PRs 1-8 land first so this job starts from a green baseline.
 #
+# docs/.pa11yci.json lists each scanned page twice, once with
+# ?theme=light and once with ?theme=dark: the headless browser's
+# default color-scheme is otherwise indeterminate (observed as
+# "light" locally), so without the query param the gate would only
+# ever exercise one theme. js/app.js's initTheme() honors ?theme=
+# ahead of localStorage/prefers-color-scheme for exactly this reason.
+#
 # pa11y only treats HTML_CodeSniffer "error"-level results as
 # failures (warnings/notices are informational and excluded by
 # default), so this gates on real violations rather than every

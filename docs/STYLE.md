@@ -133,14 +133,35 @@ tokens, templates, or JS, keep these conventions:
 
 - **Never de-emphasize text with `opacity`.** It multiplies through to
   contrast against the background and silently drops already-muted
-  text below AA (this bit both `.sidebar-subheading` and
-  `how-it-works.svg`'s secondary labels). Use a token with a real,
-  computed contrast ratio instead — the muted-but-legible look comes
-  from choosing the right gray, not from fading a legible one.
+  text below AA (this bit `.sidebar-subheading`). Use a token with a
+  real, computed contrast ratio instead — the muted-but-legible look
+  comes from choosing the right gray, not from fading a legible one.
 - **Recompute contrast for both themes whenever a shared token or rule
   changes.** Dark is `:root`'s default; light is the `[data-theme="light"]`
   override block. A value that passes on one background can fail badly
   on the other — see the token table below.
+- **The same token can pass or fail depending on *which* surface it
+  sits on.** `--text-muted`'s dark value (gray-400) reads a comfortable
+  6.37:1 against the page background (`--bg-dark`), but only 4.42:1
+  against the lighter `--bg-hover` gray-800 used by `#search-input` —
+  a marginal AA fail nobody caught until a component-level scan ran.
+  Don't assume a token that's fine for body text is fine on every
+  background it's ever applied to; check the *actual* background of
+  the specific element.
+- **Watch for a more-specific rule shadowing a component's own color.**
+  `.content a` (specificity of a class + a type selector) silently
+  overrode `.btn-primary`/`.btn-secondary`'s own `color` for any button
+  rendered as a link inside `.content` — invisible in light mode only
+  because `--accent` and `--blue-500` happened to be the same hex
+  there, but a real 2.55:1 fail in dark. Fixed by excluding button
+  links from the prose-link rule (`.content a:not(.btn)`) rather than
+  trying to out-specificity it per button.
+- **Inline `style="...var(--accent)..."` on a content page** (e.g.
+  `404.md`'s "Back to Docs" button) should reach for `--accent-strong`
+  (a fixed `--blue-500`, identical in both themes, 5.0:1 for white
+  text) rather than the theme-varying `--accent` when the other color
+  in the pair is hardcoded (here, white) — `--accent`'s dark value
+  (blue-400) only reads 3.94:1 against white.
 - **`--bg-content`** is the content column's background (`.main`):
   white in light mode, the same `--bg-dark` as the page in dark mode
   (so dark is unaffected). Header/sidebar/footer chrome stays on
@@ -151,14 +172,23 @@ tokens, templates, or JS, keep these conventions:
   terms): blue-300 in dark (blue-400 only reads 4.08:1 on the dark
   card), blue-500 in light (already 5.0:1 there). Use it instead of
   the bare `--accent` for any *new* text-on-card component.
-- **Static, theme-unaware assets** (SVGs embedded via `<img>`, so they
-  can't inherit `currentColor` from the page) need one hardcoded
-  palette that clears AA against *both* a near-black dark card
-  (`#1E2129`) and a white light card simultaneously. A neutral gray
-  can't do much better than ~4:1 against both at once (see
-  `assets/how-it-works.svg`'s header comment for the derivation) — if
-  a new diagram needs true per-theme colors, inline the SVG in the
-  Markdown instead so CSS custom properties apply.
+- **SVGs embedded via `<img>` can't inherit `currentColor` or CSS
+  custom properties from the page**, so a single hardcoded palette has
+  to clear AA against *both* a near-black dark card (`#1E2129`) and a
+  white light card at once — a neutral gray tops out around ~4:1
+  against both simultaneously, which fails 4.5:1 normal-text AA in
+  both themes. `assets/how-it-works.svg` used to ship exactly that
+  compromise palette (a mistake, not a real fix — see git history);
+  it's now two theme-specific files, `how-it-works.svg` (light: gray-600
+  body text 5.88:1, blue-500 accent 5.00:1 — both on white) and
+  `how-it-works-dark.svg` (dark: gray-400 body text 5.59:1, blue-300
+  accent 5.89:1 — both on `#1E2129`), toggled purely with CSS
+  (`.flow-diagram img.theme-light-only` / `.theme-dark-only`, hidden
+  with `display: none` so only one is ever in the accessibility tree).
+  Prefer this per-theme-variant approach — or inlining the SVG in the
+  Markdown so CSS custom properties/`currentColor` apply — over a
+  single compromise palette for any new diagram; a midpoint gray
+  cannot pass both surfaces per WCAG 1.4.3.
 - **Watch CSS specificity when a rule sets `color` on `code`/`pre`
   elements.** A same-specificity, theme-unconditional rule that comes
   *later* in the stylesheet silently wins over an earlier
@@ -181,6 +211,10 @@ tokens, templates, or JS, keep these conventions:
 | `kbd` text | `--text-muted` (as above) | gray-300, 6.07:1 |
 | `.copy-btn` text | gray-600, 5.52:1 | gray-400, 5.59:1 |
 | `.pain-x` badge (white text) | `--error-strong` `#DC2626`, 4.83:1 | same |
+| `#search-input` (search trigger button) text | `--text-muted` (gray-600), 5.88:1 on `--bg-hover` white | gray-300, 6.07:1 on `--bg-hover` gray-800 (was `--text-muted` gray-400, 4.42:1 — fail) |
+| `.preview-banner a` | `--accent-on-card` (unchanged, blue-500 5.0:1) | `--accent-on-card` blue-300, 5.89:1 (was `--accent` blue-400, 4.08:1 — fail) |
+| `.btn-primary`/`.btn-secondary` as `.content a` links (Quick Start, Back to Docs) | unchanged (blue-500-on-white 5.00:1 / white-on-translucent) | own `color` restored via `.content a:not(.btn)`, was 2.55:1 (`--accent-hover` leaking onto a white button bg) |
+| `how-it-works.svg` diagram text | gray-600 body 5.88:1 / blue-500 accent 5.00:1 (light-only file, on white) | gray-400 body 5.59:1 / blue-300 accent 5.89:1 (dark-only file, on `#1E2129`) |
 
 ### Motion
 
@@ -191,11 +225,71 @@ in `style.css`; `js/app.js`'s TOC scroll gates `scrollIntoView`'s
 stay pausable/stoppable (WCAG 2.2.2) — it's a `<video controls>`, not
 an auto-looping GIF with no user control.
 
+The `<video>`'s `width`/`height` attributes must match the encoded
+media's true aspect ratio (currently 1200×960, 5:4 — `demo.mp4` is
+2000×1600). A mismatched ratio there causes visible stretching once
+`.demo-container video { width: 100%; height: auto }` scales it, since
+that rule preserves whatever ratio the attributes declare. The nested
+`<img src="demo.gif">` inside `<video>` is HTML fallback *content*:
+browsers only render it when they don't recognize the `<video>`
+element at all, not on a network/decode failure of a supported one.
+`js/app.js`'s `handleVideoFallback()` covers that gap by swapping in
+the GIF on the video's `error` event — covering the common "file
+failed to load" case, though not every conceivable partial-decode
+failure a browser could report differently.
+
+### Manual verification checklist (JS-driven interactions)
+
+This site has no JS test harness or `package.json` — it's a
+dependency-free static Hugo build, and the only JS tooling in CI is an
+ephemeral `npx pa11y-ci` scan of rendered HTML. `pa11y-ci` (or any
+static scanner) can't drive keyboard/pointer interactions, so it can't
+verify the search dialog's focus trap, the theme toggle, the sidebar
+toggle, reduced-motion behavior, or responsive media. Adding a full
+browser-test harness (e.g. Playwright) for a handful of interaction
+checks on a static docs site would be disproportionate tooling for
+what this repo otherwise carries — so until that changes, verify these
+manually (in a real browser, both themes) before merging any change
+that touches `js/app.js`, `layouts/`, or the demo media:
+
+1. **Search dialog focus trap**: open search (click the trigger or
+   press <kbd>⌘K</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd>), then press
+   <kbd>Tab</kbd> repeatedly — focus must cycle within the modal and
+   never reach the page behind it. <kbd>Shift</kbd>+<kbd>Tab</kbd>
+   from the input must wrap to the last result, not escape the modal.
+2. **Search focus restore**: close the dialog (<kbd>Esc</kbd>, or
+   click outside) — focus must return to whatever element opened it
+   (the header trigger, or wherever <kbd>⌘K</kbd> was pressed from).
+3. **Search arrow navigation**: with results showing, press
+   <kbd>↓</kbd>/<kbd>↑</kbd> to move between the query input and each
+   result link; <kbd>Enter</kbd> follows the focused result.
+4. **Theme toggle**: click it — the page recolors instantly, the
+   button's `aria-pressed` and `aria-label` update (inspect via DevTools
+   or a screen reader), and the choice survives a reload (localStorage).
+5. **Sidebar toggle** (≤1024px viewport): click it — the sidebar
+   slides in/out, `aria-expanded` on the toggle matches the state, and
+   a closed sidebar's links are not `Tab`-reachable.
+6. **Reduced motion**: enable the OS "reduce motion" setting, reload —
+   the content fade-in, hover transforms, and sidebar slide should be
+   instant (no animation), and TOC link clicks should jump instead of
+   smooth-scrolling.
+7. **Responsive media**: resize the viewport down to ~320–375px on the
+   homepage — the demo video must scale to the full column width at
+   its true aspect ratio (no stretching, cropping, or overflow), and
+   the how-it-works diagram must swap cleanly between the two
+   theme-specific SVGs with the theme toggle.
+
 ### Running the accessibility scan locally
 
 CI (`docs-a11y` workflow) runs [pa11y-ci](https://github.com/pa11y/pa11y-ci)
-against the URLs in `docs/.pa11yci.json` at the `WCAG2AA` standard. To
-reproduce locally:
+against the URLs in `docs/.pa11yci.json` at the `WCAG2AA` standard.
+Each page is listed twice, once with `?theme=light` and once with
+`?theme=dark` — `js/app.js`'s `initTheme()` honors that query param
+ahead of `localStorage`/`prefers-color-scheme`, so the gate
+deterministically exercises both themes regardless of the scanning
+browser's default color scheme (observed to default to light
+headless, which is exactly why earlier local runs only ever caught
+light-mode regressions). To reproduce locally:
 
 ```bash
 # Serve the site the same way the Dockerfile does
