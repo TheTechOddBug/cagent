@@ -62,6 +62,14 @@ func ParseServerRef(ref string) string {
 	return strings.TrimPrefix(ref, "docker:")
 }
 
+// Prefetch starts resolving the catalog in the background so a later
+// ServerSpec call finds the result memoized (or the fetch already in flight)
+// instead of paying the network round-trip on the caller's critical path.
+func Prefetch(ctx context.Context) {
+	loader := loaderFrom(ctx)
+	go func() { _, _ = loader.load(ctx) }()
+}
+
 // cachedCatalog is the on-disk cache format.
 type cachedCatalog struct {
 	Catalog Catalog `json:"catalog"`

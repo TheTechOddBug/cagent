@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/gateway"
 	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr"
@@ -170,6 +171,14 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			attribute.Int("cagent.teamloader.agent_count", len(cfg.Agents)),
 			attribute.Int("cagent.teamloader.model_count", len(cfg.Models)),
 		)
+	}
+
+	// Toolsets referencing an MCP catalog server (ref: docker:...) need the
+	// catalog to be built. Kick the fetch off now so its network round-trip
+	// overlaps model and environment resolution instead of stalling toolset
+	// creation later in this load.
+	if configUsesCatalogRefs(cfg) {
+		gateway.Prefetch(ctx)
 	}
 
 	// Merge user-level provider definitions (seeded into the runtime config
@@ -913,6 +922,28 @@ func filterSkillsByName(loaded []skills.Skill, include []string) []skills.Skill 
 		}
 	}
 	return filtered
+}
+
+// configUsesCatalogRefs reports whether any toolset in the config references
+// an MCP catalog server (ref: docker:...), i.e. whether loading the team will
+// need the MCP catalog.
+func configUsesCatalogRefs(cfg *latest.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for i := range cfg.Agents {
+		for _, ts := range cfg.Agents[i].Toolsets {
+			if ts.Ref != "" {
+				return true
+			}
+		}
+	}
+	for _, ts := range cfg.Toolsets {
+		if ts.Ref != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // configNameFromSource extracts a clean config name from a source name.
