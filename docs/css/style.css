@@ -79,6 +79,7 @@
   --accent-light: rgba(75,131,241,0.12);
   --accent-strong: var(--blue-500);   /* Ocean Blue — hero, button, badge */
   --accent-on-card: var(--blue-300);  /* blue-400 on bg-card gray-900 reads 4.08:1 — marginal fail */
+  --link-hover: var(--blue-200);      /* :hover only — blue-400 read 4.08:1 on bg-card / 4.65:1 on bg-dark, both fail; blue-200 reads 10.34:1 (card) / 11.78:1 (page) */
 
   --success: #34D399;
   --warning: #FBBF24;
@@ -131,6 +132,7 @@
   --accent-light: var(--blue-100);
   --accent-strong: var(--blue-500);
   --accent-on-card: var(--blue-500);  /* blue-500 on white cards already reads 5.0:1 */
+  --link-hover: var(--blue-600);      /* :hover only — blue-400 read 3.94:1 on white, fails; blue-600 reads 6.76:1 (white content and white cards alike) */
 }
 
 /* Tiny uppercase chrome labels: --text-muted's gray-600 (4.87:1 on
@@ -647,8 +649,15 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
 [data-theme="light"] .content a:not(.btn) {
   color: var(--accent);
 }
+/* A broad `.content a:not(.btn)` hover previously outranked component
+ * link rules (`.preview-banner a`, `.usecase a`, ...) via specificity
+ * and hardcoded a single blue (--docker-blue-light) for both themes —
+ * 4.08:1 on a dark card / 3.94:1 on white, both AA fails. --link-hover
+ * is scoped per theme instead, like the other accent-* tokens, and
+ * verified against both the page background and --bg-card (the
+ * harder case in dark, since --bg-card is lighter than --bg-content). */
 .content a:not(.btn):hover {
-  color: var(--docker-blue-light);
+  color: var(--link-hover);
   text-decoration: underline;
 }
 .content a:focus-visible {
