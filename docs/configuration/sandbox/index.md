@@ -183,14 +183,14 @@ For reproducible runs, pin to a digest instead of a tag, e.g.
 Select one with `--template`:
 
 ```bash
-docker agent run --sandbox --template docker/docker-agent-sbx-templates:latest agent.yaml
+$ docker agent run --sandbox --template docker/docker-agent-sbx-templates:latest agent.yaml
 ```
 
 Or point the [`sbx`](https://docs.docker.com/ai/sandboxes/) CLI at it
 directly, without going through Docker Agent:
 
 ```bash
-sbx create -t docker/docker-agent-sbx-templates:latest
+$ sbx create -t docker/docker-agent-sbx-templates:latest
 ```
 
 > [!TIP]
