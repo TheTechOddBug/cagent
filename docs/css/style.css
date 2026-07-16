@@ -114,7 +114,7 @@
 
   --text: #1F242D;                /* headings / strong copy */
   --text-secondary: #3F4750;      /* body — docs.docker.com prose body */
-  --text-muted: var(--gray-500);
+  --text-muted: var(--gray-600);  /* gray-500 read 3.41:1 on chrome / 4.11:1 on white — both fail AA */
   --text-sidebar: var(--gray-700);
   --text-sidebar-active: var(--gray-900);
   --text-code: var(--blue-600);
@@ -126,6 +126,15 @@
   --accent-hover: var(--blue-600);
   --accent-light: var(--blue-100);
   --accent-strong: var(--blue-500);
+}
+
+/* Tiny uppercase chrome labels: --text-muted's gray-600 (4.87:1 on
+ * gray-100 chrome) still reads thin at this size/weight, so bump these
+ * to gray-700 (7.14:1 chrome / 8.63:1 white) instead. */
+[data-theme="light"] .sidebar-heading,
+[data-theme="light"] .site-footer-col h4,
+[data-theme="light"] .page-nav .nav-label {
+  color: var(--gray-700);
 }
 
 /* ===== Skip link (accessibility) ===== */
@@ -360,7 +369,6 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
   letter-spacing: 0.08em;
   color: var(--text-muted);
   user-select: none;
-  opacity: 0.75;
 }
 
 .sidebar-link.sidebar-link--sub {
