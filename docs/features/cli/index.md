@@ -1,6 +1,6 @@
 ---
 title: "CLI Reference"
-description: "Complete reference for all docker-agent command-line commands and flags."
+description: "Complete reference for all Docker Agent command-line commands and flags."
 keywords: docker agent, ai agents, features, cli reference
 weight: 30
 canonical: https://docs.docker.com/ai/docker-agent/features/cli/
@@ -8,7 +8,7 @@ aliases:
   - /ai/docker-agent/reference/cli/
 ---
 
-_Complete reference for all docker-agent command-line commands and flags._
+_Complete reference for all Docker Agent command-line commands and flags._
 
 > [!TIP]
 > **No config needed**
@@ -359,7 +359,7 @@ See [ACP](../acp/index.md) for details on the Agent Client Protocol.
 
 ### `docker agent serve chat`
 
-Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a docker-agent agent without any custom integration.
+Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a Docker Agent agent without any custom integration.
 
 ```bash
 $ docker agent serve chat <config> [flags]
@@ -593,7 +593,7 @@ These flags are available on every `docker agent` command:
 
 ### OpenTelemetry environment variables
 
-When `--otel` is enabled, the standard [OTel SDK env vars](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) are honored (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, etc.). Two additional docker-agent-specific variables control GenAI instrumentation:
+When `--otel` is enabled, the standard [OTel SDK env vars](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) are honored (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, etc.). Two additional Docker Agent-specific variables control GenAI instrumentation:
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
