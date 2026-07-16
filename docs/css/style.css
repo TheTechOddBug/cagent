@@ -1401,6 +1401,13 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
   margin: 0 auto;
   color: var(--text);
 }
+/* The how-it-works diagram ships as two theme-specific SVGs (a single
+ * hardcoded palette can't clear 4.5:1 text contrast against both a
+ * white and a near-black card at once) — show only the one matching
+ * the active theme. Dark is the bare-:root default, per convention. */
+.flow-diagram img.theme-light-only { display: none; }
+[data-theme="light"] .flow-diagram img.theme-light-only { display: block; }
+[data-theme="light"] .flow-diagram img.theme-dark-only { display: none; }
 .flow-diagram figcaption {
   margin-top: 12px;
   font-size: 0.82rem;

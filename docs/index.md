@@ -240,7 +240,8 @@ What people build with Docker Agent today:
 Docker Agent follows a simple loop:
 
 <figure class="flow-diagram">
-  <img src="assets/how-it-works.svg" alt="agent.yaml is run by 'docker agent run', which loops through Model, Tools and Sub-agents, then streams results to the TUI or API." loading="lazy">
+  <img src="assets/how-it-works.svg" alt="agent.yaml is run by 'docker agent run', which loops through Model, Tools and Sub-agents, then streams results to the TUI or API." loading="lazy" class="theme-light-only">
+  <img src="assets/how-it-works-dark.svg" alt="agent.yaml is run by 'docker agent run', which loops through Model, Tools and Sub-agents, then streams results to the TUI or API." loading="lazy" class="theme-dark-only">
   <figcaption>Your YAML config is the input; the runtime drives a Model ↔ Tools ↔ Sub-agents loop until the task is done; results stream back to the TUI or any API client.</figcaption>
 </figure>
 
