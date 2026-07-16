@@ -239,13 +239,16 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-hover);
-  color: var(--text-muted);
+  color: var(--gray-300);  /* text-muted (gray-400) reads 4.42:1 on bg-hover gray-800 -- marginal fail; gray-300 reads 6.07:1 (same fix as kbd) */
   font: inherit;
   font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s, width 0.2s;
+}
+[data-theme="light"] #search-input {
+  color: var(--text-muted);  /* gray-600 reads 5.88:1 on white bg-hover -- already passes */
 }
 #search-input:hover {
   border-color: var(--text-muted);
