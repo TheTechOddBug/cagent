@@ -3,6 +3,7 @@ package concurrent
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -28,15 +29,30 @@ func TestMapSlice_RunsConcurrently(t *testing.T) {
 	var running atomic.Int32
 	start := make(chan struct{})
 
-	// Every call blocks until all n are running; the test deadlocks (and
-	// times out) if MapSlice were sequential.
+	// Every call blocks until all n are running — only possible if MapSlice
+	// is concurrent. The timeout makes a sequential regression fail fast
+	// instead of hanging until the package deadline.
+	timeout := time.After(10 * time.Second)
 	got := MapSlice(make([]struct{}, n), func(struct{}) int {
 		if running.Add(1) == n {
 			close(start)
 		}
-		<-start
-		return 1
+		select {
+		case <-start:
+			return 1
+		case <-timeout:
+			t.Error("MapSlice did not run all calls concurrently")
+			return 0
+		}
 	})
 
 	assert.Len(t, got, n)
+}
+
+func TestForEach(t *testing.T) {
+	t.Parallel()
+
+	var sum atomic.Int32
+	ForEach([]int32{1, 2, 3, 4}, func(v int32) { sum.Add(v) })
+	assert.Equal(t, int32(10), sum.Load())
 }

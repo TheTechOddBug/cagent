@@ -33,10 +33,11 @@ type ToolSet struct {
 
 // Verify interface compliance
 var (
-	_ tools.ToolSet      = (*ToolSet)(nil)
-	_ tools.Startable    = (*ToolSet)(nil)
-	_ tools.Instructable = (*ToolSet)(nil)
-	_ tools.Named        = (*ToolSet)(nil)
+	_ tools.ToolSet       = (*ToolSet)(nil)
+	_ tools.Startable     = (*ToolSet)(nil)
+	_ tools.Instructable  = (*ToolSet)(nil)
+	_ tools.Named         = (*ToolSet)(nil)
+	_ tools.PeerDependent = (*ToolSet)(nil)
 )
 
 type deferredSource struct {
@@ -56,6 +57,10 @@ func New() *ToolSet {
 func (d *ToolSet) Name() string {
 	return "deferred"
 }
+
+// StartsAfterPeers implements tools.PeerDependent: Start lists the source
+// toolsets' tools, so they must be started first.
+func (d *ToolSet) StartsAfterPeers() {}
 
 func (d *ToolSet) AddSource(toolset tools.ToolSet, deferAll bool, toolNames []string) {
 	d.mu.Lock()

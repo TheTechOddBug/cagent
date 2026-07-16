@@ -544,10 +544,25 @@ func (a *Agent) ToolSets() []tools.ToolSet {
 // Starts run concurrently so one slow toolset (e.g. an MCP server
 // handshake) doesn't delay the others; Start() is single-flight per
 // toolset and warnings are recorded in configuration order afterwards.
+// Peer-dependent toolsets (e.g. the deferred aggregator, whose Start
+// lists its source toolsets' tools) start in a second wave, after the
+// toolsets they depend on have settled.
 func (a *Agent) ensureToolSetsAreStarted(ctx context.Context) {
-	errs := concurrent.MapSlice(a.toolsets, func(toolSet *tools.StartableToolSet) error {
-		return toolSet.Start(ctx)
-	})
+	var independent, dependent []int
+	for i, toolSet := range a.toolsets {
+		if _, ok := tools.As[tools.PeerDependent](toolSet); ok {
+			dependent = append(dependent, i)
+		} else {
+			independent = append(independent, i)
+		}
+	}
+
+	errs := make([]error, len(a.toolsets))
+	for _, wave := range [][]int{independent, dependent} {
+		concurrent.ForEach(wave, func(i int) {
+			errs[i] = a.toolsets[i].Start(ctx)
+		})
+	}
 
 	for i, toolSet := range a.toolsets {
 		err := errs[i]

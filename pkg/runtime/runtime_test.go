@@ -1423,6 +1423,67 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 	assert.Contains(t, warning.Message, "taking too long to start")
 }
 
+// TestEmitStartupInfo_EmitsProgressWhileSlowToolsetStarts guards the
+// progressive contract of emitToolsProgressively: an early fast toolset must
+// be counted in a ToolsetInfo event while a later toolset is still starting,
+// not only after every start has settled.
+func TestEmitStartupInfo_EmitsProgressWhileSlowToolsetStarts(t *testing.T) {
+	t.Parallel()
+
+	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+	slow := &blockingStartToolSet{release: release}
+
+	root := agent.New("root", "agent",
+		agent.WithModel(prov),
+		agent.WithToolSets(fast, slow),
+	)
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(t.Context(), tm,
+		WithCurrentAgent("root"),
+		WithModelStore(mockModelStore{}),
+	)
+	require.NoError(t, err)
+
+	events := make(chan Event, 32)
+	go func() {
+		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+		close(events)
+	}()
+
+	// The fast toolset's count must arrive while the slow start is still
+	// blocked (release is not closed yet).
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			ti, ok := e.(*ToolsetInfoEvent)
+			if !ok {
+				continue
+			}
+			if ti.AvailableTools == 1 && ti.Loading {
+				close(release)
+				for range events { // drain so EmitStartupInfo finishes
+				}
+				return
+			}
+		case <-timeout:
+			t.Fatal("no progress event for the fast toolset arrived while the slow toolset was starting")
+		}
+	}
+}
+
 // TestEmitStartupInfo_AuthRequiredIsSilent verifies that when a toolset's
 // Start() returns an mcptools.IsAuthorizationRequired error — the runtime
 // deliberately deferred OAuth until the user is interacting — the user

@@ -20,7 +20,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
@@ -1674,15 +1673,35 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 	// Start every toolset concurrently so one slow start (e.g. an MCP server
 	// pulling an image) doesn't delay the others; the context is already
 	// non-interactive here so no start can block on a user-driven flow. Each
-	// start keeps its own bounded timeout. Results are then processed in
-	// configuration order so progress events and warnings are deterministic.
-	startErrs := concurrent.MapSlice(toolsets, func(toolset tools.ToolSet) error {
+	// start keeps its own bounded timeout, and outcomes are consumed in
+	// configuration order below so an early fast toolset is listed (and
+	// counted) without waiting for a slow later one. Peer-dependent toolsets
+	// (e.g. the deferred aggregator, whose Start lists its source toolsets'
+	// tools) start in a second wave, after the others have settled.
+	starts := make([]chan error, totalToolsets)
+	var independents sync.WaitGroup
+	var dependents []int
+	for i, toolset := range toolsets {
 		startable, ok := toolset.(*tools.StartableToolSet)
 		if !ok {
-			return nil
+			continue
 		}
-		return startToolsetWithTimeout(ctx, startable, r.toolStartTimeout)
-	})
+		starts[i] = make(chan error, 1)
+		if _, ok := tools.As[tools.PeerDependent](startable); ok {
+			dependents = append(dependents, i)
+			continue
+		}
+		independents.Go(func() {
+			starts[i] <- startToolsetWithTimeout(ctx, startable, r.toolStartTimeout)
+		})
+	}
+	for _, i := range dependents {
+		startable := toolsets[i].(*tools.StartableToolSet)
+		go func() {
+			independents.Wait()
+			starts[i] <- startToolsetWithTimeout(ctx, startable, r.toolStartTimeout)
+		}()
+	}
 
 	// Load tools from each toolset and emit progress
 	var totalTools int
@@ -1700,7 +1719,7 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 		// can fire the targeted re-auth notice. Start() is a no-op when the
 		// toolset is already healthy, so calling it unconditionally is safe.
 		if startable, ok := toolset.(*tools.StartableToolSet); ok {
-			if err := startErrs[i]; err != nil {
+			if err := <-starts[i]; err != nil {
 				desc := tools.DescribeToolSet(startable.ToolSet)
 				// A start that outlived its deadline (e.g. an MCP container
 				// stuck behind a wedged Docker daemon) is reported directly:
