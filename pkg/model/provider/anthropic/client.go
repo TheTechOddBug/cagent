@@ -626,6 +626,7 @@ func (c *Client) convertUserMultiContent(ctx context.Context, parts []chat.Messa
 // to be set on the top-level MessageNewParams.System field.
 func extractSystemBlocks(messages []chat.Message) []anthropic.TextBlockParam {
 	var systemBlocks []anthropic.TextBlockParam
+	marked := 0
 	for i := range messages {
 		msg := &messages[i]
 		if msg.Role != chat.MessageRoleSystem {
@@ -649,7 +650,7 @@ func extractSystemBlocks(messages []chat.Message) []anthropic.TextBlockParam {
 		}
 
 		if msg.CacheControl && len(systemBlocks) > 0 {
-			systemBlocks[len(systemBlocks)-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
+			marked = markSystemBlockCacheControl(&systemBlocks[len(systemBlocks)-1], marked)
 		}
 	}
 
