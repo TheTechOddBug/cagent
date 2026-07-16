@@ -137,14 +137,7 @@ func (c *Client) convertBetaMessagesWithDeferred(ctx context.Context, messages [
 		}
 	}
 
-	// Anthropic allows at most 4 cache_control breakpoints per request.
-	// Deferred tools consume one on the tool list, so keep a single message
-	// breakpoint in that case.
-	breakpoints := 2
-	if containsDeferredTool(requestTools) {
-		breakpoints = 1
-	}
-	applyBetaMessageCacheControl(betaMessages, breakpoints)
+	applyBetaMessageCacheControl(betaMessages, messageCacheBreakpoints(requestTools))
 
 	return betaMessages, nil
 }

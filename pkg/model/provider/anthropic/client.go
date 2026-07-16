@@ -439,16 +439,20 @@ func (c *Client) convertMessagesWithDeferred(ctx context.Context, messages []cha
 		}
 	}
 
-	// Anthropic allows at most 4 cache_control breakpoints per request.
-	// Deferred tools consume one on the tool list, so keep a single message
-	// breakpoint in that case.
-	breakpoints := 2
-	if containsDeferredTool(requestTools) {
-		breakpoints = 1
-	}
-	applyMessageCacheControl(anthropicMessages, breakpoints)
+	applyMessageCacheControl(anthropicMessages, messageCacheBreakpoints(requestTools))
 
 	return anthropicMessages, nil
+}
+
+// messageCacheBreakpoints returns how many message-level cache_control
+// breakpoints a request may use. Anthropic allows at most 4 per request;
+// deferred tools consume one on the tool list, leaving one fewer for
+// messages.
+func messageCacheBreakpoints(requestTools []tools.Tool) int {
+	if containsDeferredTool(requestTools) {
+		return 1
+	}
+	return 2
 }
 
 func deferredToolNamesByCallID(requestTools []tools.Tool) map[string][]string {
