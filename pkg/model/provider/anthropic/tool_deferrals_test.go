@@ -104,3 +104,46 @@ func TestDeferredToolsKeepSingleMessageCacheBreakpoint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, countBreakpoints(beta))
 }
+
+// Anthropic rejects requests with more than 4 cache_control blocks. Build the
+// worst-case request (2 system breakpoints from the session, deferred tools,
+// long conversation) and count breakpoints across system + tools + messages.
+func TestRequestStaysWithinCacheBreakpointLimit(t *testing.T) {
+	messages := []chat.Message{
+		{Role: chat.MessageRoleSystem, Content: "invariant instructions", CacheControl: true},
+		{Role: chat.MessageRoleSystem, Content: "dynamic context", CacheControl: true},
+		{Role: chat.MessageRoleUser, Content: "first"},
+		{Role: chat.MessageRoleAssistant, Content: "second"},
+		{Role: chat.MessageRoleUser, Content: "third"},
+	}
+
+	countBreakpoints := func(parts ...any) int {
+		total := 0
+		for _, part := range parts {
+			data, err := json.Marshal(part)
+			require.NoError(t, err)
+			total += strings.Count(string(data), `"cache_control"`)
+		}
+		return total
+	}
+
+	for _, requestTools := range [][]tools.Tool{
+		nil,
+		{
+			{Name: "read", Parameters: map[string]any{"type": "object"}},
+			{Name: "search", Parameters: map[string]any{"type": "object"}, Deferred: true},
+		},
+	} {
+		convertedTools, err := convertTools(requestTools)
+		require.NoError(t, err)
+		converted, err := testClient().convertMessagesWithDeferred(t.Context(), messages, requestTools)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, countBreakpoints(extractSystemBlocks(messages), convertedTools, converted), 4)
+
+		betaTools, err := convertBetaTools(requestTools)
+		require.NoError(t, err)
+		betaConverted, err := testClient().convertBetaMessagesWithDeferred(t.Context(), messages, requestTools)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, countBreakpoints(extractBetaSystemBlocks(messages), betaTools, betaConverted), 4)
+	}
+}
