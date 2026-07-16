@@ -224,6 +224,8 @@
           url: /guides/go-sdk/
         - title: Managing Context & Compaction
           url: /guides/compaction/
+        - title: Running Agents Headless & in CI
+          url: /guides/headless/
     - label: Community
       items:
         - title: Contributing
