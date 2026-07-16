@@ -37,16 +37,16 @@ Pass `--session <id>` to continue a previous conversation instead of starting a 
 # Resume by explicit session ID
 $ docker agent run agent.yaml --session 3f9c1e2a-...
 
-# Resume the last session
+# Resume the most recently created session
 $ docker agent run agent.yaml --session -1
 
-# Resume the session before that
+# Resume the session created before that one
 $ docker agent run agent.yaml --session -2
 ```
 
 `--session` accepts two kinds of reference:
 
-- **A relative offset** (`-1`, `-2`, …): `-1` is the most recently used session, `-2` the one before it, and so on. A relative offset that has no matching session (for example `-1` with an empty database) is an error.
+- **A relative offset** (`-1`, `-2`, …): sessions are ordered by **creation time**, newest first — `-1` is the most recently *created* session, `-2` the one created before it, and so on. This is creation order, not last-used order: resuming an older session with `--session <id>` does not make it the new `-1`; the next `-1` still resolves to whichever session was created most recently. A relative offset that has no matching session (for example `-1` with an empty database) is an error.
 - **An explicit ID**: if a session with that ID already exists, it is resumed. If it doesn't exist yet, docker agent **creates it with that ID** instead of failing. This lets a supervisor (for example a board or a script) choose a session ID up front and reuse it across runs — the first run creates the session, later runs resume it.
 
 ## Read-Only Sessions
@@ -75,7 +75,7 @@ settings:
 
 ## Session Titles
 
-Docker Agent auto-generates a short title for each session from your first message or two, using a one-shot call to the agent's own model. Point that call at a smaller, cheaper model instead with `title_model` on a model definition:
+Docker Agent auto-generates a short title for each session from your first message, using a one-shot call to the agent's own model. Point that call at a smaller, cheaper model instead with `title_model` on a model definition:
 
 ```yaml
 # examples/title_model.yaml
@@ -96,7 +96,7 @@ agents:
     instruction: You are a helpful assistant.
 ```
 
-When `title_model` is omitted, title generation reuses the agent's own model. Set or regenerate a title from inside the TUI with `/title` (see [Session Title Editing](../tui/index.md#session-title-editing)), or generate one from the command line without starting a session at all:
+When `title_model` is omitted, title generation reuses the agent's own model. Set or regenerate a title from inside the TUI with `/title` (see [Session Title Editing](../tui/index.md#session-title-editing)) — regenerating sends every user message in the session so far, not just the first — or generate one from the command line without starting a session at all:
 
 ```bash
 $ docker agent debug title agent.yaml "How do I configure a fallback model?"
