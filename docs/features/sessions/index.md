@@ -128,7 +128,7 @@ An all-zero `cost:` table means "priced, free" — distinct from a model with no
 > [!NOTE]
 > **Cost never decreases**
 >
-> A session's cumulative cost is a running total updated after every model call. Compacting the conversation (manually with `/compact`, or automatically — see the agent's `session_compaction`/`compaction_threshold` fields in the [Agent Config reference](../../configuration/agents/index.md)) reshapes the message history sent back to the model, but never touches this running total: `/cost` always reflects everything the session has actually spent, regardless of how much of the transcript is still in context.
+> A session's cumulative cost is a running total updated after every *tracked* model call — the same main conversation turns and compaction calls described above. Compacting the conversation (manually with `/compact`, or automatically — see the agent's `session_compaction`/`compaction_threshold` fields in the [Agent Config reference](../../configuration/agents/index.md)) reshapes the message history sent back to the model, but never touches this running total. Auxiliary one-shot calls such as automatic session-title generation are not tracked and are not reflected in this total: `/cost` covers everything the session's tracked calls have spent, not literally every model call the runtime makes on your behalf.
 
 ## Resuming Into a Worktree
 
