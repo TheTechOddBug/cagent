@@ -71,17 +71,13 @@ Two different questions come up here, and it's worth keeping them separate:
 
 ### `--sandbox`: the isolation boundary
 
-For an untrusted or autonomous agent — anything acting without a human watching approvals — **`--sandbox` is the isolation boundary to reach for**, not a cleverer allow-list. It runs the entire agent, shell calls included, inside a disposable Docker sandbox VM: a misbehaving or successfully-prompt-injected agent can't touch anything outside the mounted working directory or reach other host/CI state, regardless of which command it runs. See [Sandbox Mode](../../configuration/sandbox/index.md) for the full flag reference, requirements (Docker Desktop or the `sbx` CLI), and how the network allowlist and kit staging work.
+For an untrusted or autonomous agent — anything acting without a human watching approvals — **`--sandbox` is the isolation boundary to reach for**, not a cleverer allow-list. It runs the entire agent, shell calls included, inside a Docker sandbox VM: a misbehaving or successfully-prompt-injected agent can't touch anything outside the mounted working directory or reach other host/CI state, regardless of which command it runs. That VM isn't disposable or ephemeral — a sandbox matching the current workspace and mount set is retained and reused across subsequent runs rather than torn down when the session ends (see [How It Works](../../configuration/sandbox/index.md#how-it-works)). See [Sandbox Mode](../../configuration/sandbox/index.md) for the full flag reference, requirements (Docker Desktop or the `sbx` CLI), and how the network allowlist and kit staging work.
 
 ```bash
 $ docker agent run --sandbox --exec agent.yaml --json "Fix the failing test"
 ```
 
-Because the blast radius is contained by the VM boundary, `--sandbox` is also what makes `--yolo` reasonable in CI: pair the two so the agent can act without asking, without turning one bad tool call into an incident on infrastructure you care about.
-
-```bash
-$ docker agent run --sandbox --yolo --exec agent.yaml --json "Fix the failing test"
-```
+Because the blast radius is contained by the VM boundary, `--sandbox` also makes unattended operation reasonable in CI — and it defaults to exactly that: unless you already passed a `--yolo` flag of your own, `--sandbox` injects `--yolo` for the agent process it runs inside the VM, so the command above already runs unattended with no confirmation prompts. Passing `--yolo` explicitly (`--sandbox --yolo --exec ...`) is equivalent and can make the intent clearer in a script, but it's optional. To keep confirmation prompts even inside the sandbox, opt out with `--yolo=false` — `--sandbox` only fills in the flag when you haven't set one yourself.
 
 If your CI provider already runs each job in its own disposable VM or container — many hosted runners do — and nothing on the runner matters once the job ends, that may already give you an isolation boundary on its own. `--sandbox` still gives you the same guarantee independent of the CI provider, and starts to matter as soon as the agent runs on a persistent self-hosted runner, a long-lived container, or your own workstation.
 
