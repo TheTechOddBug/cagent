@@ -125,7 +125,8 @@ function buildTOC() {
       if (!a) return;
       e.preventDefault();
       const target = document.getElementById(a.dataset.id);
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      target?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
     });
 
     setupScrollSpy(headings, aside);

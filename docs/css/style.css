@@ -1719,6 +1719,21 @@ details.sidebar-section[open] > summary.sidebar-heading::after {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Respect the OS-level reduce-motion preference: kill smooth scrolling,
+ * the content fade-in, and the hover/press transform transitions used
+ * throughout (cards, tiles, buttons, sidebar slide). Color/opacity
+ * transitions are left alone — they don't trigger vestibular issues. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .content { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ===== Keyboard shortcut badge ===== */
 kbd {
   display: inline-block;

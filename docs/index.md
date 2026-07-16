@@ -13,7 +13,9 @@ description: "Run AI agents like containers. Define them in YAML, share them thr
 </div>
 
 <div class="demo-container">
-  <img src="demo.gif" alt="Docker Agent TUI demo showing an interactive agent session" loading="lazy">
+  <video src="demo.mp4" poster="demo-poster.png" width="1200" height="675" autoplay muted loop playsinline controls preload="metadata" aria-label="Docker Agent TUI demo showing an interactive agent session">
+    <img src="demo.gif" alt="Docker Agent TUI demo showing an interactive agent session" loading="lazy">
+  </video>
 </div>
 
 <div class="elevator">
