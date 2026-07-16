@@ -36,7 +36,7 @@ $ docker agent run [config] [message...] [flags]
 | `--prompt-file <path>`                  | Include file contents as additional system context (repeatable)                                                                           |
 | `--attach <path>`                       | Attach an image file to the initial message                                                                                               |
 | `--dry-run`                             | Initialize the agent without executing anything (useful for validating a config)                                                          |
-| `--remote <addr>`                       | Use a remote runtime at the given address instead of running the agent locally                                                            |
+| `--remote <addr>`                       | Use a remote runtime at the given address instead of running the agent locally. Mutually exclusive with `--sandbox`, `--worktree`, `--worktree-pr`, `--worktree-base`, `--session`, `--session-db`, `--record`, and `--fake` — a remote runtime owns its own session storage and execution environment, so these local-only concerns don't apply. |
 | `--listen <addr>`                       | Expose this run's control plane over HTTP so an external process can drive the running TUI (send follow-ups, stream events, read the title). Accepts `host:port` or `unix://`, `npipe://`, `fd://`. See the [API Server](../api-server/index.md#listen). |
 | `--lean`                                | Use a simplified, non-alternate-screen TUI. Unlike the default full-screen TUI, this renders inline in the normal terminal buffer — useful in environments where an alternate screen is unwanted (e.g. inside tmux panes, CI with a tty, or log-friendly pipelines). Displays an ASCII art banner on startup. |
 | `--app-name <name>`                     | Override the application name label shown in the TUI (status bar, window title, "/exit" notifications).                                   |
@@ -176,6 +176,16 @@ $ docker agent new
 $ docker agent new --model openai/gpt-5
 $ docker agent new --model dmr/ai/gemma3-qat:12B --max-iterations 15
 ```
+
+### `docker agent getting-started`
+
+Run a short (about 2 minutes), skippable interactive tour inside the chat UI: sending messages, approving tool calls, the command palette (<kbd>Ctrl</kbd>+<kbd>K</kbd>), slash commands, and how agents are configured. Aliased as `docker agent tour`. Requires an interactive terminal.
+
+```bash
+$ docker agent getting-started
+```
+
+Replay it anytime with this command, or with the `/getting-started` slash command inside a running TUI session.
 
 ### `docker agent models`
 
@@ -576,6 +586,67 @@ $ docker agent sandbox deny api.example.com
 ```
 
 Entries are unioned with the gateway, the kit-resolved tool install hosts, and any `runtime.network_allowlist` declared by the agent. The launch summary lists every source separately so you can see which holes were punched by which layer.
+
+### `docker agent debug`
+
+Troubleshooting subcommands for inspecting how an agent config resolves and generating diagnostic output — useful when a config isn't behaving the way you expect. `debug` doesn't appear in `docker agent --help` (it's a diagnostic surface, not a day-to-day command), but every subcommand below is stable and fully supported.
+
+```bash
+$ docker agent debug <subcommand> [flags]
+```
+
+| Subcommand | Description |
+| ---------- | ----------- |
+| `config <agent-file>` | Print the fully-resolved, canonical form of an agent's configuration (defaults applied, references resolved). |
+| `toolsets <agent-file>` | List every toolset each agent in the config exposes, with each tool's name and description. |
+| `skills <agent-file>` | List the skills discovered for each agent, marking forked skills. |
+| `title <agent-file> <question>` | Generate a session title for `<question>` using the same title-generation path the TUI uses (including any configured `title_model`), without starting a session. See [Session Titles](../sessions/index.md#session-titles). |
+| `auth` | Print parsed Docker Desktop authentication info from the locally stored JWT (subject, issuer, expiry, username/email). Add `--json` for machine-readable output. |
+| `oauth list` | List stored MCP OAuth tokens (resource, scope, expiry, redacted access token). Add `--json` for machine-readable output. |
+| `oauth remove <resource-url>` | Remove a stored MCP OAuth token. |
+| `oauth login <agent-file> <mcp-name>` | Perform an interactive OAuth login for a remote MCP server declared in the config, by its name or URL. See [Remote MCP Servers](../remote-mcp/index.md). |
+
+```bash
+# Examples
+$ docker agent debug config agent.yaml
+$ docker agent debug toolsets agent.yaml
+$ docker agent debug skills agent.yaml
+$ docker agent debug title agent.yaml "How do I configure a fallback model?"
+$ docker agent debug auth --json
+$ docker agent debug oauth list
+$ docker agent debug oauth login agent.yaml github
+```
+
+The `config`, `toolsets`, `skills`, and `title` subcommands also accept [runtime configuration flags](#runtime-configuration-flags) (`--working-dir`, `--models-gateway`, …); `title` additionally accepts `--model` to override the model used to resolve the config before generating the title.
+
+### `docker agent completion`
+
+Generate a shell completion script for `bash`, `zsh`, `fish`, or `powershell`.
+
+```bash
+$ docker agent completion <bash|zsh|fish|powershell>
+
+# Examples
+# Bash: load for the current session
+$ source <(docker agent completion bash)
+
+# Zsh: install permanently (adjust the path for your $fpath)
+$ docker agent completion zsh > "${fpath[1]}/_docker-agent"
+```
+
+Run `docker agent completion <shell> --help` for shell-specific installation instructions.
+
+### Self-update
+
+When installed from a standalone GitHub release binary, Docker Agent can opt in to updating itself. It's disabled by default; set `DOCKER_AGENT_AUTO_UPDATE` to a truthy value (`1`, `true`, `yes`, `on`) to enable it for a command or a shell session:
+
+```bash
+$ DOCKER_AGENT_AUTO_UPDATE=1 docker agent run
+```
+
+When enabled, every command checks the latest GitHub release before running. If a newer release exists, an interactive session asks whether to install it; a non-interactive session (CI, piped input) proceeds automatically. On yes, Docker Agent downloads the asset for your OS/architecture, verifies its checksum, replaces the current binary, and re-executes with the same arguments. The whole mechanism is fail-safe: any failure at any step falls back to running the current binary. Self-update never triggers for `version`, `help`, `--help`/`-h` (including per-subcommand help), `completion`, or the Docker CLI plugin metadata handshake.
+
+See [Optional Self-Updates](../../getting-started/installation/index.md#optional-self-updates) for the full walkthrough. Docker Desktop and Homebrew installs already manage updates and don't need this.
 
 ## Global Flags
 
