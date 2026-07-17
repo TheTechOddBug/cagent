@@ -271,12 +271,16 @@ func transferTimer(d time.Duration, gen int64, kind transferTimerKind) TransferT
 
 // model implements Model
 type model struct {
-	width              int
-	height             int
-	xPos               int                       // absolute x position on screen
-	yPos               int                       // absolute y position on screen
-	layoutCfg          LayoutConfig              // layout configuration for spacing
-	sessionUsage       map[string]*runtime.Usage // sessionID -> latest usage snapshot
+	width        int
+	height       int
+	xPos         int                       // absolute x position on screen
+	yPos         int                       // absolute y position on screen
+	layoutCfg    LayoutConfig              // layout configuration for spacing
+	sessionUsage map[string]*runtime.Usage // sessionID -> latest usage snapshot
+	// budgetUsage is the newest run-budget snapshot, or nil on an
+	// unbudgeted run. It is a single value rather than a per-session map
+	// because one budget covers the whole run, sub-sessions included.
+	budgetUsage        *runtime.BudgetUsageEvent
 	todoComp           *todotool.SidebarComponent
 	ragIndexing        map[string]*ragIndexingState // strategy name -> indexing state
 	spinner            spinner.Spinner
@@ -1081,6 +1085,13 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case *runtime.TokenUsageEvent:
 		m.SetTokenUsage(msg)
 		return m, nil
+	case *runtime.BudgetUsageEvent:
+		// The budget is per-run and shared by every sub-session, so the
+		// latest event always describes the whole run regardless of which
+		// session emitted it. Keep one snapshot rather than a per-session
+		// map — summing across sessions would double-count the wallet.
+		m.budgetUsage = msg
+		return m, nil
 	case *runtime.SessionCompactionEvent:
 		// The "compacting…" gauge describes the displayed session only: a
 		// targeted compaction of a session that is not currently shown
@@ -1738,7 +1749,11 @@ func (m *model) computeUsageStats() usageStats {
 }
 
 func (m *model) tokenUsage(contentWidth int) string {
-	return m.renderTab("Token Usage", m.tokenUsageLine(), contentWidth)
+	body := m.tokenUsageLine()
+	if b := m.budgetLine(); b != "" {
+		body += "\n" + b
+	}
+	return m.renderTab("Token Usage", body, contentWidth)
 }
 
 // tokenUsageLine renders the usage line shared by the vertical Token Usage
@@ -1769,7 +1784,94 @@ func (m *model) tokenUsageLine() string {
 // the vertical Token Usage tab so the band carries the context/cost reading
 // from startup.
 func (m *model) tokenUsageSummary() string {
-	return m.tokenUsageLine()
+	line := m.tokenUsageLine()
+	if b := m.budgetLine(); b != "" {
+		line += "\n" + b
+	}
+	return line
+}
+
+// budgetLine renders each active budget by name against the ceilings it
+// declares, e.g.
+//
+//	run        $0.12/$0.50 · 12.3K/100.0K · 2m14s/10m
+//	shell-work $0.09/$0.10 · 4.3K/20.0K
+//
+// Only the ceilings the operator configured appear, and an unbudgeted run
+// renders nothing. Each reading warns once it crosses budgetWarnRatio, so a
+// run about to be stopped is visible before it stops.
+//
+// Per-agent attribution is deliberately not repeated here: the Agents
+// section already reports each agent's cost in AgentInfoDetailed mode, so a
+// second per-agent breakdown under every budget would be duplicate reading
+// in the sidebar's tightest column. The structured per-agent split is still
+// carried on the budget_usage event for programmatic consumers.
+func (m *model) budgetLine() string {
+	b := m.budgetUsage
+	if b == nil || len(b.Budgets) == 0 {
+		return ""
+	}
+
+	nameWidth := 0
+	for _, s := range b.Budgets {
+		nameWidth = max(nameWidth, lipgloss.Width(s.Name))
+	}
+
+	var lines []string
+	for _, s := range b.Budgets {
+		if line := m.oneBudgetLine(s, nameWidth); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// oneBudgetLine renders a single named budget's totals against its ceilings.
+// Returns "" when the budget declares no ceilings at all.
+func (m *model) oneBudgetLine(s runtime.BudgetStatus, nameWidth int) string {
+	var parts []string
+	if s.MaxCost > 0 {
+		parts = append(parts, budgetPartStyle(s.Cost, s.MaxCost).Render(
+			toolcommon.FormatCostPrecise(s.Cost)+"/"+toolcommon.FormatCostPrecise(s.MaxCost)))
+	}
+	if s.MaxTokens > 0 {
+		parts = append(parts, budgetPartStyle(float64(s.Tokens), float64(s.MaxTokens)).Render(
+			toolcommon.FormatTokenCount(s.Tokens)+"/"+toolcommon.FormatTokenCount(s.MaxTokens)))
+	}
+	if s.MaxTimeSeconds > 0 {
+		parts = append(parts, budgetPartStyle(s.ElapsedSeconds, s.MaxTimeSeconds).Render(
+			formatBudgetDuration(s.ElapsedSeconds)+"/"+formatBudgetDuration(s.MaxTimeSeconds)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+
+	line := styles.MutedStyle.Render(padRight(s.Name, nameWidth)) + " " +
+		strings.Join(parts, styles.MutedStyle.Render(" · "))
+	if s.Unpriced {
+		// A cost ceiling that cannot see some of the spend is a silent
+		// failure otherwise: the reading would look reassuringly low
+		// precisely because it is incomplete.
+		line += " " + styles.WarningStyle.Render("(unpriced spend)")
+	}
+	return line
+}
+
+// budgetWarnRatio is the fraction of a limit at which its reading starts
+// warning. 0.8 leaves a visible margin without crying wolf early.
+const budgetWarnRatio = 0.8
+
+func budgetPartStyle(used, limit float64) lipgloss.Style {
+	if limit > 0 && used/limit >= budgetWarnRatio {
+		return styles.WarningStyle
+	}
+	return styles.TabAccentStyle
+}
+
+// formatBudgetDuration renders whole seconds, so a live reading doesn't
+// jitter with sub-second noise.
+func formatBudgetDuration(seconds float64) string {
+	return (time.Duration(seconds) * time.Second).Round(time.Second).String()
 }
 
 func (m *model) sessionInfo(contentWidth int) string {
