@@ -2020,7 +2020,8 @@
             "model_picker",
             "background_agents",
             "scheduler",
-            "rag"
+            "rag",
+            "git"
           ]
         },
         "instruction": {
@@ -2356,7 +2357,8 @@
                 "user_prompt",
                 "model_picker",
                 "background_agents",
-                "scheduler"
+                "scheduler",
+                "git"
               ]
             }
           }
