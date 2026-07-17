@@ -44,6 +44,80 @@ type Config struct {
 	Metadata    Metadata           `json:"metadata"`
 	Permissions *PermissionsConfig `json:"permissions,omitempty"`
 	Runtime     *RuntimeDefaults   `json:"runtime,omitempty"`
+	// Budget caps the whole run, regardless of which agent spends. It is
+	// the simple case: one ceiling for everything.
+	Budget *BudgetConfig `json:"budget,omitempty"`
+	// Budgets are reusable, named budget definitions. An agent opts into
+	// one by listing its name in AgentConfig.Budgets, mirroring the
+	// top-level MCPs/RAG/Toolsets reference-by-name convention.
+	//
+	// A named budget is a single shared pot: when several agents reference
+	// the same name they draw from the *same* ceiling rather than each
+	// getting a copy of it. That is what keeps a budget meaningful when an
+	// agent fans out — ten sub-agents on one "tight" budget still cannot
+	// spend more than "tight" allows. Give agents distinct budget names
+	// when you want independent pots.
+	Budgets map[string]BudgetConfig `json:"budgets,omitempty"`
+}
+
+// BudgetConfig caps what a single run may consume before the agent is
+// stopped. Every limit is optional; a zero/unset limit is unlimited, and
+// an absent budget block disables the whole mechanism.
+//
+// The budget is scoped to a run — one root RunStream — and is shared by
+// every sub-session spawned inside it (task transfers, sub-agents,
+// skills). Delegated work therefore spends against the same wallet as
+// its parent, rather than each child receiving a fresh allowance. Per-run
+// (not per-session) is the only accounting that makes a cost ceiling
+// meaningful when an agent can fan out.
+type BudgetConfig struct {
+	// MaxCost is the maximum spend for the run, in USD.
+	//
+	// Only responses the runtime can price count towards it: a model with
+	// no pricing data (an unknown ID, or a custom endpoint without a
+	// model-level `cost:` block) contributes nothing, because there is no
+	// honest number to add. Such a run emits a warning rather than
+	// silently behaving as if it were free — see [CostConfig] to price a
+	// custom endpoint explicitly.
+	MaxCost float64 `json:"max_cost,omitempty" yaml:"max_cost,omitempty"`
+
+	// MaxTokens is the maximum cumulative input+output tokens for the run.
+	//
+	// This counts every token the run sends and receives over its whole
+	// lifetime. It is deliberately not the session's token counters, which
+	// compaction resets — those measure current context length, not spend.
+	MaxTokens int64 `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+
+	// MaxTime is the maximum wall-clock duration of the run, in Go
+	// duration format ("10m", "30s", "1h30m").
+	//
+	// It is checked at turn boundaries, so a run stops at the first
+	// boundary after the deadline rather than interrupting an in-flight
+	// model call or tool. Expect overshoot up to the length of one turn.
+	MaxTime Duration `json:"max_time,omitzero" yaml:"max_time,omitempty"`
+}
+
+// IsZero reports whether no limit is set, i.e. the block is inert.
+func (b *BudgetConfig) IsZero() bool {
+	return b == nil || (b.MaxCost == 0 && b.MaxTokens == 0 && b.MaxTime.Duration == 0)
+}
+
+// validate rejects negative limits. All-zero is valid and simply means
+// "no limit", which keeps `budget: {}` from being an error.
+func (b *BudgetConfig) validate() error {
+	if b == nil {
+		return nil
+	}
+	if b.MaxCost < 0 {
+		return fmt.Errorf("max_cost must not be negative, got %v", b.MaxCost)
+	}
+	if b.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must not be negative, got %d", b.MaxTokens)
+	}
+	if b.MaxTime.Duration < 0 {
+		return fmt.Errorf("max_time must not be negative, got %s", b.MaxTime.Duration)
+	}
+	return nil
 }
 
 // RuntimeDefaults captures execution-time defaults the agent author
@@ -550,8 +624,13 @@ type AgentConfig struct {
 	CodeModeTools           bool  `json:"code_mode_tools,omitempty"`
 	AddDescriptionParameter bool  `json:"add_description_parameter,omitempty"`
 	MaxIterations           int   `json:"max_iterations,omitempty"`
-	MaxConsecutiveToolCalls int   `json:"max_consecutive_tool_calls,omitempty"`
-	MaxOldToolCallTokens    int   `json:"max_old_tool_call_tokens,omitempty"`
+	// Budgets names the top-level `budgets` entries this agent spends
+	// against. Every listed budget must exist. An agent may list several,
+	// in which case all of them apply and the first to be exhausted stops
+	// the run. Agents sharing a name share one pot — see [Config.Budgets].
+	Budgets                 []string `json:"budgets,omitempty" yaml:"budgets,omitempty"`
+	MaxConsecutiveToolCalls int      `json:"max_consecutive_tool_calls,omitempty"`
+	MaxOldToolCallTokens    int      `json:"max_old_tool_call_tokens,omitempty"`
 	// MaxToolResultTokens caps each textual tool result when it enters the
 	// session. Oversized results are middle-out truncated (head and tail kept,
 	// middle replaced with a marker); textual documents attached to the result
