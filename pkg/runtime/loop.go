@@ -230,6 +230,10 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	rootStream := !sess.IsSubSession()
 	if rootStream {
 		r.activeRootStreams.Add(1)
+		// Install a fresh budget for this run. Sub-sessions deliberately
+		// skip this: they share the root's tracker so a fan-out spends
+		// against one wallet rather than one allowance per child.
+		r.ensureBudget()
 	}
 
 	// Register before the run goroutine starts so the session is listed in
@@ -348,6 +352,14 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	// Emit team information
 	sink.Emit(TeamInfo(r.agentDetailsFromTeam(ctx), a.Name()))
+
+	// Surface the run budget from the first frame, before any model call,
+	// so the configured ceilings are visible immediately rather than only
+	// after the first priced turn. A run that fails on its very first call
+	// (e.g. a bad API key) still shows its budget was active.
+	if b := r.currentBudget(); b != nil {
+		sink.Emit(BudgetUsage(sess.ID, a.Name(), b.snapshot()))
+	}
 
 	r.emitAgentWarnings(a, sink)
 	r.configureToolsetHandlers(a, sink)
@@ -478,6 +490,14 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 			return
 		}
 		ls.maxIterations = newMax
+
+		// Check the run budget. Placed next to the iteration cap because
+		// both are "should this run keep going" questions answered at the
+		// turn boundary, before a model call is paid for.
+		if r.enforceBudget(ctx, sess, a, sink) == iterationStop {
+			streamReason = turnEndReasonBudgetExceeded
+			return
+		}
 
 		ls.iteration++
 
@@ -677,6 +697,9 @@ func (r *LocalRuntime) runTurn(
 	ls *loopState,
 	events EventSink,
 ) turnControl {
+	// turnStart bounds this turn's active time, attributed to the agent
+	// below so the run budget can show how long each agent spent working.
+	turnStart := r.now()
 	streamAttrs := []attribute.KeyValue{
 		attribute.String(genai.AttrConversationID, sess.ID),
 		attribute.String(genai.AttrAgentNameRuntime, a.Name()),
@@ -788,6 +811,13 @@ func (r *LocalRuntime) runTurn(
 	// the turn cannot be priced (no usage, or a model with no pricing
 	// table); see computeMessageCost.
 	msgCost := computeMessageCost(res.Usage, m)
+
+	// Fold this turn into the run budget from the same computed value, so
+	// what the ceiling counts can never disagree with what the session
+	// bills or what after_llm_call reports. Sub-sessions reach the root
+	// run's tracker here, which is how delegated spend lands on the
+	// parent's budget. The turn's duration is attributed to this agent.
+	r.recordBudget(sess, a, res.Usage, msgCost, r.now().Sub(turnStart), events)
 
 	// after_llm_call hooks fire on success only; failed calls
 	// fire on_error above. The assistant text content is passed

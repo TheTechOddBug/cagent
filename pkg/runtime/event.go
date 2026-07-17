@@ -672,6 +672,132 @@ func MaxIterationsReached(maxIterations int) Event {
 	}
 }
 
+// BudgetUsageEvent reports a run's spend against its configured budget.
+// It is emitted after every priced turn so a UI can track consumption
+// while the run is still going, rather than only learning about the
+// budget at the moment it stops the agent.
+//
+// Fields are absent when the corresponding limit is unset, so a consumer
+// can render only the ceilings the operator actually configured.
+type BudgetUsageEvent struct {
+	AgentContext
+
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	// Budgets carries one reading per active budget, run-wide first then
+	// named budgets alphabetically, so a consumer can render them in a
+	// stable order.
+	Budgets []BudgetStatus `json:"budgets,omitempty"`
+}
+
+// BudgetStatus is one budget's reading: its ceilings, what has been spent
+// against them, and which agents did the spending.
+type BudgetStatus struct {
+	// Name is "run" for the top-level `budget:`, otherwise the key under
+	// `budgets:`.
+	Name      string  `json:"name"`
+	Cost      float64 `json:"cost"`
+	MaxCost   float64 `json:"max_cost,omitempty"`
+	Tokens    int64   `json:"tokens"`
+	MaxTokens int64   `json:"max_tokens,omitempty"`
+	// ElapsedSeconds and MaxTimeSeconds are seconds rather than a
+	// duration string so consumers can compute a ratio without parsing.
+	ElapsedSeconds float64 `json:"elapsed_seconds"`
+	MaxTimeSeconds float64 `json:"max_time_seconds,omitempty"`
+	// Unpriced reports that at least one response could not be priced, so
+	// Cost understates what was really spent.
+	Unpriced bool `json:"unpriced,omitempty"`
+	// PerAgent attributes this budget's totals to each agent that spent
+	// from it, biggest spender first. Empty until a turn completes.
+	PerAgent []AgentBudgetUsage `json:"per_agent,omitempty"`
+}
+
+// AgentBudgetUsage is one agent's attributed slice of a budget.
+type AgentBudgetUsage struct {
+	AgentName     string  `json:"agent_name"`
+	Cost          float64 `json:"cost"`
+	Tokens        int64   `json:"tokens"`
+	ActiveSeconds float64 `json:"active_seconds"`
+}
+
+// GetSessionID implements SessionScoped so sub-session budget events can
+// be attributed to the sub-session that produced them, even though they
+// count against the root run's shared budget.
+func (e *BudgetUsageEvent) GetSessionID() string { return e.SessionID }
+
+func BudgetUsage(sessionID, agentName string, snaps []namedBudgetSnapshot) Event {
+	budgets := make([]BudgetStatus, 0, len(snaps))
+	for _, ns := range snaps {
+		s := ns.Snapshot
+		var perAgent []AgentBudgetUsage
+		if len(s.PerAgent) > 0 {
+			perAgent = make([]AgentBudgetUsage, len(s.PerAgent))
+			for i, a := range s.PerAgent {
+				perAgent[i] = AgentBudgetUsage{
+					AgentName:     a.AgentName,
+					Cost:          a.Cost,
+					Tokens:        a.Tokens,
+					ActiveSeconds: a.Active.Seconds(),
+				}
+			}
+		}
+		budgets = append(budgets, BudgetStatus{
+			Name:           ns.Name,
+			Cost:           s.Cost,
+			MaxCost:        s.MaxCost,
+			Tokens:         s.Tokens,
+			MaxTokens:      s.MaxTokens,
+			ElapsedSeconds: s.Elapsed.Seconds(),
+			MaxTimeSeconds: s.MaxTime.Seconds(),
+			Unpriced:       s.Unpriced,
+			PerAgent:       perAgent,
+		})
+	}
+	return &BudgetUsageEvent{
+		Type:         "budget_usage",
+		SessionID:    sessionID,
+		AgentContext: newAgentContext(agentName),
+		Budgets:      budgets,
+	}
+}
+
+// BudgetExceededEvent is emitted once, when a run crosses a configured
+// budget ceiling and is stopped. Limit names the YAML key that tripped
+// ("max_cost", "max_tokens", "max_time") so an operator knows which one
+// to raise.
+type BudgetExceededEvent struct {
+	AgentContext
+
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	// Budget names which budget tripped: "run" for the top-level
+	// `budget:`, otherwise the key under `budgets:`.
+	Budget string `json:"budget"`
+	Limit  string `json:"limit"`
+	Used   string `json:"used"`
+	Max    string `json:"max"`
+	// ConfigPath is the YAML path of the limit that tripped, e.g.
+	// "budgets.tight.max_cost", so an operator knows exactly what to edit.
+	ConfigPath string `json:"config_path"`
+	Message    string `json:"message"`
+}
+
+func (e *BudgetExceededEvent) GetSessionID() string { return e.SessionID }
+
+func BudgetExceeded(sessionID, agentName string, br budgetBreach) Event {
+	return &BudgetExceededEvent{
+		Type:         "budget_exceeded",
+		SessionID:    sessionID,
+		AgentContext: newAgentContext(agentName),
+		Budget:       br.Budget,
+		Limit:        string(br.Limit),
+		Used:         br.Used,
+		Max:          br.Max,
+		ConfigPath:   br.configPath(),
+		Message:      br.Message(),
+	}
+}
+
 // MCPInitStartedEvent is for MCP initialization lifecycle events
 type MCPInitStartedEvent struct {
 	AgentContext
