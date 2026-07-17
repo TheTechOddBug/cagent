@@ -32,6 +32,14 @@ type costDialog struct {
 	session    *session.Session
 	keyMap     costDialogKeyMap
 	scrollview *scrollview.Model
+
+	// cachedLines holds the rendered content for cachedWidth. Rebuilding it
+	// walks the whole session and restyles every line — far too slow to
+	// repeat every frame while scrolling large sessions. The dialog is modal
+	// and recreated on each open, so caching for its lifetime is safe; only
+	// a resize invalidates it.
+	cachedLines []string
+	cachedWidth int
 }
 
 type costDialogKeyMap struct {
@@ -299,6 +307,14 @@ func (d *costDialog) gatherCostData() costData {
 // ---------------------------------------------------------------------------
 
 func (d *costDialog) renderContent(contentWidth, maxHeight int) string {
+	if d.cachedLines == nil || d.cachedWidth != contentWidth {
+		d.cachedLines = d.buildLines(contentWidth)
+		d.cachedWidth = contentWidth
+	}
+	return d.applyScrolling(d.cachedLines, contentWidth, maxHeight)
+}
+
+func (d *costDialog) buildLines(contentWidth int) []string {
 	data := d.gatherCostData()
 
 	// Header
@@ -351,7 +367,7 @@ func (d *costDialog) renderContent(contentWidth, maxHeight int) string {
 		lines = append(lines, styles.MutedStyle.Render("Per-message breakdown not available for this session."), "")
 	}
 
-	return d.applyScrolling(lines, contentWidth, maxHeight)
+	return lines
 }
 
 // headerMeta returns the duration/message-count line, or "" if empty.
