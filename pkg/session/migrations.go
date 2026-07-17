@@ -413,6 +413,12 @@ func getAllMigrations() []Migration {
 			Description: "Add cost column to session_items so compaction summary costs survive reload",
 			UpSQL:       `ALTER TABLE session_items ADD COLUMN cost REAL NOT NULL DEFAULT 0`,
 		},
+		{
+			ID:          24,
+			Name:        "024_add_safety_policy_column",
+			Description: "Add safety_policy column to sessions table",
+			UpSQL:       `ALTER TABLE sessions ADD COLUMN safety_policy TEXT DEFAULT ''`,
+		},
 	}
 }
 

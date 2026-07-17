@@ -914,10 +914,39 @@ func (sm *SessionManager) ResumeSession(ctx context.Context, sessionID, confirma
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 
-	// Ensure the session runtime exists
 	rt, exists := sm.runtimeSessions.Load(sessionID)
 	if !exists {
 		return errors.New("session not found")
+	}
+
+	// Mirror + persist mid-turn session mutations synchronously —
+	// PersistenceObserver only persists on OnRunStart.
+	if rt.session != nil {
+		mutated := false
+		switch runtime.ResumeType(confirmation) {
+		case runtime.ResumeTypeApproveSafe:
+			rt.session.SetSafetyPolicy(session.SafetyPolicySafeAuto)
+			mutated = true
+		case runtime.ResumeTypeApproveSafer:
+			rt.session.SetSafetyPolicy(session.SafetyPolicySafer)
+			mutated = true
+		case runtime.ResumeTypeApproveSession:
+			rt.session.SetToolsApproved(true)
+			mutated = true
+		case runtime.ResumeTypeApproveTool:
+			// Skip when toolName is empty — the dispatcher's own
+			// fallback (pending tool call name) isn't reachable here.
+			if toolName != "" {
+				rt.session.AppendPermissionAllow(toolName)
+				mutated = true
+			}
+		}
+		if mutated {
+			if err := sm.sessionStore.UpdateSession(ctx, rt.session); err != nil {
+				slog.WarnContext(ctx, "failed to persist mid-turn session state",
+					"session_id", sessionID, "confirmation", confirmation, "err", err)
+			}
+		}
 	}
 
 	rt.runtime.Resume(ctx, runtime.ResumeRequest{
@@ -1130,6 +1159,14 @@ func (sm *SessionManager) SetSessionSafetyPolicy(ctx context.Context, sessionID 
 	}
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
+
+	// Mirror onto the live runtime session so the dispatcher picks up
+	// the new policy on the next tool call, not just the next turn.
+	if rt, ok := sm.runtimeSessions.Load(sessionID); ok && rt.session != nil {
+		rt.session.SetSafetyPolicy(policy)
+		return sm.sessionStore.UpdateSession(ctx, rt.session)
+	}
+
 	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
 	if err != nil {
 		return err

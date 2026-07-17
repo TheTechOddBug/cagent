@@ -226,6 +226,7 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 		Evals:               session.Evals,
 		CreatedAt:           session.CreatedAt,
 		ToolsApproved:       session.ToolsApproved,
+		SafetyPolicy:        session.SafetyPolicy,
 		HideToolResults:     session.HideToolResults,
 		WorkingDir:          session.WorkingDir,
 		SendUserMessage:     session.SendUserMessage,
@@ -376,7 +377,7 @@ type SQLiteSessionStore struct {
 // sessionSelectColumns is the canonical SELECT list for the sessions table.
 // The column order matches what scanSession expects; all read paths use this
 // constant so that adding a column requires updating exactly one place.
-const sessionSelectColumns = `id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id, instruction_context`
+const sessionSelectColumns = `id, tools_approved, safety_policy, input_tokens, output_tokens, title, cost, send_user_message, max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides, custom_models_used, thinking, parent_id, instruction_context`
 
 // sessionPersistedFields holds the encoded form of a Session's JSON-bearing
 // columns plus the SQL representation of parent_id (nil for the empty
@@ -643,11 +644,11 @@ func (s *SQLiteSessionStore) AddSession(ctx context.Context, session *Session) e
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
-			id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message,
+			id, tools_approved, safety_policy, input_tokens, output_tokens, title, cost, send_user_message,
 			max_iterations, working_dir, created_at, permissions, agent_model_overrides,
 			custom_models_used, thinking, parent_id, instruction_context
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.ToolsApproved, session.InputTokens, session.OutputTokens, session.Title,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.ToolsApproved, string(session.SafetyPolicy), session.InputTokens, session.OutputTokens, session.Title,
 		session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
 		session.CreatedAt.Format(time.RFC3339), fields.PermissionsJSON, fields.AgentModelOverridesJSON,
 		fields.CustomModelsUsedJSON, false, fields.ParentID, fields.InstructionContextJSON)
@@ -675,6 +676,7 @@ func scanSession(scanner interface {
 ) (*Session, error) {
 	var (
 		sess                    Session
+		safetyPolicy            sql.NullString
 		workingDir              sql.NullString
 		permissionsJSON         sql.NullString
 		parentID                sql.NullString
@@ -686,7 +688,7 @@ func scanSession(scanner interface {
 	)
 
 	err := scanner.Scan(
-		&sess.ID, &sess.ToolsApproved, &sess.InputTokens, &sess.OutputTokens,
+		&sess.ID, &sess.ToolsApproved, &safetyPolicy, &sess.InputTokens, &sess.OutputTokens,
 		&sess.Title, &sess.Cost, &sess.SendUserMessage, &sess.MaxIterations,
 		&workingDir, &createdAtStr, &sess.Starred, &permissionsJSON,
 		&agentModelOverridesJSON, &customModelsUsedJSON, &thinking, &parentID, &instructionContextJSON,
@@ -696,6 +698,7 @@ func scanSession(scanner interface {
 	}
 
 	sess.CreatedAt = parseCreatedAt(createdAtStr)
+	sess.SafetyPolicy = SafetyPolicy(safetyPolicy.String)
 	sess.WorkingDir = workingDir.String
 	sess.ParentID = parentID.String
 
@@ -965,6 +968,7 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		Title:               session.Title,
 		CreatedAt:           session.CreatedAt,
 		ToolsApproved:       session.ToolsApproved,
+		SafetyPolicy:        session.SafetyPolicy,
 		HideToolResults:     session.HideToolResults,
 		WorkingDir:          session.WorkingDir,
 		SendUserMessage:     session.SendUserMessage,
@@ -996,14 +1000,15 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 	// Use INSERT OR REPLACE for upsert behavior - creates if not exists, updates if exists
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
-			id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message,
+			id, tools_approved, safety_policy, input_tokens, output_tokens, title, cost, send_user_message,
 			max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides,
 			custom_models_used, thinking, parent_id, instruction_context
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   title = excluded.title,
 		   tools_approved = excluded.tools_approved,
+		   safety_policy = excluded.safety_policy,
 		   input_tokens = excluded.input_tokens,
 		   output_tokens = excluded.output_tokens,
 		   cost = excluded.cost,
@@ -1017,7 +1022,7 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		   thinking = excluded.thinking,
 		   parent_id = excluded.parent_id,
 		   instruction_context = excluded.instruction_context`,
-		snapshot.ID, snapshot.ToolsApproved, snapshot.InputTokens, snapshot.OutputTokens,
+		snapshot.ID, snapshot.ToolsApproved, string(snapshot.SafetyPolicy), snapshot.InputTokens, snapshot.OutputTokens,
 		snapshot.Title, snapshot.Cost, snapshot.SendUserMessage, snapshot.MaxIterations, snapshot.WorkingDir,
 		snapshot.CreatedAt.Format(time.RFC3339), snapshot.Starred, fields.PermissionsJSON, fields.AgentModelOverridesJSON,
 		fields.CustomModelsUsedJSON, false, fields.ParentID, fields.InstructionContextJSON)
@@ -1165,12 +1170,12 @@ func (s *SQLiteSessionStore) addSessionTx(ctx context.Context, tx *sql.Tx, sessi
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
-			id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message,
+			id, tools_approved, safety_policy, input_tokens, output_tokens, title, cost, send_user_message,
 			max_iterations, working_dir, created_at, starred, permissions, agent_model_overrides,
 			custom_models_used, thinking, parent_id, instruction_context
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.ToolsApproved, session.InputTokens, session.OutputTokens,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.ToolsApproved, string(session.SafetyPolicy), session.InputTokens, session.OutputTokens,
 		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations,
 		session.WorkingDir, session.CreatedAt.Format(time.RFC3339), session.Starred,
 		fields.PermissionsJSON, fields.AgentModelOverridesJSON, fields.CustomModelsUsedJSON, false,
