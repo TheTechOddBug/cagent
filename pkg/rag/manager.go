@@ -154,7 +154,8 @@ func New(_ context.Context, name string, config Config, strategyEvents <-chan ty
 // Strategies are initialized in parallel for better performance
 func (m *Manager) Initialize(ctx context.Context) (err error) {
 	tracer := otel.Tracer("github.com/docker/docker-agent/pkg/rag")
-	ctx, span := tracer.Start(ctx, "rag.initialize",
+	ctx, span := tracer.Start(
+		ctx, "rag.initialize",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String(genai.AttrDataSourceID, m.name),
@@ -482,7 +483,8 @@ func (m *Manager) rerank(ctx context.Context, query string, results []database.S
 // CheckAndReindexChangedFiles checks for file changes and re-indexes if needed
 func (m *Manager) CheckAndReindexChangedFiles(ctx context.Context) (err error) {
 	tracer := otel.Tracer("github.com/docker/docker-agent/pkg/rag")
-	ctx, span := tracer.Start(ctx, "rag.reindex",
+	ctx, span := tracer.Start(
+		ctx, "rag.reindex",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String(genai.AttrDataSourceID, m.name)),
 	)
@@ -506,7 +508,8 @@ func (m *Manager) CheckAndReindexChangedFiles(ctx context.Context) (err error) {
 // StartFileWatcher starts monitoring files and directories for changes
 func (m *Manager) StartFileWatcher(ctx context.Context) (err error) {
 	tracer := otel.Tracer("github.com/docker/docker-agent/pkg/rag")
-	ctx, span := tracer.Start(ctx, "rag.file_watcher.start",
+	ctx, span := tracer.Start(
+		ctx, "rag.file_watcher.start",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String(genai.AttrDataSourceID, m.name)),
 	)

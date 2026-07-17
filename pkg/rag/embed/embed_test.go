@@ -41,8 +41,10 @@ func (m *mockEmbeddingProvider) CreateEmbedding(ctx context.Context, text string
 }
 
 // verify we implement EmbeddingProvider
-var _ provider.EmbeddingProvider = (*mockEmbeddingProvider)(nil)
-var _ provider.Provider = (*mockEmbeddingProvider)(nil)
+var (
+	_ provider.EmbeddingProvider = (*mockEmbeddingProvider)(nil)
+	_ provider.Provider          = (*mockEmbeddingProvider)(nil)
+)
 
 func TestEmbedBatch_PartialUsageOnError(t *testing.T) {
 	mockProv := &mockEmbeddingProvider{}
