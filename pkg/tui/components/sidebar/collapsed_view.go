@@ -31,8 +31,8 @@ func (vm CollapsedViewModel) LineCount() int {
 	lines += vm.titleSectionLines()
 
 	// Path + usage metadata row. The two share one line only when both are
-	// present and fit; a missing part (e.g. hidden session path, no usage
-	// yet) is skipped so the row never renders blank.
+	// present and fit; a missing part (e.g. hidden session path or hidden
+	// usage) is skipped so the row never renders blank.
 	switch {
 	case vm.WorkingDir != "" && vm.UsageSummary != "" && vm.WdAndUsageOnOneLine:
 		lines++
@@ -91,7 +91,7 @@ func RenderCollapsedView(vm CollapsedViewModel) string {
 	// Working directory + usage line(s). WorkingDir arrives pre-styled
 	// (accent block + primary text) to match the vertical Session tab.
 	// The two share one line only when both are present and fit; a missing
-	// part (e.g. hidden session path, no usage yet) is skipped so the row
+	// part (e.g. hidden session path or hidden usage) is skipped so the row
 	// never renders blank. Mirrors LineCount.
 	switch {
 	case vm.WorkingDir != "" && vm.UsageSummary != "" && vm.WdAndUsageOnOneLine:

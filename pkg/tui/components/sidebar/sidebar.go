@@ -1422,22 +1422,28 @@ func (m *model) collapsedInfoLine(contentWidth int) string {
 	return strings.Join(parts, styles.MutedStyle.Render(" · "))
 }
 
-// agentSummaryCollapsed renders the current agent (in its accent color) with
-// its model and the number of other agents in the team.
+// agentSummaryCollapsed renders the team roster for the band: the current
+// agent (in its accent color) with its model, then the other agents' names
+// in their own accent colors, so the whole team stays visible like in the
+// vertical Agents section.
 func (m *model) agentSummaryCollapsed() string {
 	name := m.sessionState.CurrentAgentName()
 	if name == "" {
 		return ""
 	}
 
-	summary := styles.AgentAccentStyleFor(name).Render("▶ " + name)
+	var summary strings.Builder
+	summary.WriteString(styles.AgentAccentStyleFor(name).Render("▶ " + name))
 	if m.agentModel != "" {
-		summary += styles.MutedStyle.Render(" " + m.agentModel)
+		summary.WriteString(styles.MutedStyle.Render(" " + m.agentModel))
 	}
-	if n := len(m.availableAgents); n > 1 {
-		summary += styles.MutedStyle.Render(fmt.Sprintf(" +%d", n-1))
+	for _, agent := range m.availableAgents {
+		if agent.Name == name {
+			continue
+		}
+		summary.WriteString(styles.MutedStyle.Render(" · ") + styles.AgentAccentStyleFor(agent.Name).Render(agent.Name))
 	}
-	return summary
+	return summary.String()
 }
 
 // transferSummaryCollapsed renders the visible transfer presentation for the
@@ -1758,12 +1764,11 @@ func (m *model) tokenUsageLine() string {
 	return line
 }
 
-// tokenUsageSummary returns the usage line for the collapsed band, empty
-// until any usage has been recorded.
+// tokenUsageSummary returns the usage line for the collapsed band. It
+// renders even before any usage has been recorded ("◉ 0 $0.00"), matching
+// the vertical Token Usage tab so the band carries the context/cost reading
+// from startup.
 func (m *model) tokenUsageSummary() string {
-	if len(m.sessionUsage) == 0 {
-		return ""
-	}
 	return m.tokenUsageLine()
 }
 
