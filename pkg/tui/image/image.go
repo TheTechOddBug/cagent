@@ -4,20 +4,35 @@ package image
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"hash/fnv"
 	stdimage "image"
 	_ "image/gif"
 	"image/png"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/yuin/goldmark"
+	goldmarkast "github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
+
+var markdownImageRangePattern = regexp.MustCompile(`!\[([^\]\n]*)\]\([ \t]*(?:<([^>\n]+)>|([^ \t)\n]+))(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^\)\n]*\)))?[ \t]*\)`)
 
 const (
 	kittyMaxChunkSize        = 4096
@@ -25,6 +40,7 @@ const (
 	maxImageRows             = 20
 	maxInlineRegistryEntries = 128
 	markerPrefix             = "\x1b_cagent-image;"
+	maxMarkdownImageBytes    = 20 << 20
 )
 
 type registryEntry struct {
@@ -84,6 +100,152 @@ func FromToolResult(result *tools.ToolCallResult) []Inline {
 	return images
 }
 
+// MarkdownReference is an image embedded with Markdown's ![alt](source) syntax.
+type MarkdownReference struct {
+	Alt    string
+	Source string
+	Start  int
+	End    int
+}
+
+// MarkdownReferences extracts image references in document order.
+func MarkdownReferences(markdown string) []MarkdownReference {
+	source := []byte(markdown)
+	document := goldmark.DefaultParser().Parse(text.NewReader(source))
+	var refs []MarkdownReference
+	_ = goldmarkast.Walk(document, func(node goldmarkast.Node, entering bool) (goldmarkast.WalkStatus, error) {
+		if entering {
+			if image, ok := node.(*goldmarkast.Image); ok {
+				ref := MarkdownReference{
+					Alt:    markdownImageAlt(image, source),
+					Source: string(image.Destination),
+				}
+				ref.Start, ref.End = markdownImageRange(markdown, image.Pos(), ref.Source)
+				refs = append(refs, ref)
+			}
+		}
+		return goldmarkast.WalkContinue, nil
+	})
+	return refs
+}
+
+func markdownImageRange(markdown string, position int, source string) (int, int) {
+	for _, match := range markdownImageRangePattern.FindAllStringSubmatchIndex(markdown, -1) {
+		if position < match[0] || position > match[1] {
+			continue
+		}
+		sourceStart, sourceEnd := match[4], match[5]
+		if sourceStart < 0 {
+			sourceStart, sourceEnd = match[6], match[7]
+		}
+		if markdown[sourceStart:sourceEnd] == source {
+			return markdownLinkedImageRange(markdown, match[0], match[1])
+		}
+	}
+	return -1, -1
+}
+
+func markdownLinkedImageRange(markdown string, start, end int) (int, int) {
+	if start == 0 || markdown[start-1] != '[' || end+2 > len(markdown) || markdown[end:end+2] != "](" {
+		return start, end
+	}
+	depth := 1
+	for i := end + 2; i < len(markdown); i++ {
+		switch markdown[i] {
+		case '\\':
+			i++
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return start - 1, i + 1
+			}
+		}
+	}
+	return start, end
+}
+
+func markdownImageAlt(image *goldmarkast.Image, source []byte) string {
+	var alt strings.Builder
+	_ = goldmarkast.Walk(image, func(node goldmarkast.Node, entering bool) (goldmarkast.WalkStatus, error) {
+		if !entering || node == image {
+			return goldmarkast.WalkContinue, nil
+		}
+		switch node := node.(type) {
+		case *goldmarkast.Text:
+			alt.Write(node.Value(source))
+		case *goldmarkast.String:
+			alt.Write(node.Value)
+		}
+		return goldmarkast.WalkContinue, nil
+	})
+	return alt.String()
+}
+
+// LoadMarkdownReference resolves a data URI, local path, or public HTTP URL.
+func LoadMarkdownReference(ctx context.Context, ref MarkdownReference) (Inline, bool) {
+	name := ref.Alt
+	if name == "" {
+		name = filepath.Base(ref.Source)
+	}
+
+	var data []byte
+	var mimeType string
+	if strings.HasPrefix(ref.Source, "data:") {
+		comma := strings.IndexByte(ref.Source, ',')
+		if comma < 0 || !strings.HasSuffix(ref.Source[:comma], ";base64") {
+			return Inline{}, false
+		}
+		mimeType = strings.TrimSuffix(strings.TrimPrefix(ref.Source[:comma], "data:"), ";base64")
+		decoded, err := base64.StdEncoding.DecodeString(ref.Source[comma+1:])
+		if err != nil || len(decoded) > maxMarkdownImageBytes {
+			return Inline{}, false
+		}
+		data = decoded
+	} else if parsed, err := url.Parse(ref.Source); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		client := httpclient.NewSafeClient(10*time.Second, false)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.Source, http.NoBody)
+		if err != nil {
+			return Inline{}, false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return Inline{}, false
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return Inline{}, false
+		}
+		mimeType = strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+		limited := io.LimitReader(resp.Body, maxMarkdownImageBytes+1)
+		data, err = io.ReadAll(limited)
+		if err != nil || len(data) > maxMarkdownImageBytes {
+			return Inline{}, false
+		}
+	} else {
+		path := ref.Source
+		switch {
+		case parsed == nil || parsed.Scheme == "":
+		case parsed.Scheme == "file", parsed.Scheme == "sandbox":
+			path = parsed.Path
+		default:
+			return Inline{}, false
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return Inline{}, false
+		}
+		defer file.Close()
+		data, err = io.ReadAll(io.LimitReader(file, maxMarkdownImageBytes+1))
+		if err != nil || len(data) > maxMarkdownImageBytes {
+			return Inline{}, false
+		}
+	}
+
+	return FromBytes(name, mimeType, data)
+}
+
 // FromBase64 decodes and normalizes one base64-encoded image.
 func FromBase64(name, mimeType, encoded string) (Inline, bool) {
 	if strings.TrimSpace(encoded) == "" {
@@ -94,7 +256,12 @@ func FromBase64(name, mimeType, encoded string) (Inline, bool) {
 	if err != nil {
 		return Inline{}, false
 	}
-	if mimeType == "" {
+	return FromBytes(name, mimeType, data)
+}
+
+// FromBytes normalizes encoded image bytes for terminal rendering.
+func FromBytes(name, mimeType string, data []byte) (Inline, bool) {
+	if !chat.IsImageMimeType(mimeType) {
 		mimeType = chat.DetectMimeTypeByContent(data)
 	}
 	if !chat.IsImageMimeType(mimeType) {

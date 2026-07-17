@@ -86,7 +86,7 @@ func (t *Transcript) AppendToLastMessage(agentName, content string) tea.Cmd {
 		if last := t.msgs[n-1]; last.Type == types.MessageTypeAssistant && last.Sender == agentName {
 			last.Content += content
 			if v, ok := t.views[n-1].(message.Model); ok {
-				v.SetMessage(last)
+				return v.SetMessage(last)
 			}
 			return nil
 		}
