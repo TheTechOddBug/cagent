@@ -1,6 +1,6 @@
 ---
 title: "CLI Reference"
-description: "Complete reference for all docker-agent command-line commands and flags."
+description: "Complete reference for all Docker Agent command-line commands and flags."
 keywords: docker agent, ai agents, features, cli reference
 weight: 30
 canonical: https://docs.docker.com/ai/docker-agent/features/cli/
@@ -8,7 +8,7 @@ aliases:
   - /ai/docker-agent/reference/cli/
 ---
 
-_Complete reference for all docker-agent command-line commands and flags._
+_Complete reference for all Docker Agent command-line commands and flags._
 
 > [!TIP]
 > **No config needed**
@@ -229,7 +229,7 @@ $ docker agent toolsets --format json | jq             # machine-readable (type,
 
 ### `docker agent setup`
 
-Set up a model interactively. Three paths: pick a cloud provider, paste its API key, and choose where to store it (macOS Keychain, `pass`, or the docker agent env file `~/.config/cagent/.env`); check Docker Model Runner and pull a local model (no API key needed); or register a custom OpenAI-compatible provider (endpoint URL, API format, and API key variable) saved to your [user configuration](../../providers/custom/index.md#global-providers-user-configuration) so its models work everywhere via `--model <name>/<model>`. Ends with the exact command to start chatting. Secret values are never printed.
+Set up a model interactively. Three paths: pick a cloud provider, paste its API key, and choose where to store it (macOS Keychain, `pass`, or the Docker Agent env file `~/.config/cagent/.env`); check Docker Model Runner and pull a local model (no API key needed); or register a custom OpenAI-compatible provider (endpoint URL, API format, and API key variable) saved to your [user configuration](../../providers/custom/index.md#global-providers-user-configuration) so its models work everywhere via `--model <name>/<model>`. Ends with the exact command to start chatting. Secret values are never printed.
 
 The wizard is also offered automatically when an interactive run finds no usable model (decline-able; set `DOCKER_AGENT_NO_SETUP=1` to suppress the offer).
 
@@ -369,7 +369,7 @@ See [ACP](../acp/index.md) for details on the Agent Client Protocol.
 
 ### `docker agent serve chat`
 
-Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a docker-agent agent without any custom integration.
+Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a Docker Agent agent without any custom integration.
 
 ```bash
 $ docker agent serve chat <config> [flags]
@@ -669,7 +669,7 @@ These flags are available on every `docker agent` command:
 
 ### OpenTelemetry environment variables
 
-When `--otel` is enabled, the standard [OTel SDK env vars](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) are honored (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, etc.). Two additional docker-agent-specific variables control GenAI instrumentation:
+When `--otel` is enabled, the standard [OTel SDK env vars](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) are honored (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, etc.). Two additional Docker Agent-specific variables control GenAI instrumentation:
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
