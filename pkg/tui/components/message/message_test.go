@@ -1,7 +1,12 @@
 package message
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	stdimage "image"
+	"image/color"
+	"image/png"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/tui/components/spinner"
+	tuiimage "github.com/docker/docker-agent/pkg/tui/image"
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
 
@@ -18,6 +24,30 @@ var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripANSI(s string) string {
 	return ansiEscape.ReplaceAllString(s, "")
+}
+
+func TestAssistantMarkdownImageRendersInline(t *testing.T) {
+	tuiimage.SetRenderingEnabled(true)
+
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{G: 255, A: 255})
+	var data bytes.Buffer
+	require.NoError(t, png.Encode(&data, img))
+	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data.Bytes())
+	msg := types.Agent(types.MessageTypeAssistant, "assistant", "Here it is:\n\n![chart]("+uri+")")
+	mv := New(msg, nil)
+	mv.SetSize(80, 0)
+
+	cmd := mv.loadMarkdownImages(msg)
+	require.NotNil(t, cmd)
+	_, _ = mv.Update(cmd())
+
+	view := mv.View()
+	assert.Contains(t, view, "cagent-image", "markdown image must emit terminal image markers")
+	assert.Contains(t, ansi.Strip(view), "chart", "image alt text must label the rendered image")
+	assert.NotContains(t, ansi.Strip(view), "🖼", "image label must not include an icon")
+	assert.NotContains(t, ansi.Strip(view), "![chart]", "rendered image tag must not remain separate from the image")
+	assert.Less(t, strings.Index(view, "chart"), strings.Index(view, "cagent-image"), "alt label must immediately precede the image")
 }
 
 func TestErrorMessageWrapping(t *testing.T) {
