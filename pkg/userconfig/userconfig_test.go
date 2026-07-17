@@ -235,6 +235,7 @@ func TestSettings_LayoutRoundTrip(t *testing.T) {
 			Layout: &LayoutSettings{
 				SidebarPosition: "left",
 				SectionSpacing:  "compact",
+				SidebarInfoMode: "detailed",
 				HideSessionPath: true,
 				HideUsage:       true,
 				HideTodos:       true,
@@ -247,6 +248,7 @@ func TestSettings_LayoutRoundTrip(t *testing.T) {
 	data, err := os.ReadFile(configFile)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "hide_session_path: true")
+	assert.Contains(t, string(data), "sidebar_info_mode: detailed")
 
 	loaded, err := loadFrom(configFile, "")
 	require.NoError(t, err)
@@ -254,6 +256,7 @@ func TestSettings_LayoutRoundTrip(t *testing.T) {
 	layout := loaded.GetSettings().GetLayout()
 	assert.Equal(t, "left", layout.SidebarPosition)
 	assert.Equal(t, "compact", layout.SectionSpacing)
+	assert.Equal(t, "detailed", layout.SidebarInfoMode)
 	assert.True(t, layout.HideSessionPath)
 	assert.True(t, layout.HideUsage)
 	assert.False(t, layout.HideAgents)

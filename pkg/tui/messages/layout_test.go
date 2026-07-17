@@ -22,6 +22,25 @@ func TestParseSectionSpacing(t *testing.T) {
 	}
 }
 
+func TestParseSidebarInfoMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw  string
+		want SidebarInfoMode
+	}{
+		{"", InfoModeCompact},
+		{"compact", InfoModeCompact},
+		{"detailed", InfoModeDetailed},
+		{"bogus", InfoModeCompact},
+	}
+	for _, tt := range tests {
+		if got := ParseSidebarInfoMode(tt.raw); got != tt.want {
+			t.Errorf("ParseSidebarInfoMode(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+	}
+}
+
 func TestSectionSpacingBlankLines(t *testing.T) {
 	t.Parallel()
 
