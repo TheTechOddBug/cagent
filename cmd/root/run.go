@@ -812,6 +812,8 @@ func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig 
 		runtime.WithWorkingDir(runConfig.WorkingDir),
 		runtime.WithTracer(otel.Tracer(AppName)),
 		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+		runtime.WithBudget(loadResult.Budget),
+		runtime.WithNamedBudgets(loadResult.Budgets, loadResult.AgentBudgets),
 	}
 	return opts
 }
