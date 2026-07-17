@@ -96,7 +96,17 @@ type Message struct {
 	// Only set for assistant messages.
 	FinishReason FinishReason `json:"finish_reason,omitempty"`
 
-	// CacheControl indicates whether this message is a cached message (only used by anthropic)
+	// CacheControl marks this message as a prompt-cache checkpoint
+	// boundary (currently honored by the Anthropic provider, which caps
+	// excess marks against the API's breakpoint limit).
+	//
+	// Contract: this is request-assembly state, not conversation state.
+	// The session sets it on assembled prompt copies; transcripts never
+	// carry it (session.AddMessage strips it on ingestion and
+	// session.CompactionInput strips it defensively for legacy persisted
+	// rows). It stays JSON-serialized because the assembled messages
+	// round-trip through before_llm_call hooks as JSON and the marks
+	// must survive hook rewrites.
 	CacheControl bool `json:"cache_control,omitempty"`
 }
 
