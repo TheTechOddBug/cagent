@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
 	"github.com/docker/docker-agent/pkg/tui/components/sidebar"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -171,6 +172,63 @@ func TestSectionVisibilityMapsAllFields(t *testing.T) {
 		HideTools:       true,
 		HideTodos:       true,
 	}))
+}
+
+func TestAgentInfoModeMapsValues(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, sidebar.AgentInfoCompact, agentInfoMode(""), "the zero value maps to compact")
+	assert.Equal(t, sidebar.AgentInfoCompact, agentInfoMode(msgtypes.InfoModeCompact))
+	assert.Equal(t, sidebar.AgentInfoDetailed, agentInfoMode(msgtypes.InfoModeDetailed))
+	assert.Equal(t, sidebar.AgentInfoCompact, agentInfoMode(msgtypes.SidebarInfoMode("bogus")),
+		"unknown values map to compact")
+}
+
+// TestSetLayoutSettingsForwardsInfoModeToSidebar verifies the info mode
+// reaches the sidebar's roster renderer and can be switched live: the
+// detailed cards carry the "Effort" metric label, the compact roster does not.
+func TestSetLayoutSettingsForwardsInfoModeToSidebar(t *testing.T) {
+	t.Parallel()
+
+	p := newLayoutTestPage(t, msgtypes.SidebarRight)
+	p.sessionState.SetCurrentAgentName("root")
+	p.sidebar.SetTeamInfo([]runtime.AgentDetails{
+		{Name: "root", Provider: "openai", Model: "gpt-4", Thinking: "high"},
+	})
+	p.SetSize(160, 40)
+
+	require.NotContains(t, ansi.Strip(p.View()), "Effort",
+		"the default layout renders the compact roster")
+
+	p.SetLayoutSettings(msgtypes.LayoutSettings{SidebarInfoMode: msgtypes.InfoModeDetailed})
+	assert.Contains(t, ansi.Strip(p.View()), "Effort",
+		"detailed mode renders the labeled agent cards")
+
+	p.SetLayoutSettings(msgtypes.LayoutSettings{})
+	assert.NotContains(t, ansi.Strip(p.View()), "Effort",
+		"switching back live restores the compact roster")
+}
+
+// TestWithLayoutSettingsAppliesInfoMode verifies the initial page option
+// forwards the persisted info mode to the sidebar.
+func TestWithLayoutSettingsAppliesInfoMode(t *testing.T) {
+	t.Parallel()
+
+	sessionState := &service.SessionState{}
+	sessionState.SetCurrentAgentName("root")
+	p := &chatPage{
+		sidebar:      sidebar.New(t.Context(), sessionState),
+		messages:     messages.New(sessionState),
+		sessionState: sessionState,
+	}
+	WithLayoutSettings(msgtypes.LayoutSettings{SidebarInfoMode: msgtypes.InfoModeDetailed})(p)
+	p.sidebar.SetTeamInfo([]runtime.AgentDetails{
+		{Name: "root", Provider: "openai", Model: "gpt-4", Thinking: "high"},
+	})
+	p.SetSize(160, 40)
+
+	assert.Contains(t, ansi.Strip(p.View()), "Effort",
+		"the initial layout option applies the detailed mode")
 }
 
 func TestSetLayoutSettingsBeforeSizingReturnsNil(t *testing.T) {

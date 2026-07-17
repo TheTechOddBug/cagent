@@ -80,6 +80,7 @@ func TestSidebar_AgentClickZones_EveryRenderedLineMapped(t *testing.T) {
 	}
 	m.width = 40
 	m.height = 50
+	m.SetAgentInfoMode(AgentInfoDetailed)
 
 	_ = sb.View()
 

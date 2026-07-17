@@ -42,6 +42,20 @@ const (
 	ModeCollapsed
 )
 
+// AgentInfoMode selects how the vertical sidebar's Agents section renders
+// each agent. The zero value is the compact roster.
+type AgentInfoMode int
+
+const (
+	// AgentInfoCompact renders each agent as a two-line entry: name with
+	// thinking badge and shortcut, then provider/model with the context
+	// percentage. This is the default.
+	AgentInfoCompact AgentInfoMode = iota
+	// AgentInfoDetailed renders each agent as a mini-card with labeled
+	// Effort / Context / Cost metric lines.
+	AgentInfoDetailed
+)
+
 // SectionVisibility controls which optional sidebar sections are rendered.
 // The zero value shows everything.
 type SectionVisibility struct {
@@ -90,6 +104,9 @@ type Model interface {
 	SetSectionVisibility(v SectionVisibility)
 	// SetSectionGap sets the number of blank lines between sidebar sections.
 	SetSectionGap(lines int)
+	// SetAgentInfoMode selects how the vertical Agents section renders each
+	// agent: the compact two-line roster (default) or detailed mini-cards.
+	SetAgentInfoMode(mode AgentInfoMode)
 	GetSize() (width, height int)
 	LoadFromSession(sess *session.Session)
 	// ResetStreamTracking clears the active-stream stack so a new top-level run
@@ -296,6 +313,7 @@ type model struct {
 	lastTitleClickTime time.Time         // for double-click detection on title
 	sectionVisibility  SectionVisibility // which optional sections are rendered
 	sectionGap         int               // blank lines between sections in vertical mode
+	agentInfoMode      AgentInfoMode     // how the vertical Agents section renders each agent
 
 	// Transfer-box animation: a single animation.Subscription drives the rail
 	// dot while any transfer_task hop is in flight. The frame counts shared
@@ -696,6 +714,15 @@ func (m *model) SetSectionGap(lines int) {
 		return
 	}
 	m.sectionGap = lines
+	m.invalidateCache()
+}
+
+// SetAgentInfoMode selects how the vertical Agents section renders each agent.
+func (m *model) SetAgentInfoMode(mode AgentInfoMode) {
+	if m.agentInfoMode == mode {
+		return
+	}
+	m.agentInfoMode = mode
 	m.invalidateCache()
 }
 
@@ -1796,19 +1823,17 @@ func (m *model) queueSection(contentWidth int) string {
 	return m.renderTab(title, strings.Join(lines, "\n"), contentWidth)
 }
 
-// agentInfo renders the Agents panel: every agent as a compact, borderless
-// mini-card, with a blank separator line between cards. Line 1 shows the
-// agent's name (in its accent color) with the "^N" switch shortcut flush
-// against the right edge; line 2 the indented provider/model; the remaining
-// line(s) carry the labeled Effort / Context / Cost metrics (see
-// renderAgentCard). The current agent is marked with ▶ (or the spinner while
-// it works); the other agents pad that marker column so their names stay
-// aligned. Descriptions are deliberately omitted. While a transfer_task runs,
-// the innermost hop renders as a compact box below the whole roster — after a
-// blank breathing line — so the roster itself stays uninterrupted (see
-// renderTransferPanel). Each content line is owned by its agent
-// (agentLineOwners) so click zones can be registered explicitly (see
-// buildAgentClickZones) and a click on any card line switches to that agent;
+// agentInfo renders the Agents panel: every agent as a multi-line entry —
+// the compact two-line roster (see renderAgentLine) or a detailed mini-card
+// (see renderAgentCard), per the configured AgentInfoMode — with a blank
+// separator line between entries. The current agent is marked with ▶ (or the
+// spinner while it works); the other agents pad that marker column so their
+// names stay aligned. Descriptions are deliberately omitted. While a
+// transfer_task runs, the innermost hop renders as a compact box below the
+// whole roster — after a blank breathing line — so the roster itself stays
+// uninterrupted (see renderTransferPanel). Each content line is owned by its
+// agent (agentLineOwners) so click zones can be registered explicitly (see
+// buildAgentClickZones) and a click on any entry line switches to that agent;
 // separators and the transfer box carry an empty owner so they stay
 // unclickable.
 func (m *model) agentInfo(contentWidth int) string {
@@ -1826,8 +1851,10 @@ func (m *model) agentInfo(contentWidth int) string {
 		agentTitle += " ↔"
 	}
 
-	narrow := contentWidth < cardNarrowMinWidth
-	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-agentShortcutWidth)
+	renderAgent := m.compactAgentRenderer(contentWidth)
+	if m.agentInfoMode == AgentInfoDetailed {
+		renderAgent = m.detailedAgentRenderer(contentWidth)
+	}
 
 	var bodyLines, owners []string
 	add := func(line, owner string) {
@@ -1835,13 +1862,13 @@ func (m *model) agentInfo(contentWidth int) string {
 		owners = append(owners, owner)
 	}
 	for i, agent := range m.availableAgents {
-		// Separate cards with a blank, unowned line so they stay visually
+		// Separate entries with a blank, unowned line so they stay visually
 		// distinct without being attributed to (or made clickable for) any agent.
 		if len(bodyLines) > 0 {
 			add("", "")
 		}
 		current := agent.Name == currentAgent
-		for _, line := range m.renderAgentCard(agent, i, contentWidth, nameWidth, narrow, current) {
+		for _, line := range renderAgent(agent, i, current) {
 			add(line, agent.Name)
 		}
 	}
@@ -1857,6 +1884,32 @@ func (m *model) agentInfo(contentWidth int) string {
 	m.agentLineOwners = owners
 
 	return m.renderTab(agentTitle, strings.Join(bodyLines, "\n"), contentWidth)
+}
+
+// agentRenderer renders one roster agent's content lines at a layout
+// precomputed for the whole panel.
+type agentRenderer func(agent runtime.AgentDetails, index int, current bool) []string
+
+// compactAgentRenderer precomputes the compact roster's shared column widths
+// once — so every entry aligns and the badge width is not recomputed per
+// agent — and returns the per-agent two-line renderer (see renderAgentLine).
+func (m *model) compactAgentRenderer(contentWidth int) agentRenderer {
+	glyphOnly := contentWidth < rowGlyphOnlyMinWidth
+	badgeWidth := m.badgeColumnWidth(glyphOnly)
+	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-badgeWidth-1-agentShortcutWidth)
+	return func(agent runtime.AgentDetails, index int, current bool) []string {
+		return m.renderAgentLine(agent, index, contentWidth, nameWidth, badgeWidth, glyphOnly, current)
+	}
+}
+
+// detailedAgentRenderer precomputes the detailed card layout's shared widths
+// and returns the per-agent mini-card renderer (see renderAgentCard).
+func (m *model) detailedAgentRenderer(contentWidth int) agentRenderer {
+	narrow := contentWidth < cardNarrowMinWidth
+	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-agentShortcutWidth)
+	return func(agent runtime.AgentDetails, index int, current bool) []string {
+		return m.renderAgentCard(agent, index, contentWidth, nameWidth, narrow, current)
+	}
 }
 
 // thinkingKind classifies an agent's raw thinking wire label into the badge
@@ -1899,6 +1952,54 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// thinkingBadge returns the styled right-aligned badge for an agent's thinking
+// label and the compact single-cell form used in the compact roster's
+// glyph-only degradation step. Both are empty when the agent has no thinking
+// configuration. The vocabulary carries no ✻ glyph: the effort gauge is the
+// only visual language for thinking.
+func thinkingBadge(label string) (badge, compact string) {
+	kind, tokens := classifyThinking(label)
+	switch kind {
+	case thinkingNone:
+		return "", ""
+	case thinkingOff:
+		// Capable but disabled: a dim empty gauge, distinct from a non-capable
+		// model (which renders nothing). The compact form is a single empty cell.
+		cell := lipgloss.NewStyle().Foreground(styles.TextMuted).Faint(true).Render(styles.GaugeEmpty)
+		return toolcommon.EffortGaugeEmpty(), cell
+	case thinkingAdaptive:
+		auto := styles.ThinkingBadgeStyle.Render("auto")
+		return auto, auto
+	case thinkingTokens:
+		return styles.ThinkingBadgeStyle.Render(styles.TokenGlyph + " " + toolcommon.FormatTokenCount(tokens)),
+			styles.ThinkingBadgeStyle.Render(styles.TokenGlyph)
+	default: // thinkingLevel
+		level, ok := effort.Parse(label)
+		if !ok {
+			// Unknown/future level word: a plain text badge so it still renders.
+			b := styles.ThinkingBadgeStyle.Render(label)
+			return b, b
+		}
+		return toolcommon.EffortGauge(level), toolcommon.EffortFillStyle(level).Render(styles.GaugeFilled)
+	}
+}
+
+// badgeColumnWidth returns the widest thinking badge across the roster so every
+// compact agent line reserves the same badge column and the badges stay
+// aligned. glyphOnly selects the single-cell compact form used near MinWidth.
+func (m *model) badgeColumnWidth(glyphOnly bool) int {
+	w := 0
+	for _, a := range m.availableAgents {
+		full, compact := thinkingBadge(a.Thinking)
+		b := full
+		if glyphOnly {
+			b = compact
+		}
+		w = max(w, lipgloss.Width(b))
+	}
+	return w
 }
 
 // effortSegment builds the labeled effort metric for an agent's thinking
@@ -1987,7 +2088,68 @@ func padLeft(s string, width int) string {
 	return strings.Repeat(" ", max(0, width-lipgloss.Width(s))) + s
 }
 
-// renderAgentCard renders a single agent as a compact, borderless mini-card:
+// renderAgentLine renders a single agent in the compact roster as two lines:
+//
+//	▶ name            <thinking> ^N
+//	  provider/model         <ctx%>
+//
+// Line 1: the name is left-aligned in its accent color, the thinking badge is
+// right-aligned in a shared column, and the "^N" switch shortcut sits flush
+// against the right edge. The current agent is marked with ▶ (or the spinner
+// while it — or any agent — is working); other agents pad the marker column so
+// the names stay aligned. Line 2: the indented provider/model, left-truncated
+// so its informative tail survives, with the agent's latest known context
+// usage percentage right-aligned once the agent has run (background agent
+// tasks included). The description is omitted. Agents past the 9th have no
+// shortcut.
+func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth, nameWidth, badgeWidth int, glyphOnly, current bool) []string {
+	agentStyle := styles.AgentAccentStyleFor(agent.Name)
+
+	var marker string
+	switch {
+	case m.workingAgent == agent.Name:
+		marker = agentStyle.Render(m.spinner.RawFrame())
+	case current:
+		marker = agentStyle.Render("▶")
+	}
+	left := padRight(marker, agentMarkerWidth) + agentStyle.Render(toolcommon.TruncateText(agent.Name, nameWidth))
+
+	badge, compact := thinkingBadge(agent.Thinking)
+	if glyphOnly {
+		badge = compact
+	}
+
+	var shortcut string
+	if index >= 0 && index < 9 {
+		shortcut = styles.MutedStyle.Render(fmt.Sprintf("^%d", index+1))
+	}
+
+	right := padLeft(badge, badgeWidth) + " " + padLeft(shortcut, agentShortcutWidth)
+	gap := max(1, contentWidth-lipgloss.Width(left)-lipgloss.Width(right))
+	line1 := left + strings.Repeat(" ", gap) + right
+
+	modelText := agent.Model
+	if agent.Provider != "" {
+		modelText = agent.Provider + "/" + agent.Model
+	}
+	ctxPercent := m.agentContextPercent(agent.Name)
+	ctxStyle := contextGaugeStyle(m.agentContextGaugeLevel(agent.Name), styles.MutedStyle)
+	modelWidth := contentWidth - agentMarkerWidth
+	if ctxPercent != "" {
+		modelWidth -= lipgloss.Width(ctxPercent) + 1
+	}
+	model := toolcommon.TruncateTextLeft(modelText, max(1, modelWidth))
+	line2 := strings.Repeat(" ", agentMarkerWidth) + styles.MutedStyle.Render(model)
+	if ctxPercent != "" {
+		gap := max(1, contentWidth-lipgloss.Width(line2)-lipgloss.Width(ctxPercent))
+		line2 += strings.Repeat(" ", gap) + ctxStyle.Render(ctxPercent)
+	}
+
+	return []string{line1, line2}
+}
+
+// renderAgentCard renders a single agent in the detailed roster as a
+// borderless mini-card:
 //
 //	▶ name                             ^N
 //	  provider/model

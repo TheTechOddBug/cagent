@@ -35,6 +35,7 @@ const (
 	rowTheme = iota
 	rowPosition
 	rowSpacing
+	rowInfoMode
 	rowSessionPath
 	rowUsage
 	rowAgents
@@ -82,6 +83,14 @@ var spacingLabels = map[messages.SectionSpacing]string{
 	messages.SpacingCompact: "Compact", messages.SpacingNormal: "Normal", messages.SpacingRelaxed: "Relaxed",
 }
 
+var sidebarInfoModes = []messages.SidebarInfoMode{
+	messages.InfoModeCompact, messages.InfoModeDetailed,
+}
+
+var infoModeLabels = map[messages.SidebarInfoMode]string{
+	messages.InfoModeCompact: "Compact", messages.InfoModeDetailed: "Detailed",
+}
+
 var sendModes = []messages.SendMode{messages.SendModeSteer, messages.SendModeQueue}
 
 type sendModeOption struct {
@@ -109,6 +118,7 @@ type settingsDialog struct {
 func NewSettingsDialog(preferences messages.Preferences, showVisuals bool) Dialog {
 	preferences.Layout.SidebarPosition = messages.ParseSidebarPosition(string(preferences.Layout.SidebarPosition))
 	preferences.Layout.SectionSpacing = messages.ParseSectionSpacing(string(preferences.Layout.SectionSpacing))
+	preferences.Layout.SidebarInfoMode = messages.ParseSidebarInfoMode(string(preferences.Layout.SidebarInfoMode))
 	preferences.SendMode = messages.ParseSendMode(string(preferences.SendMode))
 	if preferences.TabTitleMaxLength <= 0 {
 		preferences.TabTitleMaxLength = 20
@@ -217,6 +227,8 @@ func (d *settingsDialog) changeValue(delta int) tea.Cmd {
 			d.current.Layout.SidebarPosition = cycleValue(sidebarPositions, d.current.Layout.SidebarPosition, delta)
 		case rowSpacing:
 			d.current.Layout.SectionSpacing = cycleValue(sectionSpacings, d.current.Layout.SectionSpacing, delta)
+		case rowInfoMode:
+			d.current.Layout.SidebarInfoMode = cycleValue(sidebarInfoModes, d.current.Layout.SidebarInfoMode, delta)
 		case rowSessionPath:
 			d.current.Layout.HideSessionPath = !d.current.Layout.HideSessionPath
 		case rowUsage:
@@ -354,6 +366,7 @@ func (d *settingsDialog) renderAppearanceTab(content *Content, inner int) {
 		content.AddSpace().AddContent(preview).AddSpace().
 			AddContent(d.renderSelectorRow(rowPosition, "Sidebar position", positionLabels[d.current.Layout.SidebarPosition], inner)).
 			AddContent(d.renderSelectorRow(rowSpacing, "Section spacing", spacingLabels[d.current.Layout.SectionSpacing], inner)).
+			AddContent(d.renderSelectorRow(rowInfoMode, "Sidebar info mode", infoModeLabels[d.current.Layout.SidebarInfoMode], inner)).
 			AddContent(styles.MutedStyle.Render("Sidebar sections")).
 			AddContent(d.renderToggleRow(rowSessionPath, "Session path", !d.current.Layout.HideSessionPath)).
 			AddContent(d.renderToggleRow(rowUsage, "Token usage", !d.current.Layout.HideUsage)).

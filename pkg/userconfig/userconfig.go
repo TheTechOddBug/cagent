@@ -123,6 +123,10 @@ type LayoutSettings struct {
 	// SectionSpacing controls the blank space between sidebar sections:
 	// "normal" (default), "compact", or "relaxed".
 	SectionSpacing string `yaml:"section_spacing,omitempty"`
+	// SidebarInfoMode controls how the sidebar's Agents section renders each
+	// agent: "compact" (default, two lines per agent) or "detailed"
+	// (mini-cards with labeled effort/context/cost metrics).
+	SidebarInfoMode string `yaml:"sidebar_info_mode,omitempty"`
 	// HideSessionPath hides the working directory (session path) line in the sidebar.
 	HideSessionPath bool `yaml:"hide_session_path,omitempty"`
 	// HideUsage hides the token usage section in the sidebar.

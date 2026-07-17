@@ -17,9 +17,14 @@ const (
 	// edge whether or not a given agent has one.
 	agentShortcutWidth = 2
 
+	// rowGlyphOnlyMinWidth is the content-column breakpoint (near MinWidth) below
+	// which a compact agent line's thinking gauge collapses to a single cell so
+	// the name column keeps usable room.
+	rowGlyphOnlyMinWidth = 22
+
 	// cardNarrowMinWidth is the content-column breakpoint (near MinWidth) below
-	// which an agent card compacts its metric labels (Context → Ctx). The
-	// effort gauge keeps its full six cells at every width; only its value
+	// which a detailed agent card compacts its metric labels (Context → Ctx).
+	// The effort gauge keeps its full six cells at every width; only its value
 	// word may be dropped when the line cannot hold it.
 	cardNarrowMinWidth = 22
 

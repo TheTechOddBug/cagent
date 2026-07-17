@@ -16,9 +16,11 @@ import (
 
 // newAgentPanelSidebar builds a sidebar whose current agent is "root" and whose
 // roster is set, ready to render the Agents panel at the given outer width.
-// The transfer-box animation is always stopped on cleanup so tests that start
-// it (via SetAgentSwitching) cannot leak a registration on the global
-// animation coordinator into parallel tests.
+// The panel is pinned to the detailed card mode, which most panel tests
+// target; compact-roster tests build their own sidebar (see
+// agent_info_mode_test.go). The transfer-box animation is always stopped on
+// cleanup so tests that start it (via SetAgentSwitching) cannot leak a
+// registration on the global animation coordinator into parallel tests.
 func newAgentPanelSidebar(t *testing.T, width int, agents ...runtime.AgentDetails) *model {
 	t.Helper()
 	sess := session.New()
@@ -32,6 +34,7 @@ func newAgentPanelSidebar(t *testing.T, width int, agents ...runtime.AgentDetail
 	m.availableAgents = agents
 	m.width = width
 	m.height = 200
+	m.SetAgentInfoMode(AgentInfoDetailed)
 	t.Cleanup(m.transferAnimation.Stop)
 	return m
 }
