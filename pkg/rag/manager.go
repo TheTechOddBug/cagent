@@ -432,7 +432,6 @@ func (m *Manager) Query(ctx context.Context, query string) (results []database.S
 			"num_results", len(fusedResults))
 	}
 
-
 	return fusedResults, usage, nil
 }
 

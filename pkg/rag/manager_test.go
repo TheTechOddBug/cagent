@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/docker/docker-agent/pkg/rag/database"
 	"github.com/docker/docker-agent/pkg/rag/strategy"
 	"github.com/docker/docker-agent/pkg/rag/types"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGetAbsolutePaths_WithBasePath(t *testing.T) {
@@ -93,10 +94,10 @@ func TestManager_Query_UsageAggregation(t *testing.T) {
 		},
 	}
 
-	mgr, err := New(context.Background(), "test-rag", cfg, events)
+	mgr, err := New(t.Context(), "test-rag", cfg, events)
 	require.NoError(t, err)
 
-	_, usage, err := mgr.Query(context.Background(), "test query")
+	_, usage, err := mgr.Query(t.Context(), "test query")
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(30), usage.TotalTokens)

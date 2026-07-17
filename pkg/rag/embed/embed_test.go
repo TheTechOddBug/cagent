@@ -5,16 +5,18 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/docker/docker-agent/pkg/model/provider"
-	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/model/provider"
+	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // mockEmbeddingProvider fakes a provider that fails on the 3rd embedding
 type mockEmbeddingProvider struct {
 	provider.Provider
+
 	callCount int
 }
 
@@ -50,7 +52,7 @@ func TestEmbedBatch_PartialUsageOnError(t *testing.T) {
 	// Provide 4 texts. The 3rd will fail.
 	texts := []string{"text1", "text2", "text3", "text4"}
 
-	embeddings, tokens, err := embedder.EmbedBatch(context.Background(), texts)
+	embeddings, tokens, err := embedder.EmbedBatch(t.Context(), texts)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "simulated failure")
