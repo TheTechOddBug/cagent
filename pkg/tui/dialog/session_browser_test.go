@@ -564,6 +564,34 @@ func TestSessionBrowserWorkspaceGitRootNormalization(t *testing.T) {
 	require.Equal(t, base, workspaceDisplayDir(base), "non-repo dirs are shown as-is")
 }
 
+func TestSessionBrowserWorkspaceDisplayDirThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	t.Parallel()
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	sub := filepath.Join(repo, "pkg")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(sub, link))
+
+	// A symlink straight to the repo root sees .git through the link (Stat
+	// follows symlinks) and is shown as-is — it is the repo root, just
+	// spelled the way the user reached it.
+	linkToRoot := filepath.Join(t.TempDir(), "root-link")
+	require.NoError(t, os.Symlink(repo, linkToRoot))
+	require.Equal(t, linkToRoot, workspaceDisplayDir(linkToRoot))
+
+	// A symlink to a subdirectory has no .git on its lexical path, so the
+	// header falls back to the resolved repository root — matching how the
+	// matcher groups these sessions.
+	resolved, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	require.Equal(t, resolved, workspaceDisplayDir(link))
+}
+
 func TestSessionBrowserHeaderRowsNotSelectable(t *testing.T) {
 	t.Parallel()
 	dialog := NewSessionBrowserDialog(workspaceTestSessions(), "/work/project")

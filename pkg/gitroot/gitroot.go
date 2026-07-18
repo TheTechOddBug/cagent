@@ -4,10 +4,16 @@
 package gitroot
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// maxPointerFileSize bounds reads of .git pointer and commondir files. Valid
+// ones hold a single path, so anything larger is treated as malformed rather
+// than read into memory.
+const maxPointerFileSize = 4096
 
 // Root returns the top-level directory of the repository containing dir,
 // walking up parent directories until a .git entry is found. Linked worktrees
@@ -18,7 +24,7 @@ func Root(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	d := dir
+	d := filepath.Clean(dir)
 	for {
 		gitPath := filepath.Join(d, ".git")
 		info, err := os.Stat(gitPath)
@@ -51,24 +57,25 @@ func mainRepoRoot(gitFile, base string) string {
 		return ""
 	}
 	// Linked worktrees carry a commondir file pointing at the main .git dir.
-	data, err := os.ReadFile(filepath.Join(gd, "commondir"))
-	if err != nil {
+	data := readPointerFile(filepath.Join(gd, "commondir"))
+	if data == "" {
 		return ""
 	}
-	common := strings.TrimSpace(string(data))
+	common := data
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(gd, common)
 	}
-	// The main repository root is the parent of its .git dir.
-	return filepath.Dir(filepath.Clean(common))
+	common = filepath.Clean(common)
+	// The main repository root is the parent of its .git dir. A bare
+	// repository is its own common dir (no worktree to strip).
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common
 }
 
 func parseGitdir(gitFile, base string) string {
-	data, err := os.ReadFile(gitFile)
-	if err != nil {
-		return ""
-	}
-	gd, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	gd, ok := strings.CutPrefix(readPointerFile(gitFile), "gitdir: ")
 	if !ok {
 		return ""
 	}
@@ -76,4 +83,19 @@ func parseGitdir(gitFile, base string) string {
 		gd = filepath.Join(base, gd)
 	}
 	return gd
+}
+
+// readPointerFile reads a small metadata file and returns its trimmed
+// content, or "" when the file is missing or suspiciously large.
+func readPointerFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPointerFileSize+1))
+	if err != nil || len(data) > maxPointerFileSize {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

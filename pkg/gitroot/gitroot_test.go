@@ -83,6 +83,21 @@ func TestRoot_LinkedWorktreeAbsoluteCommondir(t *testing.T) {
 	assert.Equal(t, repo, Root(wt))
 }
 
+func TestRoot_LinkedWorktreeOfBareRepository(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	// Bare repositories are their own git dir; commondir points straight at them.
+	bare := filepath.Join(base, "project.git")
+	gitdir := filepath.Join(bare, "worktrees", "wt")
+	require.NoError(t, os.MkdirAll(gitdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "commondir"), []byte("../..\n"), 0o644))
+	wt := filepath.Join(base, "wt")
+	require.NoError(t, os.MkdirAll(wt, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644))
+
+	assert.Equal(t, bare, Root(wt), "bare-repo worktrees resolve to the bare repo, not its parent")
+}
+
 func TestRoot_SubmoduleIsItsOwnRoot(t *testing.T) {
 	t.Parallel()
 	repo := t.TempDir()
@@ -95,6 +110,33 @@ func TestRoot_SubmoduleIsItsOwnRoot(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644))
 
 	assert.Equal(t, sub, Root(sub))
+}
+
+func TestRoot_DanglingGitdirPointer(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"),
+		[]byte("gitdir: "+filepath.Join(dir, "missing")+"\n"), 0o644))
+
+	assert.Equal(t, dir, Root(dir), "a dangling gitdir pointer falls back to the dir itself")
+}
+
+func TestRoot_OversizedGitFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	huge := append([]byte("gitdir: "), make([]byte, maxPointerFileSize)...)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), huge, 0o644))
+
+	assert.Equal(t, dir, Root(dir), "oversized .git files are treated as malformed")
+}
+
+func TestRoot_UncleanInput(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	newRepo(t, repo)
+
+	assert.Equal(t, repo, Root(repo+string(filepath.Separator)))
+	assert.Equal(t, repo, Root(filepath.Join(repo, "a", "..")))
 }
 
 func TestRoot_NotARepository(t *testing.T) {

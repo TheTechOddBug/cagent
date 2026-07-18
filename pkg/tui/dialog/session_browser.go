@@ -126,15 +126,23 @@ func workspacePathsEqual(a, b string) bool {
 
 // workspaceDisplayDir returns the directory shown in the "This workspace"
 // header. Since sessions group by repository, a dir inside a git repo (or
-// worktree) displays as the repository root. Unlike matcher normalization,
-// symlinks are not resolved so the label stays close to what the user typed.
+// worktree) displays as the repository root. Symlinks are left unresolved so
+// the label stays close to what the user typed, but when the raw path is not
+// in a repo the symlink-resolved path is tried too, keeping the header
+// consistent with the matcher's grouping key.
 func workspaceDisplayDir(dir string) string {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return ""
 	}
-	if root := gitroot.Root(filepath.Clean(dir)); root != "" {
+	dir = filepath.Clean(dir)
+	if root := gitroot.Root(dir); root != "" {
 		return root
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		if root := gitroot.Root(resolved); root != "" {
+			return root
+		}
 	}
 	return dir
 }
