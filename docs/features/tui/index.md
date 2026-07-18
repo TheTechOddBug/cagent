@@ -300,7 +300,7 @@ Each error message includes a clickable **↻ retry** button. Clicking it resume
 
 Docker Agent automatically saves your sessions. Use `/sessions` to browse past conversations:
 
-- **Browse** past sessions with search and filtering
+- **Browse** past sessions with search and filtering. The search matches against session **titles** and **session IDs** (full UUIDs, dash-less variants, and partial fragments all resolve correctly — useful when jumping back to a session from a copied ID or log).
 - **Workspace grouping**: sessions started in the current directory are listed first under "This workspace", everything else under "Other locations" with its originating directory shown next to each entry; press <kbd>Ctrl</kbd>+<kbd>G</kbd> in the browser to cycle between all, current-directory only, and other-directory views. Restoring a session reopens it in its original directory, so the label always matches where a restore will land
 - **Star** important sessions with `/star`
 - **Branch** conversations by editing any previous user message — preserving the original session history
