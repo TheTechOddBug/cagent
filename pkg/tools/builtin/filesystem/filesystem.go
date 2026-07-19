@@ -100,7 +100,7 @@ type ToolSet struct {
 	// denyList, when non-nil, rejects every filesystem operation on paths
 	// that resolve under one of the listed roots, even when the path also
 	// matches the allow-list. nil means "no deny-list".
-	denyList *pathRootSet
+	denyList     *pathRootSet
 	agentsIgnore *fsx.AgentsIgnoreMatcher
 }
 
