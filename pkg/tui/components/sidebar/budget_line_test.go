@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func (s *testSidebar) feedBudget(ev *runtime.BudgetUsageEvent) {
-	updated, _ := s.Update(tea.Msg(ev))
+	updated, _ := s.Update(ev)
 	s.model = updated.(*model)
 }
 
@@ -43,7 +42,26 @@ func TestBudgetLine_ShowsCeilingsAtZero(t *testing.T) {
 	assert.Contains(t, out, "run")
 	assert.Contains(t, out, "$0.00/$0.50")
 	assert.Contains(t, out, "/100.0K")
-	assert.Contains(t, out, "/2m0s")
+	assert.Contains(t, out, "/2m", "a round ceiling reads 2m, not 2m0s")
+}
+
+func TestFormatBudgetDuration(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		seconds float64
+		want    string
+	}{
+		{0, "0s"},
+		{45, "45s"},
+		{60, "1m"},
+		{134, "2m14s"},
+		{600, "10m"},
+		{3600, "1h"},
+		{5400, "1h30m"},
+	} {
+		assert.Equal(t, tc.want, formatBudgetDuration(tc.seconds))
+	}
 }
 
 func TestBudgetLine_ShowsEachBudgetByName(t *testing.T) {
@@ -56,40 +74,20 @@ func TestBudgetLine_ShowsEachBudgetByName(t *testing.T) {
 		AgentContext: runtime.AgentContext{AgentName: "developer"},
 		Budgets: []runtime.BudgetStatus{
 			{Name: "run", Cost: 0.12, MaxCost: 0.50},
-			{Name: "tight", Cost: 0.09, MaxCost: 0.10},
+			{Name: "shell-work", Cost: 0.09, MaxCost: 0.10},
 		},
 	})
 
 	out := ansi.Strip(m.tokenUsage(80))
 	assert.Contains(t, out, "run")
 	assert.Contains(t, out, "$0.12/$0.50")
-	assert.Contains(t, out, "tight")
+	assert.Contains(t, out, "shell-work")
 	assert.Contains(t, out, "$0.09/$0.10")
-	assert.Less(t, strings.Index(out, "run"), strings.Index(out, "tight"),
+	assert.Less(t, strings.Index(out, "run"), strings.Index(out, "shell-work"),
 		"run-wide budget leads, then named budgets")
 }
 
-func TestBudgetLine_SingleAgentHasNoBreakdown(t *testing.T) {
-	t.Parallel()
-
-	m := newTestSidebar(t)
-	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
-		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{
-			Name: "run", Cost: 0.03, MaxCost: 0.50,
-			PerAgent: []runtime.AgentBudgetUsage{
-				{AgentName: "solo-agent", Cost: 0.03, Tokens: 8000, ActiveSeconds: 12},
-			},
-		}},
-	})
-
-	out := ansi.Strip(m.tokenUsage(60))
-	assert.NotContains(t, out, "solo-agent", "single agent: no per-agent row")
-}
-
-func TestBudgetLine_MultiAgentBreakdownPerBudget(t *testing.T) {
+func TestBudgetLine_OmitsPerAgentBreakdown(t *testing.T) {
 	t.Parallel()
 
 	m := newTestSidebar(t)
@@ -98,25 +96,21 @@ func TestBudgetLine_MultiAgentBreakdownPerBudget(t *testing.T) {
 		SessionID:    "s1",
 		AgentContext: runtime.AgentContext{AgentName: "developer"},
 		Budgets: []runtime.BudgetStatus{{
-			Name: "run", Cost: 0.12, MaxCost: 0.50, Tokens: 12300, MaxTokens: 100000,
+			Name: "run", Cost: 0.12, MaxCost: 0.50,
 			PerAgent: []runtime.AgentBudgetUsage{
 				{AgentName: "developer", Cost: 0.09, Tokens: 8000, ActiveSeconds: 72},
-				{AgentName: "root", Cost: 0.03, Tokens: 4300, ActiveSeconds: 62},
+				{AgentName: "solo-agent", Cost: 0.03, Tokens: 4300, ActiveSeconds: 62},
 			},
 		}},
 	})
 
 	out := ansi.Strip(m.tokenUsage(80))
-	assert.Contains(t, out, "developer")
-	assert.Contains(t, out, "$0.09")
-	assert.Contains(t, out, "1m12s")
-	assert.Contains(t, out, "$0.03")
-	assert.Contains(t, out, "1m02s")
-	assert.Less(t, strings.Index(out, "$0.09"), strings.Index(out, "$0.03"),
-		"biggest spender must lead")
+	assert.Contains(t, out, "$0.12/$0.50", "the budget total still shows")
+	assert.NotContains(t, out, "solo-agent",
+		"per-agent rows are the Agents section's job, not the budget line's")
 }
 
-func TestBudgetLine_NoCostCeilingOmitsAgentCost(t *testing.T) {
+func TestBudgetLine_SubCentUsesPreciseFormat(t *testing.T) {
 	t.Parallel()
 
 	m := newTestSidebar(t)
@@ -124,18 +118,34 @@ func TestBudgetLine_NoCostCeilingOmitsAgentCost(t *testing.T) {
 	m.feedBudget(&runtime.BudgetUsageEvent{
 		SessionID:    "s1",
 		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{
-			Name: "roomy", Tokens: 500, MaxTokens: 1000,
-			PerAgent: []runtime.AgentBudgetUsage{
-				{AgentName: "developer", Tokens: 300, ActiveSeconds: 5},
-				{AgentName: "root", Tokens: 200, ActiveSeconds: 3},
-			},
-		}},
+		Budgets:      []runtime.BudgetStatus{{Name: "run", Cost: 0.0012, MaxCost: 0.05}},
 	})
 
-	out := ansi.Strip(m.tokenUsage(80))
-	assert.Contains(t, out, "roomy")
-	assert.NotContains(t, out, "$", "a tokens-only budget must not render costs")
+	out := ansi.Strip(m.tokenUsage(60))
+	assert.Contains(t, out, "$0.0012", "sub-cent spend must not read as $0.00")
+}
+
+func TestBudgetLine_TokensOnlyBudgetOmitsCost(t *testing.T) {
+	t.Parallel()
+
+	m := newTestSidebar(t)
+	m.startStream("s1", "root")
+	m.feedBudget(&runtime.BudgetUsageEvent{
+		SessionID:    "s1",
+		AgentContext: runtime.AgentContext{AgentName: "root"},
+		Budgets:      []runtime.BudgetStatus{{Name: "roomy", Tokens: 500, MaxTokens: 1000}},
+	})
+
+	var row string
+	for line := range strings.SplitSeq(ansi.Strip(m.tokenUsage(80)), "\n") {
+		if strings.Contains(line, "roomy") {
+			row = line
+			break
+		}
+	}
+	assert.NotEmpty(t, row, "the tokens-only budget must be rendered")
+	assert.Contains(t, row, "500/1.0K")
+	assert.NotContains(t, row, "$", "a tokens-only budget must not render costs")
 }
 
 func TestBudgetLine_MarksUnpricedSpend(t *testing.T) {
@@ -146,9 +156,7 @@ func TestBudgetLine_MarksUnpricedSpend(t *testing.T) {
 	m.feedBudget(&runtime.BudgetUsageEvent{
 		SessionID:    "s1",
 		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{
-			Name: "run", Cost: 0, MaxCost: 0.50, Unpriced: true,
-		}},
+		Budgets:      []runtime.BudgetStatus{{Name: "run", Cost: 0, MaxCost: 0.50, Unpriced: true}},
 	})
 
 	assert.Contains(t, ansi.Strip(m.tokenUsage(80)), "unpriced spend")
