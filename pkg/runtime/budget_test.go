@@ -54,8 +54,8 @@ func TestBudgetMaxCost(t *testing.T) {
 	breach := b.exceeded()
 	require.NotNil(t, breach, "$0.55 of $0.50 must trip")
 	assert.Equal(t, budgetLimitCost, breach.Limit)
-	assert.Equal(t, "$0.5500", breach.Used)
-	assert.Equal(t, "$0.5000", breach.Max)
+	assert.Equal(t, "$0.55", breach.Used)
+	assert.Equal(t, "$0.50", breach.Max)
 	assert.Contains(t, breach.Message(), "budget.max_cost")
 }
 

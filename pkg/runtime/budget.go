@@ -212,7 +212,16 @@ func (b *budgetTracker) unpricedSpend() bool {
 }
 
 func formatUSD(v float64) string {
-	return fmt.Sprintf("$%.4f", v)
+	if v < 0 {
+		return "-" + formatUSD(-v)
+	}
+	if v < 0.0001 {
+		return "$0.00"
+	}
+	if v < 0.01 {
+		return fmt.Sprintf("$%.4f", v)
+	}
+	return fmt.Sprintf("$%.2f", v)
 }
 
 const runBudgetName = "run"
