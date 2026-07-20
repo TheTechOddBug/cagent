@@ -244,6 +244,56 @@ Note right of B: After`,
 			width: 60,
 		},
 		{
+			name: "state top down direction",
+			source: `stateDiagram-v2
+state "Waiting for work" as Waiting
+direction TD
+[*] --> Waiting
+Waiting --> Running: start
+Running --> [*]: finish`,
+			width: 80,
+		},
+		{
+			name: "state top bottom direction",
+			source: `stateDiagram-v2
+state "Waiting for work" as Waiting
+direction TB
+[*] --> Waiting
+Waiting --> Running: start
+Running --> [*]: finish`,
+			width: 80,
+		},
+		{
+			name: "state bottom top direction",
+			source: `stateDiagram-v2
+state "Waiting for work" as Waiting
+direction BT
+[*] --> Waiting
+Waiting --> Running: start
+Running --> [*]: finish`,
+			width: 80,
+		},
+		{
+			name: "state left right direction",
+			source: `stateDiagram-v2
+state "Waiting for work" as Waiting
+direction LR
+[*] --> Waiting
+Waiting --> Running: start
+Running --> [*]: finish`,
+			width: 80,
+		},
+		{
+			name: "state right left direction",
+			source: `stateDiagram-v2
+state "Waiting for work" as Waiting
+direction RL
+[*] --> Waiting
+Waiting --> Running: start
+Running --> [*]: finish`,
+			width: 80,
+		},
+		{
 			name: "state lifecycle and cycle",
 			source: `stateDiagram-v2
 state "Processing request" as Processing

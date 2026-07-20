@@ -6,6 +6,13 @@ func parseState(doc *Document, statements []string) {
 	pseudoState := 0
 	for _, statement := range statements {
 		cursor := mermaidCursor{input: statement}
+		if cursor.consumeKeyword("direction") {
+			direction, ok := cursor.readIdentifier()
+			if ok && cursor.eof() && validMermaidDirection(direction) {
+				doc.Direction = strings.ToUpper(direction)
+			}
+			continue
+		}
 		if cursor.consumeKeyword("state") {
 			label, ok := cursor.readQuoted()
 			if !ok || !cursor.consumeKeyword("as") {
@@ -48,6 +55,15 @@ func parseState(doc *Document, statements []string) {
 			addMermaidNode(doc, to, to)
 		}
 		doc.Edges = append(doc.Edges, Edge{From: from, To: to, Label: label})
+	}
+}
+
+func validMermaidDirection(direction string) bool {
+	switch strings.ToUpper(direction) {
+	case "TD", "TB", "BT", "LR", "RL":
+		return true
+	default:
+		return false
 	}
 }
 
