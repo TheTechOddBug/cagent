@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -155,7 +156,12 @@ func buildConfigureBackendConfig(contextSize *int64, runtimeFlags []string, spec
 		KeepAlive:    keepAlive,
 	}
 	if contextSize != nil {
-		cs := int32(*contextSize) //nolint:gosec // user-configured context size; realistic values fit in int32
+		v := *contextSize
+		if v > math.MaxInt32 {
+			slog.Warn("context_size exceeds int32 max; clamping to math.MaxInt32", "requested", v, "clamped", int32(math.MaxInt32))
+			v = math.MaxInt32
+		}
+		cs := int32(v)
 		cfg.ContextSize = &cs
 	}
 	if specOpts != nil {

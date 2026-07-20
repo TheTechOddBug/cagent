@@ -3,6 +3,7 @@ package dmr
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -319,6 +320,15 @@ func TestBuildConfigureRequest(t *testing.T) {
 		assert.Empty(t, req.RawRuntimeFlags)
 		assert.Nil(t, req.KeepAlive)
 		assert.Nil(t, req.VLLM)
+	})
+
+	t.Run("context size above int32 max is clamped", func(t *testing.T) {
+		t.Parallel()
+		contextSize := int64(math.MaxInt32) + 1
+		backendCfg := buildConfigureBackendConfig(&contextSize, nil, nil, nil, nil, nil)
+		req := buildConfigureRequest("ai/qwen3:14B-Q6_K", backendCfg, nil, "")
+		require.NotNil(t, req.ContextSize)
+		assert.Equal(t, int32(math.MaxInt32), *req.ContextSize)
 	})
 }
 
