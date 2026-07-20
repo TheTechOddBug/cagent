@@ -2,9 +2,9 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
@@ -29,22 +29,37 @@ func sanitizeLogValue(s string) string {
 	return s
 }
 
-// sanitizeLogArgs replaces newline characters in any string values within
-// the args slice to prevent log injection through structured fields.
-// Named string types (e.g. EventType) are handled via reflect so they are
-// also sanitized without requiring an explicit type assertion per type.
+// sanitizeLogArgs sanitizes every element of the args slice so that no
+// user-controlled string value can reach a slog sink without passing
+// through a strings.ReplaceAll barrier (the only transformation that
+// CodeQL's go/log-injection query recognises as a sanitizer).
+//
+// Strategy — invert the passthrough logic so the catch-all sanitizes
+// rather than forwards:
+//   - plain string       → sanitizeLogValue directly
+//   - numeric / bool     → pass through as-is (provably not a string;
+//     preserves structured-log typing for non-sensitive fields)
+//   - everything else    → render via fmt.Sprintf and sanitize; this
+//     catches named string types (e.g. EventType), error, fmt.Stringer,
+//     and any future string-like type without an explicit case.
 func sanitizeLogArgs(args []any) []any {
 	if len(args) == 0 {
 		return args
 	}
 	result := make([]any, len(args))
 	for i, v := range args {
-		if s, ok := v.(string); ok {
-			result[i] = sanitizeLogValue(s)
-		} else if rv := reflect.ValueOf(v); rv.IsValid() && rv.Kind() == reflect.String {
-			result[i] = sanitizeLogValue(rv.String())
-		} else {
-			result[i] = v
+		switch val := v.(type) {
+		case string:
+			result[i] = sanitizeLogValue(val)
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64, bool:
+			result[i] = val
+		default:
+			// Named string types, errors, Stringers, and anything else:
+			// render then sanitize so every string-like path crosses the
+			// strings.ReplaceAll barrier.
+			result[i] = sanitizeLogValue(fmt.Sprintf("%v", val))
 		}
 	}
 	return result
