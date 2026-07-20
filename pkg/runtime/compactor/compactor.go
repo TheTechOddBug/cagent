@@ -93,6 +93,12 @@ type Result struct {
 	// Cost is the dollar cost of producing Summary (zero for non-LLM
 	// strategies).
 	Cost float64
+	// Model names the model that produced Summary (empty for non-LLM
+	// strategies), so cost-per-model breakdowns can attribute Cost.
+	Model string
+	// Usage is the token usage of the summarization call(s) behind Cost
+	// (zero for non-LLM strategies).
+	Usage chat.Usage
 	// InputTokens is the new "input tokens so far" tally for the
 	// parent session after compaction. The runtime assigns it to
 	// sess.InputTokens; sess.OutputTokens is reset to 0.
@@ -237,12 +243,42 @@ func RunLLM(ctx context.Context, args LLMArgs) (result *Result, err error) {
 		return nil, nil
 	}
 
+	model, usage := runUsage(compactionSession, seedLen)
 	return &Result{
 		Summary:        summary,
 		FirstKeptEntry: firstKeptEntry,
 		Cost:           compactionSession.TotalCost(),
+		Model:          model,
+		Usage:          usage,
 		InputTokens:    compactionSession.OutputTokens,
 	}, nil
+}
+
+// runUsage aggregates the model name and token usage of the messages the
+// summarization run appended past the seeded conversation, so the summary's
+// cost can be attributed to the model that actually served the call.
+func runUsage(sess *session.Session, seedLen int) (string, chat.Usage) {
+	var model string
+	var usage chat.Usage
+	for i := seedLen; i < len(sess.Messages); i++ {
+		item := sess.Messages[i]
+		if !item.IsMessage() {
+			continue
+		}
+		msg := item.Message.Message
+		if msg.Model != "" {
+			model = msg.Model
+		}
+		if msg.Usage == nil {
+			continue
+		}
+		usage.InputTokens += msg.Usage.InputTokens
+		usage.OutputTokens += msg.Usage.OutputTokens
+		usage.CachedInputTokens += msg.Usage.CachedInputTokens
+		usage.CacheWriteTokens += msg.Usage.CacheWriteTokens
+		usage.ReasoningTokens += msg.Usage.ReasoningTokens
+	}
+	return model, usage
 }
 
 // ComputeFirstKeptEntry returns the index in sess.Messages of the

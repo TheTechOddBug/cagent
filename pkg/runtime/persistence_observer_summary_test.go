@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -22,7 +23,7 @@ func TestPersistenceObserver_PersistsSummaryCost(t *testing.T) {
 	sess := session.New(session.WithID("s1"), session.WithUserMessage("hi"))
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	obs.OnEvent(t.Context(), sess, SessionSummary(sess.ID, "the summary", "root", 1, 0.002))
+	obs.OnEvent(t.Context(), sess, SessionSummary(sess.ID, "the summary", "root", 1, 0.002, "openai/gpt-4o-mini", &chat.Usage{InputTokens: 100, OutputTokens: 20}))
 
 	reloaded, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
@@ -31,4 +32,8 @@ func TestPersistenceObserver_PersistsSummaryCost(t *testing.T) {
 	require.Equal(t, "the summary", last.Summary)
 	assert.Equal(t, 1, last.FirstKeptEntry)
 	assert.InDelta(t, 0.002, last.Cost, 1e-9, "the event's cost must land on the summary item")
+	assert.Equal(t, "openai/gpt-4o-mini", last.Model, "the event's model must land on the summary item")
+	require.NotNil(t, last.Usage, "the event's usage must land on the summary item")
+	assert.Equal(t, int64(100), last.Usage.InputTokens)
+	assert.Equal(t, int64(20), last.Usage.OutputTokens)
 }

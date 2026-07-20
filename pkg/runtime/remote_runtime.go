@@ -366,15 +366,15 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 // Summarize generates a summary for the session by compacting it server-side.
 func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, sink EventSink) {
 	if r.sessionID == "" {
-		sink.Emit(SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0, 0))
+		sink.Emit(SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0, 0, "", nil))
 		return
 	}
 	if err := r.client.CompactSession(ctx, r.sessionID); err != nil {
 		slog.WarnContext(ctx, "Failed to compact session", "error", err)
-		sink.Emit(SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0, 0))
+		sink.Emit(SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0, 0, "", nil))
 		return
 	}
-	sink.Emit(SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0, 0))
+	sink.Emit(SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0, 0, "", nil))
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
@@ -849,7 +849,7 @@ func (s *RemoteSessionStore) AddSubSession(context.Context, string, *session.Ses
 	return fmt.Errorf("add sub session: %w", ErrUnsupported)
 }
 
-func (s *RemoteSessionStore) AddSummary(context.Context, string, string, int, float64) error {
+func (s *RemoteSessionStore) AddSummary(context.Context, string, session.Item) error {
 	return fmt.Errorf("add summary: %w", ErrUnsupported)
 }
 

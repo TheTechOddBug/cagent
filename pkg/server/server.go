@@ -801,7 +801,8 @@ func (s *Server) addSummary(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "summary is required")
 	}
 
-	if err := s.sm.AddSummary(c.Request().Context(), sessionID, req.Summary, req.Tokens, req.Cost); err != nil {
+	item := session.Item{Summary: req.Summary, FirstKeptEntry: req.Tokens, Cost: req.Cost, Model: req.Model, Usage: req.Usage}
+	if err := s.sm.AddSummary(c.Request().Context(), sessionID, item); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add summary: %v", err))
 	}
 

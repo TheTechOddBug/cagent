@@ -128,6 +128,10 @@ func (s *Session) Clone() *Session {
 			errCopy := *item.Error
 			clone.Messages[i].Error = &errCopy
 		}
+		if item.Usage != nil {
+			usageCopy := *item.Usage
+			clone.Messages[i].Usage = &usageCopy
+		}
 	}
 	return clone
 }
@@ -147,7 +151,12 @@ func cloneSessionItem(item Item) (Item, error) {
 		}
 		return Item{SubSession: clonedSub}, nil
 	case item.Summary != "":
-		return Item{Summary: item.Summary, Cost: item.Cost}, nil
+		cloned := Item{Summary: item.Summary, Cost: item.Cost, Model: item.Model}
+		if item.Usage != nil {
+			usageCopy := *item.Usage
+			cloned.Usage = &usageCopy
+		}
+		return cloned, nil
 	case item.Error != nil:
 		errCopy := *item.Error
 		return Item{Error: &errCopy}, nil

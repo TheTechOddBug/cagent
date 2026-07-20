@@ -114,9 +114,10 @@ type Store interface {
 	AddSubSession(ctx context.Context, parentSessionID string, subSession *Session) error
 
 	// AddSummary adds a summary item to a session at the next position.
-	// firstKeptEntry is the index of the first message kept verbatim during compaction.
-	// cost is the dollar cost of producing the summary (0 when nothing was billed).
-	AddSummary(ctx context.Context, sessionID, summary string, firstKeptEntry int, cost float64) error
+	// item.FirstKeptEntry is the index of the first message kept verbatim during
+	// compaction; item.Cost/Model/Usage attribute the summary's spend (zero
+	// values when nothing was billed).
+	AddSummary(ctx context.Context, sessionID string, item Item) error
 
 	// AddError appends a recorded error item to a session at the next position.
 	// Persisting failures lets them survive a reload and travel with a JSON export.
@@ -334,7 +335,7 @@ func (s *InMemorySessionStore) AddSubSession(_ context.Context, parentSessionID 
 }
 
 // AddSummary adds a summary item to a session at the next position.
-func (s *InMemorySessionStore) AddSummary(_ context.Context, sessionID, summary string, firstKeptEntry int, cost float64) error {
+func (s *InMemorySessionStore) AddSummary(_ context.Context, sessionID string, item Item) error {
 	if sessionID == "" {
 		return ErrEmptyID
 	}
@@ -344,7 +345,7 @@ func (s *InMemorySessionStore) AddSummary(_ context.Context, sessionID, summary 
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	session.Messages = append(session.Messages, Item{Summary: summary, FirstKeptEntry: firstKeptEntry, Cost: cost})
+	session.Messages = append(session.Messages, item)
 	return nil
 }
 
@@ -750,6 +751,8 @@ type sessionItemRow struct {
 	summaryText    sql.NullString
 	firstKeptEntry int
 	cost           float64
+	model          string
+	usageJSON      string
 }
 
 // loadSessionItems loads all items for a session from session_items.
@@ -757,7 +760,7 @@ type sessionItemRow struct {
 // loadSession when resolving sub-sessions inside a transaction.
 func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, sessionID string) ([]Item, error) {
 	rows, err := q.QueryContext(ctx,
-		`SELECT position, item_type, agent_name, message_json, implicit, subsession_id, summary_text, COALESCE(first_kept_entry, 0), cost
+		`SELECT position, item_type, agent_name, message_json, implicit, subsession_id, summary_text, COALESCE(first_kept_entry, 0), cost, COALESCE(model, ''), COALESCE(usage_json, '')
 		 FROM session_items WHERE session_id = ? ORDER BY position`, sessionID)
 	if err != nil {
 		return nil, err
@@ -769,7 +772,7 @@ func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, se
 	var rawRows []sessionItemRow
 	for rows.Next() {
 		var row sessionItemRow
-		if err := rows.Scan(&row.position, &row.itemType, &row.agentName, &row.messageJSON, &row.implicit, &row.subsessionID, &row.summaryText, &row.firstKeptEntry, &row.cost); err != nil {
+		if err := rows.Scan(&row.position, &row.itemType, &row.agentName, &row.messageJSON, &row.implicit, &row.subsessionID, &row.summaryText, &row.firstKeptEntry, &row.cost, &row.model, &row.usageJSON); err != nil {
 			return nil, err
 		}
 		rawRows = append(rawRows, row)
@@ -819,7 +822,15 @@ func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, se
 			items = append(items, Item{SubSession: subSession})
 
 		case "summary":
-			items = append(items, Item{Summary: row.summaryText.String, FirstKeptEntry: row.firstKeptEntry, Cost: row.cost})
+			item := Item{Summary: row.summaryText.String, FirstKeptEntry: row.firstKeptEntry, Cost: row.cost, Model: row.model}
+			if row.usageJSON != "" {
+				var usage chat.Usage
+				if err := json.Unmarshal([]byte(row.usageJSON), &usage); err != nil {
+					return nil, fmt.Errorf("unmarshaling summary usage at position %d: %w", row.position, err)
+				}
+				item.Usage = &usage
+			}
+			items = append(items, item)
 
 		case "error":
 			var e Error
@@ -1219,10 +1230,14 @@ func (s *SQLiteSessionStore) addItemTx(ctx context.Context, tx *sql.Tx, sessionI
 		return err
 
 	case item.Summary != "":
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO session_items (session_id, position, item_type, summary_text, first_kept_entry, cost)
-			 VALUES (?, ?, 'summary', ?, ?, ?)`,
-			sessionID, position, item.Summary, item.FirstKeptEntry, item.Cost)
+		usageJSON, err := summaryUsageJSON(item.Usage)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO session_items (session_id, position, item_type, summary_text, first_kept_entry, cost, model, usage_json)
+			 VALUES (?, ?, 'summary', ?, ?, ?, ?, ?)`,
+			sessionID, position, item.Summary, item.FirstKeptEntry, item.Cost, item.Model, usageJSON)
 		return err
 
 	case item.Error != nil:
@@ -1242,20 +1257,38 @@ func (s *SQLiteSessionStore) addItemTx(ctx context.Context, tx *sql.Tx, sessionI
 }
 
 // AddSummary adds a summary item to a session at the next position.
-func (s *SQLiteSessionStore) AddSummary(ctx context.Context, sessionID, summary string, firstKeptEntry int, cost float64) error {
+func (s *SQLiteSessionStore) AddSummary(ctx context.Context, sessionID string, item Item) error {
 	if sessionID == "" {
 		return ErrEmptyID
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO session_items (session_id, position, item_type, summary_text, first_kept_entry, cost)
-		 VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'summary', ?, ?, ?)`,
-		sessionID, sessionID, summary, firstKeptEntry, cost)
+	usageJSON, err := summaryUsageJSON(item.Usage)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO session_items (session_id, position, item_type, summary_text, first_kept_entry, cost, model, usage_json)
+		 VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'summary', ?, ?, ?, ?, ?)`,
+		sessionID, sessionID, item.Summary, item.FirstKeptEntry, item.Cost, item.Model, usageJSON)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// summaryUsageJSON serializes a summary item's usage for the usage_json
+// column; nil usage maps to the empty string so old rows and unbilled
+// summaries look the same on load.
+func summaryUsageJSON(usage *chat.Usage) (string, error) {
+	if usage == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(usage)
+	if err != nil {
+		return "", fmt.Errorf("marshaling summary usage: %w", err)
+	}
+	return string(b), nil
 }
 
 // AddError appends a recorded error item to a session at the next position.

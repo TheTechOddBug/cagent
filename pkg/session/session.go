@@ -91,6 +91,15 @@ type Item struct {
 	// don't produce a regular message (e.g., compaction/summarization).
 	Cost float64 `json:"cost,omitempty"`
 
+	// Model names the model behind Cost for items that don't carry a
+	// regular message (e.g., compaction summaries), so cost-per-model
+	// breakdowns can attribute the spend.
+	Model string `json:"model,omitempty"`
+
+	// Usage records the token usage behind Cost for items that don't
+	// carry a regular message (e.g., compaction summaries).
+	Usage *chat.Usage `json:"usage,omitempty"`
+
 	// liveAttached marks a sub-session item appended by AddLiveSubSession
 	// in this process, i.e. a sub-session that ran live and reported its
 	// own cost through its own TokenUsageEvents. Deliberately unexported

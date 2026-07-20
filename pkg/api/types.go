@@ -244,9 +244,11 @@ type UpdateMessageRequest struct {
 
 // AddSummaryRequest represents a request to add a summary to a session
 type AddSummaryRequest struct {
-	Summary string  `json:"summary"`
-	Tokens  int     `json:"tokens,omitempty"`
-	Cost    float64 `json:"cost,omitempty"`
+	Summary string      `json:"summary"`
+	Tokens  int         `json:"tokens,omitempty"`
+	Cost    float64     `json:"cost,omitempty"`
+	Model   string      `json:"model,omitempty"`
+	Usage   *chat.Usage `json:"usage,omitempty"`
 }
 
 // UpdateSessionTokensRequest represents a request to update session token counts

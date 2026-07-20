@@ -470,23 +470,29 @@ func (e *SessionPlanUpdatedEvent) GetSessionID() string { return e.SessionID }
 type SessionSummaryEvent struct {
 	AgentContext
 
-	Type           string  `json:"type"`
-	SessionID      string  `json:"session_id"`
-	Summary        string  `json:"summary"`
-	FirstKeptEntry int     `json:"first_kept_entry,omitempty"`
-	Cost           float64 `json:"cost,omitempty"`
+	Type           string      `json:"type"`
+	SessionID      string      `json:"session_id"`
+	Summary        string      `json:"summary"`
+	FirstKeptEntry int         `json:"first_kept_entry,omitempty"`
+	Cost           float64     `json:"cost,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	Usage          *chat.Usage `json:"usage,omitempty"`
 }
 
 // SessionSummary builds the event announcing an applied compaction summary.
 // cost is the dollar cost of producing the summary; 0 when nothing was
 // billed (hook-supplied summaries, status-only remote notifications).
-func SessionSummary(sessionID, summary, agentName string, firstKeptEntry int, cost float64) Event {
+// model and usage attribute that cost to the model that generated the
+// summary; empty/nil when no LLM call ran.
+func SessionSummary(sessionID, summary, agentName string, firstKeptEntry int, cost float64, model string, usage *chat.Usage) Event {
 	return &SessionSummaryEvent{
 		Type:           "session_summary",
 		SessionID:      sessionID,
 		Summary:        summary,
 		FirstKeptEntry: firstKeptEntry,
 		Cost:           cost,
+		Model:          model,
+		Usage:          usage,
 		AgentContext:   newAgentContext(agentName),
 	}
 }
