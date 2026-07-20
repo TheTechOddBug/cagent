@@ -368,9 +368,10 @@ func TestSidebar_HandleClickType_HiddenPath_Collapsed(t *testing.T) {
 
 	paddingLeft := m.layoutCfg.PaddingLeft
 
-	// The row after the title must not keep a copyable hit target.
+	// The row after the title must not keep a copyable hit target; with the
+	// path hidden the usage reading moves up into that row instead.
 	result, _ := sb.HandleClickType(paddingLeft+3, m.titleLineCount())
-	assert.Equal(t, ClickNone, result, "a hidden path must not be clickable")
+	assert.Equal(t, ClickUsage, result, "a hidden path must not be clickable; the usage line takes the row")
 
 	result, _ = sb.HandleClickType(paddingLeft+3, 0)
 	assert.Equal(t, ClickTitle, result, "the title stays clickable")

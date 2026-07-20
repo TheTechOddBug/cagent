@@ -152,6 +152,11 @@ func (p *chatPage) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cm
 			return p, cmd
 		}
 
+	case TargetSidebarUsage:
+		if msg.Button == tea.MouseLeft {
+			return p, core.CmdHandler(msgtypes.ShowCostDialogMsg{})
+		}
+
 	case TargetMessages:
 		if !p.messages.IsMouseOnScrollbar(msg.X, msg.Y) {
 			cmd := p.routeMouseEvent(msg, msg.Y)

@@ -115,7 +115,7 @@ type Model interface {
 	ResetStreamTracking()
 	// HandleClick checks if click is on the star or title and returns true if handled
 	HandleClick(x, y int) bool
-	// HandleClickType returns the type of click (star, title, agent, or none).
+	// HandleClickType returns the type of click (see ClickResult).
 	// For ClickAgent, the second return value is the agent name.
 	HandleClickType(x, y int) (ClickResult, string)
 	// IsCollapsed returns whether the sidebar is collapsed
@@ -337,6 +337,11 @@ type model struct {
 
 	// Agent click zones: maps content line index to agent name for click detection
 	agentClickZones map[int]string // content line -> agent name
+	// Token Usage click zone: half-open content-line range [start, end) of the
+	// vertical Token Usage section, recorded while rendering. Empty when the
+	// section is hidden.
+	usageZoneStart int
+	usageZoneEnd   int
 	// agentLineOwners records, per rendered agent-section body line, which agent
 	// emitted it (empty for blank separators). It is produced during agentInfo
 	// rendering so click zones can be registered explicitly rather than inferred
@@ -760,6 +765,7 @@ const (
 	ClickTitle      // Click on the title area (use double-click to edit)
 	ClickWorkingDir // Click on the working directory line
 	ClickAgent      // Click on an agent name in the sidebar
+	ClickUsage      // Click on the token usage / cost reading
 )
 
 // HandleClick checks if click is on the star or title and returns true if it was
@@ -770,7 +776,7 @@ func (m *model) HandleClick(x, y int) bool {
 	return result != ClickNone
 }
 
-// HandleClickType returns what was clicked (star, title, working dir, agent, or nothing).
+// HandleClickType returns what was clicked (see ClickResult).
 // For ClickAgent, the second return value is the agent name.
 func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	// Account for left padding
@@ -800,6 +806,26 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 		vm := m.computeCollapsedViewModel(m.contentWidth(false))
 		wdStartY := vm.titleSectionLines()
 		wdLines := linesNeeded(lipgloss.Width(vm.WorkingDir), vm.ContentWidth)
+
+		// The usage reading either shares the working dir line (right-aligned)
+		// or takes its own line(s) right after it. Mirrors RenderCollapsedView.
+		if vm.UsageSummary != "" {
+			usageWidth := lipgloss.Width(vm.UsageSummary)
+			if vm.WorkingDir != "" && vm.WdAndUsageOnOneLine {
+				if y == wdStartY && adjustedX >= vm.ContentWidth-usageWidth {
+					return ClickUsage, ""
+				}
+			} else {
+				usageStartY := wdStartY
+				if vm.WorkingDir != "" {
+					usageStartY += wdLines
+				}
+				if y >= usageStartY && y < usageStartY+linesNeeded(usageWidth, vm.ContentWidth) {
+					return ClickUsage, ""
+				}
+			}
+		}
+
 		if m.workingDirectory != "" && !m.sectionVisibility.HideSessionPath && y >= wdStartY && y < wdStartY+wdLines {
 			return ClickWorkingDir, ""
 		}
@@ -811,6 +837,12 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	scrollOffset := m.scrollview.ScrollOffset()
 	contentY := y + scrollOffset // Convert viewport Y to content Y
 	titleLines := m.titleLineCount()
+
+	// The scrollbar and its gap are not content: clicks there must reach the
+	// scrollview, not the content click zones.
+	if m.cachedNeedsScrollbar && adjustedX >= m.contentWidth(true) {
+		return ClickNone, ""
+	}
 
 	// Check if click is within the title area
 	if contentY >= verticalStarY && contentY < verticalStarY+titleLines {
@@ -828,6 +860,11 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	// A hidden session path renders no line and must not keep a hit target.
 	if m.workingDirectory != "" && !m.sectionVisibility.HideSessionPath && contentY == verticalStarY+titleLines+1 {
 		return ClickWorkingDir, ""
+	}
+
+	// Check if click is on the Token Usage section
+	if contentY >= m.usageZoneStart && contentY < m.usageZoneEnd {
+		return ClickUsage, ""
 	}
 
 	// Check if click is on an agent name
@@ -1608,8 +1645,12 @@ func (m *model) renderSections(contentWidth int) []string {
 	}
 
 	appendSection(m.sessionInfo(contentWidth))
+	// Track the Token Usage section's line range (title included) so a click
+	// on it can open the cost dialog.
+	m.usageZoneStart, m.usageZoneEnd = 0, 0
 	if !m.sectionVisibility.HideUsage {
-		appendSection(m.tokenUsage(contentWidth))
+		m.usageZoneStart = appendSection(m.tokenUsage(contentWidth))
+		m.usageZoneEnd = len(lines)
 	}
 	appendSection(m.queueSection(contentWidth))
 
