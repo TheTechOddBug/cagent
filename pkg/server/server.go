@@ -196,10 +196,20 @@ func agentsAPIEntry(name string, cfg *latest.Config) (api.Agent, bool) {
 	if len(cfg.Agents) == 0 {
 		return api.Agent{}, false
 	}
+	root := cfg.Agents.First()
+	var commands []string
+	if len(root.Commands) > 0 {
+		commands = make([]string, 0, len(root.Commands))
+		for k := range root.Commands {
+			commands = append(commands, k)
+		}
+		slices.Sort(commands)
+	}
 	return api.Agent{
 		Name:        name,
 		Multi:       len(cfg.Agents) > 1,
-		Description: cfg.Agents.First().Description,
+		Description: root.Description,
+		Commands:    commands,
 	}, true
 }
 

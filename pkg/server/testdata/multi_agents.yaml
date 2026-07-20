@@ -6,6 +6,11 @@ agents:
     instruction: Either talk like a pirate or contradict the user.
     model: openai/gpt-4o
     sub_agents: ["contradict", "pirate"]
+    commands:
+      pirate:
+        description: "Hand off to the pirate sub-agent"
+        agent: pirate
+      contradict: "Contradict me"
 
   pirate:
     description: Pirate
