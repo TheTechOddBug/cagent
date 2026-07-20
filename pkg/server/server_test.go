@@ -40,14 +40,17 @@ func TestServer_ListAgents(t *testing.T) {
 	assert.Contains(t, agents[0].Name, "contradict")
 	assert.Equal(t, "Contrarian viewpoint provider", agents[0].Description)
 	assert.False(t, agents[0].Multi)
+	assert.Empty(t, agents[0].Commands)
 
 	assert.Contains(t, agents[1].Name, "multi_agents")
 	assert.Equal(t, "Multi Agent", agents[1].Description)
 	assert.True(t, agents[1].Multi)
+	assert.Equal(t, []string{"contradict", "pirate"}, agents[1].Commands)
 
 	assert.Contains(t, agents[2].Name, "pirate")
 	assert.Equal(t, "Talk like a pirate", agents[2].Description)
 	assert.False(t, agents[2].Multi)
+	assert.Empty(t, agents[2].Commands)
 }
 
 func TestServer_EmptyList(t *testing.T) {

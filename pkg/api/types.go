@@ -16,9 +16,10 @@ type Message struct {
 
 // Agent represents an agent in the API
 type Agent struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Multi       bool   `json:"multi"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Multi       bool     `json:"multi"`
+	Commands    []string `json:"commands,omitempty"`
 }
 
 // ErrCodeUnknownSession is the [ErrorResponse.Code] for a request that names
