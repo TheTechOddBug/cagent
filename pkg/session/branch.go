@@ -151,7 +151,7 @@ func cloneSessionItem(item Item) (Item, error) {
 		}
 		return Item{SubSession: clonedSub}, nil
 	case item.Summary != "":
-		cloned := Item{Summary: item.Summary, Cost: item.Cost, Model: item.Model}
+		cloned := Item{Summary: item.Summary, FirstKeptEntry: item.FirstKeptEntry, Cost: item.Cost, Model: item.Model}
 		if item.Usage != nil {
 			usageCopy := *item.Usage
 			cloned.Usage = &usageCopy

@@ -221,10 +221,16 @@ func TestCloneSessionItem(t *testing.T) {
 
 	t.Run("summary item clones successfully", func(t *testing.T) {
 		t.Parallel()
-		item := Item{Summary: "test summary"}
+		item := Item{Summary: "test summary", FirstKeptEntry: 3, Cost: 0.01, Model: "gpt-4o-mini", Usage: &chat.Usage{InputTokens: 10}}
 		cloned, err := cloneSessionItem(item)
 		require.NoError(t, err)
 		assert.Equal(t, "test summary", cloned.Summary)
+		assert.Equal(t, 3, cloned.FirstKeptEntry, "the kept-tail boundary must survive branching")
+		assert.InDelta(t, 0.01, cloned.Cost, 1e-9)
+		assert.Equal(t, "gpt-4o-mini", cloned.Model)
+		require.NotNil(t, cloned.Usage)
+		assert.NotSame(t, item.Usage, cloned.Usage, "usage must be deep-copied")
+		assert.Equal(t, int64(10), cloned.Usage.InputTokens)
 	})
 
 	t.Run("error item clones into a distinct pointer", func(t *testing.T) {
