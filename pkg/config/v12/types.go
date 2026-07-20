@@ -1,4 +1,4 @@
-package latest
+package v12
 
 import (
 	"cmp"
@@ -18,7 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/effort"
 )
 
-const Version = "13"
+const Version = "12"
 
 // Config represents the entire configuration file
 type Config struct {
