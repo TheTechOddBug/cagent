@@ -244,11 +244,16 @@ type UpdateMessageRequest struct {
 
 // AddSummaryRequest represents a request to add a summary to a session
 type AddSummaryRequest struct {
-	Summary string      `json:"summary"`
-	Tokens  int         `json:"tokens,omitempty"`
-	Cost    float64     `json:"cost,omitempty"`
-	Model   string      `json:"model,omitempty"`
-	Usage   *chat.Usage `json:"usage,omitempty"`
+	Summary string `json:"summary"`
+	// Tokens is the legacy wire name for FirstKeptEntry, kept so older
+	// clients keep working. Deprecated: use FirstKeptEntry.
+	Tokens int `json:"tokens,omitempty"`
+	// FirstKeptEntry is the index of the first message kept verbatim
+	// during the compaction this summary came from.
+	FirstKeptEntry int         `json:"first_kept_entry,omitempty"`
+	Cost           float64     `json:"cost,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	Usage          *chat.Usage `json:"usage,omitempty"`
 }
 
 // UpdateSessionTokensRequest represents a request to update session token counts

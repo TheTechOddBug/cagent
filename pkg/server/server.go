@@ -15,12 +15,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/docker/docker-agent/pkg/api"
+	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/echolog"
@@ -800,13 +802,51 @@ func (s *Server) addSummary(c echo.Context) error {
 	if req.Summary == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "summary is required")
 	}
+	if err := validateSummaryAttribution(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 
-	item := session.Item{Summary: req.Summary, FirstKeptEntry: req.Tokens, Cost: req.Cost, Model: req.Model, Usage: req.Usage}
+	item := session.Item{
+		Summary: req.Summary,
+		// Older clients send first_kept_entry under the legacy "tokens" name.
+		FirstKeptEntry: cmp.Or(req.FirstKeptEntry, req.Tokens),
+		Cost:           req.Cost,
+		Model:          req.Model,
+		Usage:          req.Usage,
+	}
 	if err := s.sm.AddSummary(c.Request().Context(), sessionID, item); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add summary: %v", err))
 	}
 
 	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
+}
+
+// maxSummaryModelNameLen bounds the model attribution accepted on a summary
+// so a hostile client can't persist arbitrarily large names into the store.
+const maxSummaryModelNameLen = 256
+
+// validateSummaryAttribution sanity-checks the cost-attribution metadata of
+// an AddSummary request and normalizes an all-zero usage to nil so remote
+// summaries look identical to locally generated ones (which only record
+// usage when an LLM call actually ran).
+func validateSummaryAttribution(req *api.AddSummaryRequest) error {
+	if len(req.Model) > maxSummaryModelNameLen {
+		return fmt.Errorf("model name exceeds %d characters", maxSummaryModelNameLen)
+	}
+	for _, r := range req.Model {
+		if unicode.IsControl(r) {
+			return errors.New("model name must not contain control characters")
+		}
+	}
+	if u := req.Usage; u != nil {
+		if u.InputTokens < 0 || u.OutputTokens < 0 || u.CachedInputTokens < 0 || u.CacheWriteTokens < 0 || u.ReasoningTokens < 0 {
+			return errors.New("usage token counts must not be negative")
+		}
+		if *u == (chat.Usage{}) {
+			req.Usage = nil
+		}
+	}
+	return nil
 }
 
 func (s *Server) updateSessionTokens(c echo.Context) error {

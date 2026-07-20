@@ -256,7 +256,9 @@ func RunLLM(ctx context.Context, args LLMArgs) (result *Result, err error) {
 
 // runUsage aggregates the model name and token usage of the messages the
 // summarization run appended past the seeded conversation, so the summary's
-// cost can be attributed to the model that actually served the call.
+// cost can be attributed to the model that actually served the call. When a
+// fallback switches models mid-run, the last model deliberately wins: it is
+// the one that produced the applied summary.
 func runUsage(sess *session.Session, seedLen int) (string, chat.Usage) {
 	var model string
 	var usage chat.Usage
@@ -269,14 +271,7 @@ func runUsage(sess *session.Session, seedLen int) (string, chat.Usage) {
 		if msg.Model != "" {
 			model = msg.Model
 		}
-		if msg.Usage == nil {
-			continue
-		}
-		usage.InputTokens += msg.Usage.InputTokens
-		usage.OutputTokens += msg.Usage.OutputTokens
-		usage.CachedInputTokens += msg.Usage.CachedInputTokens
-		usage.CacheWriteTokens += msg.Usage.CacheWriteTokens
-		usage.ReasoningTokens += msg.Usage.ReasoningTokens
+		usage.Add(msg.Usage)
 	}
 	return model, usage
 }

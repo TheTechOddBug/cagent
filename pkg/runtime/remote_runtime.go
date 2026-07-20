@@ -764,12 +764,12 @@ func (r *RemoteRuntime) UpdateSessionMessage(ctx context.Context, msgID string, 
 	return r.client.UpdateMessage(ctx, r.sessionID, msgID, msg)
 }
 
-// AddSessionSummary adds a summary to the current session on the remote server.
-func (r *RemoteRuntime) AddSessionSummary(ctx context.Context, summary string, tokens int, cost float64) error {
+// AddSessionSummary adds a summary item to the current session on the remote server.
+func (r *RemoteRuntime) AddSessionSummary(ctx context.Context, item session.Item) error {
 	if r.sessionID == "" {
 		return errors.New("no active session")
 	}
-	return r.client.AddSummary(ctx, r.sessionID, summary, tokens, cost)
+	return r.client.AddSummary(ctx, r.sessionID, item)
 }
 
 // UpdateSessionTokens updates token counts for the current session on the remote server.

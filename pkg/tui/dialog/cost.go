@@ -129,11 +129,7 @@ type totalUsage struct {
 
 func (u *totalUsage) add(cost float64, usage *chat.Usage) {
 	u.cost += cost
-	u.InputTokens += usage.InputTokens
-	u.OutputTokens += usage.OutputTokens
-	u.CachedInputTokens += usage.CachedInputTokens
-	u.CacheWriteTokens += usage.CacheWriteTokens
-	u.ReasoningTokens += usage.ReasoningTokens
+	u.Add(usage)
 }
 
 func (u *totalUsage) totalInput() int64 {
