@@ -41,5 +41,5 @@ agents:
     model: anthropic/claude-sonnet-4-5
     description: An assistant configuring its compaction model at the agent level.
     instruction: You are a helpful code reviewer.
-    # Agent-level alternative: same effect, no models section entry needed.
+    # Agent-level alternative: same effect as setting it on the primary model.
     compaction_model: fast

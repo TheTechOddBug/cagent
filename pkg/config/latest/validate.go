@@ -203,6 +203,13 @@ func (a *AgentConfig) validateHarness() error {
 		return nil
 	}
 
+	// Harness agents skip docker-agent's model and compaction resolution: the
+	// harness manages its own context. Reject a setting that would silently be
+	// ignored.
+	if a.CompactionModel != "" {
+		return errors.New("compaction_model cannot be used with a harness; the harness manages its own context compaction")
+	}
+
 	h := a.Harness
 	switch h.Type {
 	case "claude-code", "codex", "pi", "opencode":

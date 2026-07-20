@@ -205,7 +205,8 @@ models:
 ```
 
 The value can be a named entry from the `models` stanza or an inline
-`provider/model` string. When omitted, the primary model compacts.
+`provider/model` string. When omitted, the agent-level `compaction_model` is
+used; when neither is set, the primary model compacts.
 
 If the compaction model has a **smaller context window** than the primary,
 Docker Agent triggers compaction against the smaller window so the summary

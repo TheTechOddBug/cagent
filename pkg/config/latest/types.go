@@ -1106,8 +1106,9 @@ type ModelConfig struct {
 	// session; pointing this at a smaller/faster model makes compaction cheaper
 	// and more reliable without changing the model that runs the conversation.
 	// The value can be a model name from the models section or an inline
-	// "provider/model" spec. When empty, compaction reuses the agent's own
-	// model. If the compaction model has a smaller context window than the
+	// "provider/model" spec. It takes precedence over the agent-level
+	// `compaction_model`; when both are empty, compaction reuses the agent's
+	// own model. If the compaction model has a smaller context window than the
 	// primary, compaction is triggered against the smaller window so the
 	// summary call can always ingest the conversation it must compact.
 	CompactionModel string `json:"compaction_model,omitempty"`

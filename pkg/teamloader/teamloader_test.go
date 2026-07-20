@@ -378,6 +378,36 @@ agents:
 		assert.Equal(t, "openai/gpt-4o-mini", root.CompactionModel().ID().String())
 	})
 
+	t.Run("agent-level inline compaction model", func(t *testing.T) {
+		data := []byte(`agents:
+  root:
+    model: anthropic/claude-sonnet-4-5
+    compaction_model: openai/gpt-4o-mini
+    instruction: test
+`)
+
+		team, err := Load(t.Context(), config.NewBytesSource("compaction.yaml", data), &config.RuntimeConfig{}, withTestProviderRegistry()...)
+		require.NoError(t, err)
+
+		root, err := team.Agent("root")
+		require.NoError(t, err)
+
+		require.NotNil(t, root.CompactionModel())
+		assert.Equal(t, "openai/gpt-4o-mini", root.CompactionModel().ID().String())
+	})
+
+	t.Run("unknown agent-level compaction model fails the load", func(t *testing.T) {
+		data := []byte(`agents:
+  root:
+    model: anthropic/claude-sonnet-4-5
+    compaction_model: typo
+    instruction: test
+`)
+
+		_, err := Load(t.Context(), config.NewBytesSource("compaction.yaml", data), &config.RuntimeConfig{}, withTestProviderRegistry()...)
+		require.ErrorContains(t, err, "compaction model 'typo' not found")
+	})
+
 	t.Run("model-level compaction model overrides agent-level", func(t *testing.T) {
 		data := []byte(`models:
   primary:
