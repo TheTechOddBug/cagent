@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.113.0] - 2026-07-20
+
+This release fixes compaction cost attribution by model, exposes agent command names in the API, and includes internal cleanup of unused code.
+
+## What's New
+- Exposes root-agent command names in the `/api/agents` endpoint
+
+## Bug Fixes
+- Fixes compaction summary costs being attributed to the wrong model — token spend from `compaction_model` is now correctly tracked per model in the cost breakdown
+- Fixes `FirstKeptEntry` not being preserved when branching summary items during compaction
+- Fixes missing `defer` for mutex unlock in the webhook `setRuntime` function
+
+## Technical Changes
+- Removes unused TUI code, including the unreferenced `cmdbatch` and `subscription` packages and an orphaned attachment preview dialog
+### Pull Requests
+
+- [#3757](https://github.com/docker/docker-agent/pull/3757) - docs: update CHANGELOG.md for v1.112.0
+- [#3759](https://github.com/docker/docker-agent/pull/3759) - chore: bump direct Go dependencies
+- [#3760](https://github.com/docker/docker-agent/pull/3760) - fix: attribute compaction summary costs to the model that generated them
+- [#3761](https://github.com/docker/docker-agent/pull/3761) - Enhance the agents API
+- [#3762](https://github.com/docker/docker-agent/pull/3762) - chore: remove unused TUI code
+
+
 ## [v1.112.0] - 2026-07-20
 
 This release adds several new built-in toolsets (git, webhook), budget limits, `.agentsignore` support, expanded Mermaid rendering, image rendering in the TUI, and numerous TUI improvements including per-agent usage details, session browser enhancements, and argument auto-completion for slash commands.
@@ -4937,3 +4960,5 @@ This release improves the terminal user interface with better error handling and
 [v1.111.0]: https://github.com/docker/docker-agent/releases/tag/v1.111.0
 
 [v1.112.0]: https://github.com/docker/docker-agent/releases/tag/v1.112.0
+
+[v1.113.0]: https://github.com/docker/docker-agent/releases/tag/v1.113.0
