@@ -1,10 +1,18 @@
 package image
 
 import (
+	"bytes"
 	"container/list"
+	"encoding/base64"
+	stdimage "image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func resetInlineRegistry() {
@@ -12,6 +20,56 @@ func resetInlineRegistry() {
 	defer inlineRegistry.Unlock()
 	inlineRegistry.entries = make(map[uint32]*list.Element)
 	inlineRegistry.order.Init()
+}
+
+func TestMarkdownReferences(t *testing.T) {
+	t.Parallel()
+
+	refs := MarkdownReferences("before ![chart](./out/chart.png \"result\") and ![photo](<images/my photo.jpg>)\n\n`![not an image](ignored.png)`\n\n```md\n![also ignored](ignored.png)\n```")
+	require.Equal(t, []MarkdownReference{
+		{Alt: "chart", Source: "./out/chart.png", Start: 7, End: 41},
+		{Alt: "photo", Source: "images/my photo.jpg", Start: 46, End: 77},
+	}, refs)
+}
+
+func TestLoadMarkdownReferenceDataURI(t *testing.T) {
+	t.Parallel()
+
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, img))
+	ref := MarkdownReference{
+		Alt:    "generated chart",
+		Source: "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()),
+	}
+
+	inline, ok := LoadMarkdownReference(t.Context(), ref)
+	require.True(t, ok)
+	assert.Equal(t, "generated chart", inline.Name)
+	assert.Equal(t, 2, inline.Width)
+	assert.Equal(t, 1, inline.Height)
+	assert.NotEmpty(t, inline.PNGData)
+}
+
+func TestLoadMarkdownReferenceRejectsLocalSchemes(t *testing.T) {
+	t.Parallel()
+
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 2, 1))
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, img))
+	path := filepath.Join(t.TempDir(), "chart.png")
+	require.NoError(t, os.WriteFile(path, encoded.Bytes(), 0o600))
+
+	for _, source := range []string{"file://" + path, "sandbox://" + path} {
+		_, ok := LoadMarkdownReference(t.Context(), MarkdownReference{Alt: "chart", Source: source})
+		assert.False(t, ok, source)
+	}
+
+	// Bare paths remain supported for agent-generated local images.
+	inline, ok := LoadMarkdownReference(t.Context(), MarkdownReference{Alt: "chart", Source: path})
+	require.True(t, ok)
+	assert.Equal(t, "chart", inline.Name)
 }
 
 func TestInlineRegistryIsBounded(t *testing.T) {

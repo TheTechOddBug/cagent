@@ -812,6 +812,8 @@ func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig 
 		runtime.WithWorkingDir(runConfig.WorkingDir),
 		runtime.WithTracer(otel.Tracer(AppName)),
 		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+		runtime.WithBudget(loadResult.Budget),
+		runtime.WithNamedBudgets(loadResult.Budgets, loadResult.AgentBudgets),
 	}
 	return opts
 }
@@ -1118,6 +1120,10 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		// Merge global permissions into the team's checker
 		if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
 			t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
+		}
+
+		if ignoreRules := permissions.FromAgentsIgnore(f.runConfig.WorkingDir); ignoreRules != nil {
+			t.SetPermissions(permissions.Merge(t.Permissions(), ignoreRules))
 		}
 
 		rtOpts, ctrl, err := f.snapshotRuntimeOpts()

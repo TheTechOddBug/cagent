@@ -150,7 +150,8 @@ type Page interface {
 	// SetSidebarSettings applies sidebar display settings
 	SetSidebarSettings(settings SidebarSettings)
 	// SetLayoutSettings applies layout customization (sidebar position,
-	// section spacing, and section visibility) and relayouts the page.
+	// section spacing, section visibility, and agent info mode) and
+	// relayouts the page.
 	SetLayoutSettings(settings msgtypes.LayoutSettings) tea.Cmd
 	// SetSendMode sets what happens to messages sent while the agent is
 	// working: steer into the ongoing stream or queue until the turn ends.
@@ -387,12 +388,13 @@ func WithCommandParser(p *commands.Parser) PageOption {
 }
 
 // WithLayoutSettings applies initial layout customization (sidebar position,
-// section spacing, and section visibility).
+// section spacing, section visibility, and agent info mode).
 func WithLayoutSettings(settings msgtypes.LayoutSettings) PageOption {
 	return func(p *chatPage) {
 		p.layoutSettings = settings
 		p.sidebar.SetSectionVisibility(sectionVisibility(settings))
 		p.sidebar.SetSectionGap(settings.SectionSpacing.BlankLines())
+		p.sidebar.SetAgentInfoMode(agentInfoMode(settings.SidebarInfoMode))
 	}
 }
 
@@ -413,6 +415,15 @@ func sectionVisibility(settings msgtypes.LayoutSettings) sidebar.SectionVisibili
 		HideTools:       settings.HideTools,
 		HideTodos:       settings.HideTodos,
 	}
+}
+
+// agentInfoMode maps the layout's sidebar info mode to the sidebar's
+// agent-roster renderer selection; empty/unknown values fall back to compact.
+func agentInfoMode(mode msgtypes.SidebarInfoMode) sidebar.AgentInfoMode {
+	if msgtypes.ParseSidebarInfoMode(string(mode)) == msgtypes.InfoModeDetailed {
+		return sidebar.AgentInfoDetailed
+	}
+	return sidebar.AgentInfoCompact
 }
 
 // Init initializes the chat page
@@ -1227,6 +1238,7 @@ func (p *chatPage) SetLayoutSettings(settings msgtypes.LayoutSettings) tea.Cmd {
 	p.layoutSettings = settings
 	p.sidebar.SetSectionVisibility(sectionVisibility(settings))
 	p.sidebar.SetSectionGap(settings.SectionSpacing.BlankLines())
+	p.sidebar.SetAgentInfoMode(agentInfoMode(settings.SidebarInfoMode))
 	if p.width <= 0 || p.height <= 0 {
 		return nil
 	}

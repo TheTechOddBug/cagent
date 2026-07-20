@@ -65,13 +65,37 @@ func (s SectionSpacing) BlankLines() int {
 	}
 }
 
+// SidebarInfoMode identifies how the vertical sidebar's Agents section
+// renders each agent.
+type SidebarInfoMode string
+
+const (
+	// InfoModeCompact is the default two-line-per-agent roster.
+	InfoModeCompact SidebarInfoMode = "compact"
+	// InfoModeDetailed renders each agent as a mini-card with labeled
+	// Effort / Context / Cost metrics.
+	InfoModeDetailed SidebarInfoMode = "detailed"
+)
+
+// ParseSidebarInfoMode normalizes a raw info mode string, falling back to
+// InfoModeCompact for empty or unknown values so persisted configs can never
+// break the layout.
+func ParseSidebarInfoMode(raw string) SidebarInfoMode {
+	if SidebarInfoMode(raw) == InfoModeDetailed {
+		return InfoModeDetailed
+	}
+	return InfoModeCompact
+}
+
 // LayoutSettings describes the user-customizable TUI layout: where the
-// sidebar sits, which of its optional sections are rendered, and how much
-// space separates them. The zero value is the default layout (sidebar on
-// the right, everything visible, normal spacing).
+// sidebar sits, which of its optional sections are rendered, how much
+// space separates them, and how the Agents section renders each agent.
+// The zero value is the default layout (sidebar on the right, everything
+// visible, normal spacing, compact agent info).
 type LayoutSettings struct {
 	SidebarPosition SidebarPosition
 	SectionSpacing  SectionSpacing
+	SidebarInfoMode SidebarInfoMode
 	HideSessionPath bool
 	HideUsage       bool
 	HideAgents      bool

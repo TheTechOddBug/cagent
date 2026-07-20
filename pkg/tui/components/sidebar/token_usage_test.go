@@ -205,14 +205,19 @@ func TestTokenUsageSummary_MultipleSessions_ShowsActiveSessionTokens(t *testing.
 	assert.Contains(t, summary, "(30%)")
 }
 
-func TestTokenUsageSummary_Empty(t *testing.T) {
+// TestTokenUsageSummary_NoUsageYet_ShowsZeroLine verifies the collapsed band
+// carries the usage line from startup (before any message is sent), matching
+// the vertical Token Usage tab (#top-band startup parity).
+func TestTokenUsageSummary_NoUsageYet_ShowsZeroLine(t *testing.T) {
 	t.Parallel()
 
 	sess := session.New()
 	sessionState := service.NewSessionState(sess)
 	m := New(t.Context(), sessionState).(*model)
 
-	assert.Empty(t, m.tokenUsageSummary())
+	summary := ansi.Strip(m.tokenUsageSummary())
+	assert.Contains(t, summary, styles.TokenGlyph+" 0")
+	assert.Contains(t, summary, "$0.00")
 }
 
 // TestTokenUsageTab_ShowsTokenGlyph verifies the vertical Token Usage tab line

@@ -309,6 +309,26 @@ type LocalRuntime struct {
 	// exactly ONE message after the model stops and stop-hooks have run.
 	followUpQueue MessageQueue
 
+	// budgetCfg is the run-wide budget (nil when unset), budgetsCfg the
+	// named budget definitions, and agentBudgets the names each agent
+	// declared. All three are immutable templates; budget below is the
+	// live accumulator built from them.
+	budgetCfg    *latest.BudgetConfig
+	budgetsCfg   map[string]latest.BudgetConfig
+	agentBudgets map[string][]string
+
+	// budgetMu guards budget and budgetStarted. The first root stream
+	// installs the trackers and every later one reuses them, so a budget
+	// spans the session rather than resetting on each message; sub-sessions
+	// read the same set, so delegated work spends against the root run's
+	// wallets rather than getting a fresh allowance each.
+	budgetMu sync.Mutex
+	budget   *budgetSet
+	// budgetStarted distinguishes "not built yet" from "built, and there
+	// was nothing to budget" — without it a nil budget would be rebuilt on
+	// every message, and the reset bug would come back for unbudgeted runs.
+	budgetStarted bool
+
 	// activeRootStreams tracks top-level RunStream loops. Recalls use this to
 	// preserve mid-turn steering while still waking the embedder once the parent
 	// stream has gone idle.
@@ -532,6 +552,31 @@ func WithMaxOverflowCompactions(n int) Opt {
 			n = 0
 		}
 		r.maxOverflowCompactions = n
+	}
+}
+
+// WithBudget sets the run-wide budget: the cost, token and wall-clock
+// ceilings that stop a run once crossed, regardless of which agent spends.
+// A nil or all-zero config leaves runs unbudgeted, which is the default.
+func WithBudget(cfg *latest.BudgetConfig) Opt {
+	return func(r *LocalRuntime) {
+		if cfg.IsZero() {
+			return
+		}
+		r.budgetCfg = cfg
+	}
+}
+
+// WithNamedBudgets registers the manifest's named budget definitions and
+// the budget names each agent declared. A named budget referenced by
+// several agents is one shared pot, not a copy per agent.
+func WithNamedBudgets(defs map[string]latest.BudgetConfig, agentBudgets map[string][]string) Opt {
+	return func(r *LocalRuntime) {
+		if len(defs) == 0 || len(agentBudgets) == 0 {
+			return
+		}
+		r.budgetsCfg = defs
+		r.agentBudgets = agentBudgets
 	}
 }
 
@@ -1139,6 +1184,7 @@ func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
 		// earlier if Start failed.
 		status.State = lifecycleStateForUnsupervised(ts)
 	}
+	_, status.Restartable = tools.As[tools.Restartable](ts)
 	status.Name = nameFor(ts, status.Description)
 	return status
 }

@@ -364,19 +364,24 @@ func (m *appModel) handleSwitchAgent(agentName string) (tea.Model, tea.Cmd) {
 // handleShowAgentDetails opens the read-only agent-details dialog for the named
 // agent, looking it up in the available-agents roster. The agent's latest
 // token-usage snapshot (if it has run) rides along so the dialog can show its
-// context usage.
+// context usage, as does its cumulative attributed cost (if any).
 func (m *appModel) handleShowAgentDetails(agentName string) (tea.Model, tea.Cmd) {
 	for _, agent := range m.sessionState.AvailableAgents() {
-		if agent.Name == agentName {
-			cfg := m.application.AgentConfigInfo(m.ctx(), agentName)
-			var usage *runtime.Usage
-			if u, ok := m.sessionState.AgentUsage(agentName); ok {
-				usage = &u
-			}
-			return m, core.CmdHandler(dialog.OpenDialogMsg{
-				Model: dialog.NewAgentDetailsDialog(agent, cfg, usage),
-			})
+		if agent.Name != agentName {
+			continue
 		}
+		cfg := m.application.AgentConfigInfo(m.ctx(), agentName)
+		var usage *runtime.Usage
+		if u, ok := m.sessionState.AgentUsage(agentName); ok {
+			usage = &u
+		}
+		var cost *float64
+		if c, ok := m.sessionState.AgentCost(agentName); ok {
+			cost = &c
+		}
+		return m, core.CmdHandler(dialog.OpenDialogMsg{
+			Model: dialog.NewAgentDetailsDialog(agent, cfg, usage, cost),
+		})
 	}
 	return m, nil
 }
@@ -933,6 +938,7 @@ func (m *appModel) handleApplySettings(msg messages.ApplySettingsMsg) (tea.Model
 func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings) (tea.Model, tea.Cmd) {
 	settings.SidebarPosition = messages.ParseSidebarPosition(string(settings.SidebarPosition))
 	settings.SectionSpacing = messages.ParseSectionSpacing(string(settings.SectionSpacing))
+	settings.SidebarInfoMode = messages.ParseSidebarInfoMode(string(settings.SidebarInfoMode))
 	m.layoutSettings = settings
 
 	var cmds []tea.Cmd
@@ -951,6 +957,7 @@ func layoutSettingsFromConfig(l userconfig.LayoutSettings) messages.LayoutSettin
 	return messages.LayoutSettings{
 		SidebarPosition: messages.ParseSidebarPosition(l.SidebarPosition),
 		SectionSpacing:  messages.ParseSectionSpacing(l.SectionSpacing),
+		SidebarInfoMode: messages.ParseSidebarInfoMode(l.SidebarInfoMode),
 		HideSessionPath: l.HideSessionPath,
 		HideUsage:       l.HideUsage,
 		HideAgents:      l.HideAgents,
@@ -995,7 +1002,10 @@ func savePreferences(p messages.Preferences) error {
 		}
 
 		layout := p.Layout
-		if layout == (messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal}) {
+		// Normalize before the default comparison so an unnormalized zero
+		// value ("") and the explicit default ("compact") both clear the entry.
+		layout.SidebarInfoMode = messages.ParseSidebarInfoMode(string(layout.SidebarInfoMode))
+		if layout == (messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal, SidebarInfoMode: messages.InfoModeCompact}) {
 			s.Layout = nil
 			return nil
 		}
@@ -1007,8 +1017,12 @@ func savePreferences(p messages.Preferences) error {
 		if layout.SectionSpacing == messages.SpacingNormal {
 			spacing = ""
 		}
+		infoMode := string(layout.SidebarInfoMode)
+		if layout.SidebarInfoMode == messages.InfoModeCompact {
+			infoMode = ""
+		}
 		s.Layout = &userconfig.LayoutSettings{
-			SidebarPosition: position, SectionSpacing: spacing,
+			SidebarPosition: position, SectionSpacing: spacing, SidebarInfoMode: infoMode,
 			HideSessionPath: layout.HideSessionPath, HideUsage: layout.HideUsage,
 			HideAgents: layout.HideAgents, HideTools: layout.HideTools, HideTodos: layout.HideTodos,
 		}

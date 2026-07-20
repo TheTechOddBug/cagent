@@ -1720,9 +1720,9 @@ func (m *model) AppendToLastMessage(agentName, content string) tea.Cmd {
 	// Append to existing assistant message from same agent
 	if lastMsg.Type == types.MessageTypeAssistant && lastMsg.Sender == agentName {
 		lastMsg.Content += content
-		m.views[lastIdx].(message.Model).SetMessage(lastMsg)
+		cmd := m.views[lastIdx].(message.Model).SetMessage(lastMsg)
 		m.invalidateItem(lastIdx)
-		return nil
+		return cmd
 	}
 
 	return m.addMessage(types.Agent(types.MessageTypeAssistant, agentName, content))

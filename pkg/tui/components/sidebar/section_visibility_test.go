@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,6 +173,28 @@ func TestCollapsedInfoLine_ShowsAgentsToolsTodos(t *testing.T) {
 	assert.NotEmpty(t, vm.InfoLine, "band view model carries the info line")
 }
 
+// TestCollapsedInfoLine_ShowsTeamRoster verifies the band lists every team
+// agent by name (not a bare "+N" count), so a team run keeps its roster
+// visible when the sidebar sits at the top or bottom.
+func TestCollapsedInfoLine_ShowsTeamRoster(t *testing.T) {
+	t.Parallel()
+
+	s := newTestSidebar(t)
+	s.sessionState.SetCurrentAgentName("root")
+	s.SetTeamInfo([]runtime.AgentDetails{
+		{Name: "root", Provider: "openai", Model: "gpt-4"},
+		{Name: "planner", Provider: "openai", Model: "gpt-4"},
+		{Name: "reviewer", Provider: "openai", Model: "gpt-4"},
+	})
+	_ = s.SetAgentInfo("root", "openai/gpt-4", "")
+
+	info := ansi.Strip(s.collapsedInfoLine(120))
+	assert.Contains(t, info, "▶ root openai/gpt-4", "current agent leads with its model")
+	assert.Contains(t, info, "planner")
+	assert.Contains(t, info, "reviewer")
+	assert.NotContains(t, info, "+2", "roster names replace the bare count")
+}
+
 func TestCollapsedInfoLine_HonorsVisibility(t *testing.T) {
 	t.Parallel()
 
@@ -239,10 +262,19 @@ func TestRenderSections_SectionGapKeepsAgentClickZones(t *testing.T) {
 	lines := s.renderSections(40)
 
 	require.NotEmpty(t, s.agentClickZones)
+	zonesByAgent := map[string][]int{}
 	for lineIdx, agentName := range s.agentClickZones {
 		require.Less(t, lineIdx, len(lines))
-		assert.Contains(t, ansi.Strip(lines[lineIdx-1])+ansi.Strip(lines[lineIdx]), agentName,
-			"click zone %d must map onto a line of agent %q", lineIdx, agentName)
+		zonesByAgent[agentName] = append(zonesByAgent[agentName], lineIdx)
+	}
+	for agentName, zone := range zonesByAgent {
+		slices.Sort(zone)
+		assert.Containsf(t, ansi.Strip(lines[zone[0]]), agentName,
+			"the first zone line of agent %q must carry its name", agentName)
+		for i := 1; i < len(zone); i++ {
+			assert.Equalf(t, zone[0]+i, zone[i],
+				"agent %q's card zones must be contiguous", agentName)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/feedback"
+	"github.com/docker/docker-agent/pkg/tools"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
 	"github.com/docker/docker-agent/pkg/tui/core"
@@ -26,6 +29,18 @@ type Category struct {
 	Commands []Item
 }
 
+// ArgumentCandidate is one completable value for a command's argument,
+// e.g. a toolset name for /toolset-restart. It is intentionally free of any
+// completion-UI or app-domain types so pkg/tui/commands stays decoupled from
+// both pkg/tui/components/completion and pkg/app.
+type ArgumentCandidate struct {
+	Label       string
+	Description string
+	// Disabled marks a candidate that is shown for context but cannot be
+	// submitted (e.g. a non-restartable toolset for /toolset-restart).
+	Disabled bool
+}
+
 // Item represents a single command in the palette
 type Item struct {
 	ID           string
@@ -38,6 +53,11 @@ type Item struct {
 	// Immediate marks commands that should run as soon as they are submitted
 	// instead of being treated as ordinary queued chat input.
 	Immediate bool
+	// CompleteArgument, when set, returns the candidates for this command's
+	// argument. Called lazily at completion-popup-open time so results
+	// reflect current runtime state (e.g. toolset lifecycle). Nil for
+	// commands with no argument completion.
+	CompleteArgument func() []ArgumentCandidate
 }
 
 func builtInSessionCommands() []Item {
@@ -389,7 +409,7 @@ func builtInSettingsCommands() []Item {
 	return []Item{
 		{
 			ID:           "settings.open",
-			Label:        "Preferences",
+			Label:        "Settings",
 			SlashCommand: "/settings",
 			Description:  "Manage appearance, behavior, and notification preferences",
 			Category:     "Settings",
@@ -577,6 +597,142 @@ func newMCPPromptItem(promptName string, promptInfo mcptools.PromptInfo) Item {
 	}
 }
 
+// toolsetStatusSource is the minimal surface toolsetRestartCandidates needs.
+// *app.App satisfies it; tests can supply a stub instead of constructing a
+// full application.
+type toolsetStatusSource interface {
+	CurrentAgentToolsetStatuses() []tools.ToolsetStatus
+}
+
+// toolsetRestartCandidates returns one ArgumentCandidate per toolset of the
+// current agent, in declaration order, deduplicated by name (preferring the
+// restartable entry when duplicate names disagree — display names are not
+// guaranteed unique, mirroring runtime.RestartToolset's own matching).
+// Non-restartable toolsets are marked Disabled rather than omitted, so the
+// popup teaches users the full toolset inventory and why a restart isn't
+// offered for some of them.
+func toolsetRestartCandidates(source toolsetStatusSource) []ArgumentCandidate {
+	statuses := source.CurrentAgentToolsetStatuses()
+	byName := make(map[string]tools.ToolsetStatus, len(statuses))
+	order := make([]string, 0, len(statuses))
+	for _, s := range statuses {
+		if s.Name == "" {
+			continue
+		}
+		if existing, ok := byName[s.Name]; !ok {
+			byName[s.Name] = s
+			order = append(order, s.Name)
+		} else if !existing.Restartable && s.Restartable {
+			byName[s.Name] = s
+		}
+	}
+
+	candidates := make([]ArgumentCandidate, 0, len(order))
+	for _, name := range order {
+		s := byName[name]
+		candidates = append(candidates, ArgumentCandidate{
+			Label:       s.Name,
+			Description: cmp.Or(s.Kind, "Built-in") + " · " + s.State.String(),
+			Disabled:    !s.Restartable,
+		})
+	}
+	return candidates
+}
+
+// attachToolsetRestartCompletion wires the toolset-name argument completer
+// onto the /toolset-restart item. Attached post-hoc (rather than inline in
+// builtInSessionCommands) so that function stays free of any status-source
+// dependency.
+func attachToolsetRestartCompletion(items []Item, source toolsetStatusSource) {
+	for i := range items {
+		if items[i].ID != "session.toolset.restart" {
+			continue
+		}
+		items[i].CompleteArgument = func() []ArgumentCandidate {
+			return toolsetRestartCandidates(source)
+		}
+		return
+	}
+}
+
+// effortLevelsSource is the minimal surface effortCandidates needs. *app.App
+// satisfies it; tests can supply a stub instead of constructing a full
+// application.
+type effortLevelsSource interface {
+	CurrentAgentThinkingLevels(ctx context.Context) []effort.Level
+}
+
+// effortCandidates returns one ArgumentCandidate per thinking-effort level
+// the current agent's active model supports, in the source's canonical
+// order. Unlike toolsetRestartCandidates, unsupported levels are never
+// listed (let alone Disabled): SetAgentThinkingLevel hard-rejects any level
+// outside this set, so offering it would complete-then-fail. A source with
+// no resolvable levels (remote runtime, non-reasoning model) yields no
+// candidates, and the popup simply doesn't open.
+func effortCandidates(ctx context.Context, source effortLevelsSource) []ArgumentCandidate {
+	levels := source.CurrentAgentThinkingLevels(ctx)
+	candidates := make([]ArgumentCandidate, 0, len(levels))
+	for _, level := range levels {
+		candidates = append(candidates, ArgumentCandidate{Label: string(level)})
+	}
+	return candidates
+}
+
+// attachEffortCompletion wires the effort-level argument completer onto the
+// /effort item. Attached post-hoc (rather than inline in
+// builtInSessionCommands) so that function stays free of any
+// effort-levels-source dependency. ctx is the long-lived TUI context, closed
+// over by the completer so it can re-resolve the model on every call.
+func attachEffortCompletion(items []Item, ctx context.Context, source effortLevelsSource) {
+	for i := range items {
+		if items[i].ID != "session.effort" {
+			continue
+		}
+		items[i].CompleteArgument = func() []ArgumentCandidate {
+			return effortCandidates(ctx, source)
+		}
+		return
+	}
+}
+
+// attachedFilesSource is the minimal surface dropCandidates needs. *app.App
+// satisfies it; tests can supply a stub instead of constructing a full
+// application.
+type attachedFilesSource interface {
+	AttachedFiles() []string
+}
+
+// dropCandidates returns one ArgumentCandidate per file currently attached to
+// the session, in attachment order. Labels are the exact recorded (absolute)
+// paths: completing them hits the exact-match branch of resolveAttachedFile,
+// and paths containing spaces stay safe because the completion Value carries
+// the full command line, not just the label. Every attached file is
+// droppable, so Disabled never applies here.
+func dropCandidates(source attachedFilesSource) []ArgumentCandidate {
+	attached := source.AttachedFiles()
+	candidates := make([]ArgumentCandidate, 0, len(attached))
+	for _, path := range attached {
+		candidates = append(candidates, ArgumentCandidate{Label: path})
+	}
+	return candidates
+}
+
+// attachDropCompletion wires the attached-file argument completer onto the
+// /drop item. Attached post-hoc (rather than inline in
+// builtInSessionCommands) so that function stays free of any
+// attached-files-source dependency.
+func attachDropCompletion(items []Item, source attachedFilesSource) {
+	for i := range items {
+		if items[i].ID != "session.drop" {
+			continue
+		}
+		items[i].CompleteArgument = func() []ArgumentCandidate {
+			return dropCandidates(source)
+		}
+		return
+	}
+}
+
 // BuildCommandCategories builds the list of command categories for the command palette
 func BuildCommandCategories(ctx context.Context, application *app.App) []Category {
 	// Get session commands and filter based on model capabilities
@@ -584,6 +740,9 @@ func BuildCommandCategories(ctx context.Context, application *app.App) []Categor
 	if !application.SnapshotsEnabled() {
 		sessionCommands = removeByIDs(sessionCommands, snapshotCommandIDs)
 	}
+	attachToolsetRestartCompletion(sessionCommands, application)
+	attachEffortCompletion(sessionCommands, ctx, application)
+	attachDropCompletion(sessionCommands, application)
 
 	categories := []Category{
 		{

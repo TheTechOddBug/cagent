@@ -1,7 +1,9 @@
 package message
 
 import (
+	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/markdown"
 	"github.com/docker/docker-agent/pkg/tui/components/spinner"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
+	tuiimage "github.com/docker/docker-agent/pkg/tui/image"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
@@ -23,7 +26,7 @@ const (
 type Model interface {
 	layout.Model
 	layout.Sizeable
-	SetMessage(msg *types.Message)
+	SetMessage(msg *types.Message) tea.Cmd
 	SetSelected(selected bool)
 	SetHovered(hovered bool)
 	CodeBlocks() []markdown.CodeBlock
@@ -77,6 +80,23 @@ type messageModel struct {
 	// dominates a long session, and they are not worth keeping for messages
 	// that are unlikely to be re-rendered hot.
 	finalized bool
+
+	markdownImages  map[string]tuiimage.Inline
+	loadingImages   map[string]bool
+	markdownImageID int
+}
+
+type markdownImagesLoadedMsg struct {
+	target    *messageModel
+	requested []tuiimage.MarkdownReference
+	images    map[string]tuiimage.Inline
+}
+
+type markdownImageRenderedMsg struct{}
+
+type markdownImagePlaceholder struct {
+	token string
+	lines []string
 }
 
 // renderCache stores the most recent Render result keyed by the inputs that
@@ -93,6 +113,7 @@ type renderCache struct {
 	editable  bool
 	sameAgent bool
 	result    string
+	imageID   int
 }
 
 // New creates a new message view
@@ -111,13 +132,17 @@ func New(msg, previous *types.Message) *messageModel {
 
 // Init initializes the message view
 func (mv *messageModel) Init() tea.Cmd {
+	var cmds []tea.Cmd
 	if mv.message.Type == types.MessageTypeSpinner || mv.message.Type == types.MessageTypeLoading {
-		return mv.spinner.Init()
+		cmds = append(cmds, mv.spinner.Init())
 	}
-	return nil
+	if cmd := mv.loadMarkdownImages(mv.message); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
 }
 
-func (mv *messageModel) SetMessage(msg *types.Message) {
+func (mv *messageModel) SetMessage(msg *types.Message) tea.Cmd {
 	// Un-finalize when the underlying message is changed (e.g. streaming
 	// resumes into this view). Finalize is meant for views that have
 	// permanently lost their actively-streaming status; mutating the message
@@ -133,6 +158,38 @@ func (mv *messageModel) SetMessage(msg *types.Message) {
 	}
 	mv.message = msg
 	mv.renderCache.valid = false
+	return mv.loadMarkdownImages(msg)
+}
+
+func (mv *messageModel) loadMarkdownImages(msg *types.Message) tea.Cmd {
+	if msg == nil || msg.Type != types.MessageTypeAssistant {
+		return nil
+	}
+	refs := tuiimage.MarkdownReferences(msg.Content)
+	pending := make([]tuiimage.MarkdownReference, 0, len(refs))
+	if mv.loadingImages == nil {
+		mv.loadingImages = make(map[string]bool)
+	}
+	for _, ref := range refs {
+		if _, loaded := mv.markdownImages[ref.Source]; loaded || mv.loadingImages[ref.Source] {
+			continue
+		}
+		mv.loadingImages[ref.Source] = true
+		pending = append(pending, ref)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	return func() tea.Msg {
+		loaded := make(map[string]tuiimage.Inline)
+		for _, ref := range pending {
+			if image, ok := tuiimage.LoadMarkdownReference(context.Background(), ref); ok {
+				loaded[ref.Source] = image
+			}
+		}
+		return markdownImagesLoadedMsg{target: mv, requested: pending, images: loaded}
+	}
 }
 
 func (mv *messageModel) SetSelected(selected bool) {
@@ -151,6 +208,23 @@ func (mv *messageModel) SetHovered(hovered bool) {
 
 // Update handles messages and updates the message view state
 func (mv *messageModel) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+	if loaded, ok := msg.(markdownImagesLoadedMsg); ok && loaded.target == mv {
+		// Unmark failed URLs so a later SetMessage can retry them.
+		for _, ref := range loaded.requested {
+			if _, success := loaded.images[ref.Source]; !success {
+				delete(mv.loadingImages, ref.Source)
+			}
+		}
+		if len(loaded.images) > 0 {
+			if mv.markdownImages == nil {
+				mv.markdownImages = make(map[string]tuiimage.Inline)
+			}
+			maps.Copy(mv.markdownImages, loaded.images)
+			mv.markdownImageID++
+			mv.renderCache.valid = false
+		}
+		return mv, func() tea.Msg { return markdownImageRenderedMsg{} }
+	}
 	if mv.message.Type == types.MessageTypeSpinner || mv.message.Type == types.MessageTypeLoading {
 		s, cmd := mv.spinner.Update(msg)
 		mv.spinner = s.(spinner.Spinner)
@@ -214,7 +288,8 @@ func (mv *messageModel) Render(width int) string {
 			c.expanded == mv.expanded &&
 			c.editable == (msg.SessionPosition != nil) &&
 			c.content == msg.Content &&
-			c.sameAgent == mv.sameAgentAsPrevious(msg) {
+			c.sameAgent == mv.sameAgentAsPrevious(msg) &&
+			c.imageID == mv.markdownImageID {
 			return c.result
 		}
 	}
@@ -233,6 +308,7 @@ func (mv *messageModel) Render(width int) string {
 			editable:  msg.SessionPosition != nil,
 			sameAgent: mv.sameAgentAsPrevious(msg),
 			result:    result,
+			imageID:   mv.markdownImageID,
 		}
 	}
 	return result
@@ -315,11 +391,13 @@ func (mv *messageModel) render(width int) string {
 		}
 
 		innerRenderWidth := width - messageStyle.GetHorizontalFrameSize()
-		rendered, codeBlocks, err := mv.renderAssistantMarkdown(msg.Content, innerRenderWidth)
+		content, imagePlaceholders := mv.markdownImagePlaceholders(msg.Content, innerRenderWidth)
+		rendered, codeBlocks, err := mv.renderAssistantMarkdown(content, innerRenderWidth)
 		if err != nil {
-			rendered = msg.Content
+			rendered = content
 			codeBlocks = nil
 		}
+		rendered, codeBlocks = replaceMarkdownImagePlaceholders(rendered, codeBlocks, imagePlaceholders)
 
 		var prefix string
 		if !mv.sameAgentAsPrevious(msg) {
@@ -394,6 +472,83 @@ func (mv *messageModel) render(width int) string {
 	default:
 		return msg.Content
 	}
+}
+
+func (mv *messageModel) markdownImagePlaceholders(content string, width int) (string, []markdownImagePlaceholder) {
+	refs := tuiimage.MarkdownReferences(content)
+	var output strings.Builder
+	placeholders := make([]markdownImagePlaceholder, 0, len(refs))
+	cursor := 0
+	for i, ref := range refs {
+		image, loaded := mv.markdownImages[ref.Source]
+		if !loaded || ref.Start < cursor || ref.End <= ref.Start {
+			continue
+		}
+		markerLines := tuiimage.RenderMarkers(image, width)
+		if len(markerLines) == 0 {
+			continue
+		}
+
+		name := ref.Alt
+		if name == "" {
+			name = image.Name
+		}
+		lines := make([]string, 0, len(markerLines)+1)
+		if name != "" {
+			lines = append(lines, "  "+styles.MutedStyle.Render(name))
+		}
+		lines = append(lines, markerLines...)
+		token := fmt.Sprintf("CAGENTIMAGEPLACEHOLDER%dTOKEN", i)
+
+		output.WriteString(content[cursor:ref.Start])
+		output.WriteString("\n\n" + token + "\n\n")
+		cursor = ref.End
+		placeholders = append(placeholders, markdownImagePlaceholder{token: token, lines: lines})
+	}
+	if len(placeholders) == 0 {
+		return content, nil
+	}
+	output.WriteString(content[cursor:])
+	return output.String(), placeholders
+}
+
+func replaceMarkdownImagePlaceholders(rendered string, codeBlocks []markdown.CodeBlock, placeholders []markdownImagePlaceholder) (string, []markdown.CodeBlock) {
+	if len(placeholders) == 0 {
+		return rendered, codeBlocks
+	}
+	byToken := make(map[string][]string, len(placeholders))
+	for _, placeholder := range placeholders {
+		byToken[placeholder.token] = placeholder.lines
+	}
+
+	lines := strings.Split(rendered, "\n")
+	result := make([]string, 0, len(lines))
+	type lineShift struct {
+		line  int
+		delta int
+	}
+	var shifts []lineShift
+	for lineIndex, line := range lines {
+		token := strings.TrimSpace(ansi.Strip(line))
+		replacement, ok := byToken[token]
+		if !ok {
+			result = append(result, line)
+			continue
+		}
+		result = append(result, replacement...)
+		shifts = append(shifts, lineShift{line: lineIndex, delta: len(replacement) - 1})
+	}
+	for i := range codeBlocks {
+		// Compare against the pre-replacement line so later shifts don't
+		// re-match against already-adjusted positions.
+		orig := codeBlocks[i].Line
+		for _, shift := range shifts {
+			if shift.line < orig {
+				codeBlocks[i].Line += shift.delta
+			}
+		}
+	}
+	return strings.Join(result, "\n"), codeBlocks
 }
 
 // renderAssistantMarkdown renders streamed assistant content using a per-message

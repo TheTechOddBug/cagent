@@ -25,10 +25,17 @@ func TestSettingsDialogNormalizesValues(t *testing.T) {
 
 	d := newTestSettingsDialog(t, messages.LayoutSettings{})
 	assert.Equal(t, messages.SidebarRight, d.current.Layout.SidebarPosition)
+	assert.Equal(t, messages.InfoModeCompact, d.current.Layout.SidebarInfoMode,
+		"empty info mode normalizes to compact")
 
-	raw, ok := NewSettingsDialog(messages.Preferences{SendMode: messages.SendMode("bogus")}, true).(*settingsDialog)
+	raw, ok := NewSettingsDialog(messages.Preferences{
+		SendMode: messages.SendMode("bogus"),
+		Layout:   messages.LayoutSettings{SidebarInfoMode: messages.SidebarInfoMode("bogus")},
+	}, true).(*settingsDialog)
 	require.True(t, ok)
 	assert.Equal(t, messages.SendModeSteer, raw.current.SendMode, "unknown send mode normalizes to steer")
+	assert.Equal(t, messages.InfoModeCompact, raw.current.Layout.SidebarInfoMode,
+		"unknown info mode normalizes to compact")
 }
 
 func TestSettingsDialogNavigation(t *testing.T) {
@@ -45,6 +52,9 @@ func TestSettingsDialogNavigation(t *testing.T) {
 
 	d.Update(down)
 	require.Equal(t, rowSpacing, d.selected[tabAppearance])
+
+	d.Update(down)
+	require.Equal(t, rowInfoMode, d.selected[tabAppearance])
 
 	d.Update(down)
 	require.Equal(t, rowSessionPath, d.selected[tabAppearance])
@@ -89,7 +99,11 @@ func TestSettingsDialogWithoutVisualsTab(t *testing.T) {
 	view := ansi.Strip(d.View())
 	assert.Contains(t, view, "Appearance")
 	assert.NotContains(t, view, "Sidebar position")
+	assert.NotContains(t, view, "Sidebar info mode")
 	assert.Contains(t, view, "Split diff view")
+
+	assert.False(t, d.selectable(tabAppearance, rowInfoMode),
+		"the info mode row is not selectable without a sidebar")
 }
 
 func TestSettingsDialogCyclesPositionAndPreviews(t *testing.T) {
@@ -137,6 +151,64 @@ func TestSettingsDialogCyclesSpacingAndPreviews(t *testing.T) {
 	d.current.Layout.SectionSpacing = messages.SpacingNormal
 	d.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	assert.Equal(t, messages.SpacingCompact, d.current.Layout.SectionSpacing)
+}
+
+func TestSettingsDialogCyclesInfoModeAndPreviews(t *testing.T) {
+	t.Parallel()
+
+	d := newTestSettingsDialog(t, messages.LayoutSettings{})
+	require.Equal(t, messages.InfoModeCompact, d.current.Layout.SidebarInfoMode,
+		"the info mode starts at the compact default")
+	d.selected[tabAppearance] = rowInfoMode
+
+	_, cmd := d.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.NotNil(t, cmd)
+	msgs := collectMsgs(cmd)
+	require.Len(t, msgs, 1)
+	preview, ok := msgs[0].(messages.PreviewLayoutMsg)
+	require.True(t, ok, "changing the info mode must emit a live preview")
+	assert.Equal(t, messages.InfoModeDetailed, preview.Layout.SidebarInfoMode)
+
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	assert.Equal(t, messages.InfoModeCompact, d.current.Layout.SidebarInfoMode, "cycling wraps around")
+
+	_, cmd = d.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	assert.Equal(t, messages.InfoModeDetailed, d.current.Layout.SidebarInfoMode, "cycling backwards wraps around")
+	msgs = collectMsgs(cmd)
+	require.Len(t, msgs, 1)
+	_, ok = msgs[0].(messages.PreviewLayoutMsg)
+	assert.True(t, ok, "cycling backwards must also emit a live preview")
+}
+
+func TestSettingsDialogAppliesInfoMode(t *testing.T) {
+	t.Parallel()
+
+	d := newTestSettingsDialog(t, messages.LayoutSettings{})
+	d.selected[tabAppearance] = rowInfoMode
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	_, cmd := d.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	msgs := collectMsgs(cmd)
+	require.Len(t, msgs, 2, "apply must close the dialog and emit the settings")
+	applied, ok := msgs[1].(messages.ApplySettingsMsg)
+	require.True(t, ok)
+	assert.Equal(t, messages.InfoModeDetailed, applied.Preferences.Layout.SidebarInfoMode)
+}
+
+func TestSettingsDialogEscapeRestoresInfoMode(t *testing.T) {
+	t.Parallel()
+
+	d := newTestSettingsDialog(t, messages.LayoutSettings{})
+	d.selected[tabAppearance] = rowInfoMode
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Equal(t, messages.InfoModeDetailed, d.current.Layout.SidebarInfoMode)
+
+	_, cmd := d.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	msgs := collectMsgs(cmd)
+	require.Len(t, msgs, 2)
+	cancel, ok := msgs[1].(messages.CancelLayoutPreviewMsg)
+	require.True(t, ok, "esc after an info mode change must restore the original layout")
+	assert.Equal(t, messages.InfoModeCompact, cancel.Original.SidebarInfoMode)
 }
 
 func TestSettingsDialogTogglesSection(t *testing.T) {
@@ -253,7 +325,7 @@ func TestSettingsDialogApplyWithoutChangesOnlyCloses(t *testing.T) {
 func TestSettingsDialogEscapeRestoresOriginal(t *testing.T) {
 	t.Parallel()
 
-	original := messages.LayoutSettings{SidebarPosition: messages.SidebarLeft, SectionSpacing: messages.SpacingNormal}
+	original := messages.LayoutSettings{SidebarPosition: messages.SidebarLeft, SectionSpacing: messages.SpacingNormal, SidebarInfoMode: messages.InfoModeCompact}
 	d := newTestSettingsDialog(t, original)
 	d.selected[tabAppearance] = rowPosition
 	d.Update(tea.KeyPressMsg{Code: tea.KeyRight})
@@ -295,6 +367,8 @@ func TestSettingsDialogViewShowsVisualsRows(t *testing.T) {
 	assert.Contains(t, view, "Right")
 	assert.Contains(t, view, "Section spacing")
 	assert.Contains(t, view, "Normal")
+	assert.Contains(t, view, "Sidebar info mode")
+	assert.Contains(t, view, "‹ Compact ›", "the info mode selector shows the compact default")
 	assert.Contains(t, view, "Session path")
 	assert.Contains(t, view, "Token usage")
 	assert.Contains(t, view, "Agents")

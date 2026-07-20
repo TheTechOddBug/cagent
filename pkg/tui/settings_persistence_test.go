@@ -23,18 +23,19 @@ func TestLayoutSettingsFromConfig(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t,
-		messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal},
+		messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal, SidebarInfoMode: messages.InfoModeCompact},
 		layoutSettingsFromConfig(userconfig.LayoutSettings{}),
-		"empty config falls back to the default position and spacing")
+		"empty config falls back to the default position, spacing and info mode")
 
 	assert.Equal(t,
-		messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal},
-		layoutSettingsFromConfig(userconfig.LayoutSettings{SidebarPosition: "bogus", SectionSpacing: "bogus"}),
+		messages.LayoutSettings{SidebarPosition: messages.SidebarRight, SectionSpacing: messages.SpacingNormal, SidebarInfoMode: messages.InfoModeCompact},
+		layoutSettingsFromConfig(userconfig.LayoutSettings{SidebarPosition: "bogus", SectionSpacing: "bogus", SidebarInfoMode: "bogus"}),
 		"unknown values fall back to the defaults")
 
 	got := layoutSettingsFromConfig(userconfig.LayoutSettings{
 		SidebarPosition: "bottom",
 		SectionSpacing:  "compact",
+		SidebarInfoMode: "detailed",
 		HideSessionPath: true,
 		HideUsage:       true,
 		HideAgents:      true,
@@ -44,6 +45,7 @@ func TestLayoutSettingsFromConfig(t *testing.T) {
 	assert.Equal(t, messages.LayoutSettings{
 		SidebarPosition: messages.SidebarBottom,
 		SectionSpacing:  messages.SpacingCompact,
+		SidebarInfoMode: messages.InfoModeDetailed,
 		HideSessionPath: true,
 		HideUsage:       true,
 		HideAgents:      true,
@@ -58,6 +60,7 @@ func TestSaveSettingsToUserConfig_RoundTrip(t *testing.T) {
 	saved := messages.LayoutSettings{
 		SidebarPosition: messages.SidebarLeft,
 		SectionSpacing:  messages.SpacingRelaxed,
+		SidebarInfoMode: messages.InfoModeCompact,
 		HideSessionPath: true,
 		HideTools:       true,
 	}
@@ -114,6 +117,7 @@ func TestSavePreferences_RoundTripAndPreservesExtra(t *testing.T) {
 		Layout: messages.LayoutSettings{
 			SidebarPosition: messages.SidebarBottom,
 			SectionSpacing:  messages.SpacingCompact,
+			SidebarInfoMode: messages.InfoModeDetailed,
 			HideAgents:      true,
 		},
 		SendMode:           messages.SendModeQueue,
@@ -195,6 +199,7 @@ func TestSaveSettingsToUserConfig_HideSessionPathKeepsEntry(t *testing.T) {
 	saved := messages.LayoutSettings{
 		SidebarPosition: messages.SidebarRight,
 		SectionSpacing:  messages.SpacingNormal,
+		SidebarInfoMode: messages.InfoModeCompact,
 		HideSessionPath: true,
 	}
 	require.NoError(t, saveSettingsToUserConfig(saved, messages.SendModeSteer))
@@ -205,4 +210,44 @@ func TestSaveSettingsToUserConfig_HideSessionPathKeepsEntry(t *testing.T) {
 	require.NotNil(t, layout, "hide_session_path alone must keep the layout entry")
 	assert.True(t, layout.HideSessionPath)
 	assert.Equal(t, saved, layoutSettingsFromConfig(userconfig.Get().GetLayout()))
+}
+
+func TestSavePreferences_DetailedInfoModeKeepsEntry(t *testing.T) {
+	setupSettingsConfigTest(t)
+
+	saved := messages.LayoutSettings{
+		SidebarPosition: messages.SidebarRight,
+		SectionSpacing:  messages.SpacingNormal,
+		SidebarInfoMode: messages.InfoModeDetailed,
+	}
+	require.NoError(t, saveSettingsToUserConfig(saved, messages.SendModeSteer))
+
+	cfg, err := userconfig.Load()
+	require.NoError(t, err)
+	layout := cfg.GetSettings().Layout
+	require.NotNil(t, layout, "a detailed info mode alone must keep the layout entry")
+	assert.Equal(t, "detailed", layout.SidebarInfoMode)
+	assert.Empty(t, layout.SidebarPosition, "the default position is not written out")
+	assert.Empty(t, layout.SectionSpacing, "the default spacing is not written out")
+	assert.Equal(t, saved, layoutSettingsFromConfig(userconfig.Get().GetLayout()))
+}
+
+func TestSavePreferences_CompactInfoModeClearsEntry(t *testing.T) {
+	setupSettingsConfigTest(t)
+
+	require.NoError(t, saveSettingsToUserConfig(messages.LayoutSettings{
+		SidebarPosition: messages.SidebarRight,
+		SectionSpacing:  messages.SpacingNormal,
+		SidebarInfoMode: messages.InfoModeDetailed,
+	}, messages.SendModeSteer))
+	require.NoError(t, saveSettingsToUserConfig(messages.LayoutSettings{
+		SidebarPosition: messages.SidebarRight,
+		SectionSpacing:  messages.SpacingNormal,
+		SidebarInfoMode: messages.InfoModeCompact,
+	}, messages.SendModeSteer))
+
+	cfg, err := userconfig.Load()
+	require.NoError(t, err)
+	assert.Nil(t, cfg.GetSettings().Layout,
+		"the default layout with an explicit compact info mode clears the config entry")
 }

@@ -182,6 +182,11 @@ const (
 	// runtime routed the conversation to the agent's configured
 	// force_handoff target, prompting a new iteration.
 	turnEndReasonForceHandoff = "force_handoff"
+	// turnEndReasonBudgetExceeded — the run crossed a configured
+	// budget ceiling (max_cost / max_tokens / max_time) and was
+	// stopped. Distinct from "normal" so a budget-killed run is
+	// distinguishable from a completed one in downstream analytics.
+	turnEndReasonBudgetExceeded = "budget_exceeded"
 )
 
 // executeTurnEndHooks fires turn_end once per turn — symmetric to
@@ -335,6 +340,17 @@ func (r *LocalRuntime) notifyError(ctx context.Context, a *agent.Agent, sessionI
 func (r *LocalRuntime) notifyMaxIterations(ctx context.Context, a *agent.Agent, sessionID, message string) {
 	r.notify(ctx, a, hooks.EventNotification, sessionID, "warning", message)
 	r.notify(ctx, a, hooks.EventOnMaxIterations, sessionID, "warning", message)
+}
+
+// notifyBudgetExceeded fires notification(level=warning) when a run is
+// stopped by its budget. It deliberately reuses the generic notification
+// event rather than introducing a dedicated on_budget_exceeded: the
+// budget_exceeded runtime event already carries the structured payload
+// (limit, used, max) that an audit consumer wants, so a second hook
+// surface would duplicate it for no gain. A dedicated event is easy to
+// add later if hook authors ask to match on it specifically.
+func (r *LocalRuntime) notifyBudgetExceeded(ctx context.Context, a *agent.Agent, sessionID, message string) {
+	r.notify(ctx, a, hooks.EventNotification, sessionID, "warning", message)
 }
 
 // notify is the shared dispatch path for the (level, message)-shaped

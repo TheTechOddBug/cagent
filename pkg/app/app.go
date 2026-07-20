@@ -296,6 +296,27 @@ func (a *App) RestartToolset(ctx context.Context, name string) error {
 	return a.runtime.RestartToolset(ctx, name)
 }
 
+// agentThinkingLevelsProvider is an optional runtime capability: resolving
+// the thinking-effort levels the current agent's active model supports.
+// Only the local runtime (which holds the agent and its model config)
+// implements it; remote runtimes don't, so /effort argument completion
+// simply offers no candidates for them.
+type agentThinkingLevelsProvider interface {
+	CurrentAgentThinkingLevels(ctx context.Context) []effort.Level
+}
+
+// CurrentAgentThinkingLevels returns the thinking-effort levels supported by
+// the current agent's active model, or nil when the runtime cannot resolve
+// this (remote runtime, unresolvable agent/model, or a model that does not
+// support thinking at all). Backs the /effort argument completer (#3731).
+func (a *App) CurrentAgentThinkingLevels(ctx context.Context) []effort.Level {
+	p, ok := a.runtime.(agentThinkingLevelsProvider)
+	if !ok {
+		return nil
+	}
+	return p.CurrentAgentThinkingLevels(ctx)
+}
+
 // CurrentAgentCommands returns the commands for the active agent
 func (a *App) CurrentAgentCommands(ctx context.Context) types.Commands {
 	return a.runtime.CurrentAgentInfo(ctx).Commands
@@ -1149,6 +1170,18 @@ func (a *App) CompactLiveSession(ctx context.Context, sessionID, additionalPromp
 		a.sendEvent(ctx, event)
 	})
 	return compactor.CompactLiveSession(ctx, sessionID, additionalPrompt, sink)
+}
+
+// AttachedFiles returns the current session's attached file paths, the same
+// inventory DropAttachedFile resolves against. Backs /drop argument
+// completion; nil when there is no active session. Attachments are
+// in-memory client-side session state, so this works on remote runtimes too.
+func (a *App) AttachedFiles() []string {
+	sess := a.Session()
+	if sess == nil {
+		return nil
+	}
+	return sess.AttachedFilesSnapshot()
 }
 
 // DropAttachedFile removes a file from the current session's attached files

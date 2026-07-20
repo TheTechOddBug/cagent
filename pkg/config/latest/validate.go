@@ -19,6 +19,15 @@ func (t *Config) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func (t *Config) Validate() error {
+	if err := t.Budget.validate(); err != nil {
+		return fmt.Errorf("budget: %w", err)
+	}
+	for name := range t.Budgets {
+		b := t.Budgets[name]
+		if err := b.validate(); err != nil {
+			return fmt.Errorf("budgets.%s: %w", name, err)
+		}
+	}
 	for name, p := range t.Providers {
 		if err := p.Auth.Validate(p.Provider); err != nil {
 			return fmt.Errorf("providers.%s: %w", name, err)
@@ -63,6 +72,11 @@ func (t *Config) Validate() error {
 		}
 		if err := validateCompactionThreshold(agent.CompactionThreshold); err != nil {
 			return fmt.Errorf("agents.%s: %w", agent.Name, err)
+		}
+		for _, name := range agent.Budgets {
+			if _, ok := t.Budgets[name]; !ok {
+				return fmt.Errorf("agents.%s: budgets: unknown budget %q; define it under the top-level 'budgets'", agent.Name, name)
+			}
 		}
 
 		for j := range agent.Toolsets {
@@ -203,9 +217,9 @@ func (a *AgentConfig) validateHarness() error {
 			return errors.New("harness.effort can only be used with harness.type 'claude-code'")
 		}
 		switch h.Effort {
-		case "low", "medium", "high", "max":
+		case "low", "medium", "high", "xhigh", "max":
 		default:
-			return errors.New("harness.effort must be one of: low, medium, high, max")
+			return errors.New("harness.effort must be one of: low, medium, high, xhigh, max")
 		}
 	}
 	if h.Agent != "" && h.Type != "opencode" {
