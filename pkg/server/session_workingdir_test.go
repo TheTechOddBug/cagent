@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +17,7 @@ import (
 func TestCreateSession_WorkingDirValidation(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	root := t.TempDir()
 	rc := &config.RuntimeConfig{Config: config.Config{WorkingDir: root}}
 
@@ -111,7 +110,7 @@ func TestResolveWithinRoot(t *testing.T) {
 
 	root := t.TempDir()
 	rc := &config.RuntimeConfig{Config: config.Config{WorkingDir: root}}
-	sm := NewSessionManager(context.Background(), config.Sources{}, session.NewInMemorySessionStore(), 0, rc)
+	sm := NewSessionManager(t.Context(), config.Sources{}, session.NewInMemorySessionStore(), 0, rc)
 
 	t.Run("path equal to root is allowed", func(t *testing.T) {
 		t.Parallel()
