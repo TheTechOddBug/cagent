@@ -271,12 +271,16 @@ func transferTimer(d time.Duration, gen int64, kind transferTimerKind) TransferT
 
 // model implements Model
 type model struct {
-	width              int
-	height             int
-	xPos               int                       // absolute x position on screen
-	yPos               int                       // absolute y position on screen
-	layoutCfg          LayoutConfig              // layout configuration for spacing
-	sessionUsage       map[string]*runtime.Usage // sessionID -> latest usage snapshot
+	width        int
+	height       int
+	xPos         int                       // absolute x position on screen
+	yPos         int                       // absolute y position on screen
+	layoutCfg    LayoutConfig              // layout configuration for spacing
+	sessionUsage map[string]*runtime.Usage // sessionID -> latest usage snapshot
+	// budgetUsage is the newest run-budget snapshot, or nil on an
+	// unbudgeted run. It is a single value rather than a per-session map
+	// because one budget covers the whole run, sub-sessions included.
+	budgetUsage        *runtime.BudgetUsageEvent
 	todoComp           *todotool.SidebarComponent
 	ragIndexing        map[string]*ragIndexingState // strategy name -> indexing state
 	spinner            spinner.Spinner
@@ -1081,6 +1085,13 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case *runtime.TokenUsageEvent:
 		m.SetTokenUsage(msg)
 		return m, nil
+	case *runtime.BudgetUsageEvent:
+		// The budget is per-run and shared by every sub-session, so the
+		// latest event always describes the whole run regardless of which
+		// session emitted it. Keep one snapshot rather than a per-session
+		// map — summing across sessions would double-count the wallet.
+		m.budgetUsage = msg
+		return m, nil
 	case *runtime.SessionCompactionEvent:
 		// The "compacting…" gauge describes the displayed session only: a
 		// targeted compaction of a session that is not currently shown
@@ -1738,7 +1749,11 @@ func (m *model) computeUsageStats() usageStats {
 }
 
 func (m *model) tokenUsage(contentWidth int) string {
-	return m.renderTab("Token Usage", m.tokenUsageLine(), contentWidth)
+	body := m.tokenUsageLine()
+	if b := m.budgetLine(contentWidth); b != "" {
+		body += "\n" + b
+	}
+	return m.renderTab("Token Usage", body, contentWidth)
 }
 
 // tokenUsageLine renders the usage line shared by the vertical Token Usage
@@ -1770,6 +1785,110 @@ func (m *model) tokenUsageLine() string {
 // from startup.
 func (m *model) tokenUsageSummary() string {
 	return m.tokenUsageLine()
+}
+
+// budgetLine renders each active budget by name against the ceilings it
+// declares, e.g.
+//
+//	run        $0.12/$0.50 · 12.3K/100.0K · 2m14s/10m
+//	shell-work $0.09/$0.10 · 4.3K/20.0K
+//
+// Only the ceilings the operator configured appear, and an unbudgeted run
+// renders nothing. Each reading is colored by the shared gauge bands, so a
+// budget nearing its ceiling reads the same way a context gauge nearing
+// compaction does.
+//
+// Per-agent attribution is deliberately not repeated here: the Agents
+// section already reports each agent's cost in AgentInfoDetailed mode, so a
+// second per-agent breakdown under every budget would be duplicate reading
+// in the sidebar's tightest column. The structured per-agent split is still
+// carried on the budget_usage event for programmatic consumers.
+func (m *model) budgetLine(contentWidth int) string {
+	b := m.budgetUsage
+	if b == nil || len(b.Budgets) == 0 {
+		return ""
+	}
+
+	nameWidth := 0
+	for _, s := range b.Budgets {
+		nameWidth = max(nameWidth, lipgloss.Width(s.Name))
+	}
+	if limit := contentWidth / 3; limit > 0 && nameWidth > limit {
+		nameWidth = limit
+	}
+
+	var lines []string
+	for _, s := range b.Budgets {
+		if line := m.oneBudgetLine(s, nameWidth); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// oneBudgetLine renders a single named budget's totals against its ceilings.
+// Returns "" when the budget declares no ceilings at all.
+func (m *model) oneBudgetLine(s runtime.BudgetStatus, nameWidth int) string {
+	var parts []string
+	if s.MaxCost > 0 {
+		parts = append(parts, budgetPartStyle(s.Cost, s.MaxCost).Render(
+			toolcommon.FormatCostPrecise(s.Cost)+"/"+toolcommon.FormatCostPrecise(s.MaxCost)))
+	}
+	if s.MaxTokens > 0 {
+		parts = append(parts, budgetPartStyle(float64(s.Tokens), float64(s.MaxTokens)).Render(
+			toolcommon.FormatTokenCount(s.Tokens)+"/"+toolcommon.FormatTokenCount(s.MaxTokens)))
+	}
+	if s.MaxTimeSeconds > 0 {
+		parts = append(parts, budgetPartStyle(s.ElapsedSeconds, s.MaxTimeSeconds).Render(
+			formatBudgetDuration(s.ElapsedSeconds)+"/"+formatBudgetDuration(s.MaxTimeSeconds)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+
+	name := toolcommon.TruncateText(s.Name, nameWidth)
+	line := styles.MutedStyle.Render(padRight(name, nameWidth)) + " " +
+		strings.Join(parts, metricSeparator())
+	if s.Unpriced {
+		// A cost ceiling that cannot see some of the spend is a silent
+		// failure otherwise: the reading would look reassuringly low
+		// precisely because it is incomplete.
+		line += " " + styles.WarningStyle.Render("(unpriced spend)")
+	}
+	return line
+}
+
+func budgetPartStyle(used, limit float64) lipgloss.Style {
+	if limit <= 0 {
+		return styles.TabAccentStyle
+	}
+	level := styles.ContextGaugeLevelFor(used/limit, 1)
+	return contextGaugeStyle(level, styles.TabAccentStyle)
+}
+
+// formatBudgetDuration renders a whole-second reading compactly, dropping
+// zero components so a round ceiling reads "10m" and "1h" rather than
+// Duration.String's "10m0s" and "1h0m0s" — the budget column is the
+// narrowest place in the sidebar to spend characters on trailing zeros.
+func formatBudgetDuration(seconds float64) string {
+	d := time.Duration(seconds) * time.Second
+	if d <= 0 {
+		return "0s"
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		if s := int(d.Seconds()) % 60; s != 0 {
+			return fmt.Sprintf("%dm%ds", int(d.Minutes()), s)
+		}
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		if mn := int(d.Minutes()) % 60; mn != 0 {
+			return fmt.Sprintf("%dh%dm", int(d.Hours()), mn)
+		}
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
 }
 
 func (m *model) sessionInfo(contentWidth int) string {

@@ -107,6 +107,17 @@
     "runtime": {
       "$ref": "#/definitions/RuntimeDefaults",
       "description": "Execution-time defaults the agent author wants applied. Values act as defaults only — explicit CLI flags or user-config settings always win."
+    },
+    "budget": {
+      "$ref": "#/definitions/BudgetConfig",
+      "description": "Ceilings on what a single run may consume before the agent is stopped, regardless of which agent spends. Scoped to a run and shared by every sub-session spawned inside it, so delegated work spends against the same budget as its parent."
+    },
+    "budgets": {
+      "type": "object",
+      "description": "Reusable, named budget definitions. An agent opts into one by listing its name in its 'budgets' field. A named budget is a single shared pot: when several agents reference the same name they draw from the SAME ceiling rather than each getting a copy, so a fan-out to N sub-agents cannot spend N times the limit. Give agents distinct budget names when you want independent pots.",
+      "additionalProperties": {
+        "$ref": "#/definitions/BudgetConfig"
+      }
     }
   },
   "additionalProperties": false,
@@ -636,6 +647,22 @@
           "type": "integer",
           "description": "Maximum number of iterations",
           "minimum": 0
+        },
+        "budgets": {
+          "type": "array",
+          "description": "Names of top-level 'budgets' entries this agent spends against. Every listed budget must be defined under the top-level 'budgets' key. An agent may list several, in which case all apply and the first to be exhausted stops the run. Agents sharing a budget name share one pot, so a fan-out cannot multiply the ceiling.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "tight"
+            ],
+            [
+              "tight",
+              "daily"
+            ]
+          ]
         },
         "max_consecutive_tool_calls": {
           "type": "integer",
@@ -1780,6 +1807,42 @@
           "items": {
             "type": "string"
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "BudgetConfig": {
+      "type": "object",
+      "description": "Ceilings on what a single run may consume. Every limit is optional; an unset or zero limit is unlimited. The budget is scoped to a run and shared by every sub-session spawned inside it, so a fan-out to sub-agents spends against one budget rather than one per child. Exceeding any limit stops the run with an assistant message and a budget_exceeded event; raising a limit means editing the config, not answering a prompt.",
+      "properties": {
+        "max_cost": {
+          "type": "number",
+          "description": "Maximum spend for the run, in USD. Only responses the runtime can price count towards it: a model with no pricing data (unknown ID, or a custom endpoint without a model-level 'cost' block) contributes nothing, and such a run emits a warning rather than behaving as if the spend were free.",
+          "minimum": 0,
+          "examples": [
+            0.5,
+            5,
+            25
+          ]
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "Maximum cumulative input+output tokens for the run, counted over its whole lifetime. This is not the session's context length: compaction resets that, while this keeps counting.",
+          "minimum": 0,
+          "examples": [
+            100000,
+            1000000
+          ]
+        },
+        "max_time": {
+          "type": "string",
+          "description": "Maximum time the agents spend working, in Go duration format (e.g., '10m', '30s', '1h30m'). This is the sum of turn durations, NOT wall-clock since the session opened, so idle time while the user reads and types does not count. Checked at turn boundaries, so it will not interrupt an in-flight model call or tool.",
+          "pattern": "^([0-9]+(ns|us|µs|ms|s|m|h))+$",
+          "examples": [
+            "30s",
+            "10m",
+            "1h30m"
+          ]
         }
       },
       "additionalProperties": false
