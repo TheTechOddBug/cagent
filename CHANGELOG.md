@@ -3,6 +3,117 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.112.0] - 2026-07-20
+
+This release adds several new built-in toolsets (git, webhook), budget limits, `.agentsignore` support, expanded Mermaid rendering, image rendering in the TUI, and numerous TUI improvements including per-agent usage details, session browser enhancements, and argument auto-completion for slash commands.
+
+## What's New
+
+- Adds a read-only `git` toolset (`git_status`, `git_log`, `git_branches`, `git_show`, `git_blame`) giving agents structured access to the working repository without requiring a `git` binary
+- Adds a `webhook` toolset with a `send_webhook` tool that lets agents send outbound notifications to a configured chat service without exposing the URL or secret to the model
+- Adds budget configuration (`budget` / `budgets`) to cap what an agent may spend in cost, tokens, or working time, with live tracking in the TUI sidebar
+- Adds `.agentsignore` support — a `.gitignore`-syntax file that prevents the agent from listing, reading, or writing matched files
+- Adds image rendering in the TUI for tool result images and markdown images in agent responses (using the Kitty graphics protocol, with a setting to disable)
+- Adds an image rendering preference to settings
+- Adds Mermaid flowchart direction support and subgraph rendering
+- Adds argument auto-completion for `/toolset-restart`, `/drop`, and `/effort` slash commands
+- Adds per-agent usage details to the TUI sidebar, with a new sidebar info mode selector in `/settings`
+- Adds fuzzy search matching for tool discovery via `search_tool` in the deferred toolset
+- Adds Claude Code harness setup and diagnostics as a new `docker agent setup` path
+- Adds explicit prompt cache breakpoint support for OpenAI (GPT-5.6+)
+- Extends session browser search to match session IDs in addition to titles
+- Groups the session browser by git repository root (worktree-aware)
+- Allows configuring `compaction_model` directly on an agent as a sibling to `compaction_threshold`
+- Opens the `/cost` dialog when clicking the sidebar cost/token usage reading
+- Adds a self-maintaining `llms.txt` generated from `nav.yml` at Hugo build time
+
+## Improvements
+
+- Fixes severe scrolling performance on very large sessions by caching rendered lines in the cost dialog and stopping message-list render cache thrashing
+- Keeps the `/cost` dialog cache fresh on live updates and theme changes
+- Shows usage and team roster in the collapsed sidebar band from startup
+- Adds sidebar agent info modes
+
+## Bug Fixes
+
+- Fixes RAG query embedding usage tracking so tokens are correctly attributed and emitted to the active session
+- Fixes telemetry model dimension pollution and captures partial usage in RAG
+- Fixes Anthropic system cache breakpoints being exceeded by capping them so requests never exceed the limit
+- Fixes transcripts carrying cache checkpoint marks after compaction
+- Fixes slash command inline completion to match on command value, not just label (e.g. typing `/settings` now surfaces the Settings command)
+- Fixes TUI panic when the terminal reports a degenerate (0×0 or 1×1) size
+- Fixes the `/cost` dialog cache not refreshing on live updates and theme changes
+- Fixes the sidebar scrollbar clicks registering in content click zones
+- Fixes the `settings` command label to display consistently as `Settings`
+- Fixes right-to-left Mermaid connector rendering
+- Fixes HTTP error statuses (4xx/5xx) being swallowed and treated as success in the API tool
+- Fixes webhook tool to sanitize `*url.Error` to prevent secret URL leakage
+- Fixes MCP OAuth clients with `allow-private-ips` to use a private connection pool instead of sharing `http.DefaultTransport`
+- Fixes flaky OAuth tests by not sharing `http.DefaultTransport` across parallel tests
+- Fixes the template Docker build stage to use `COPY --from` instead of an unauthenticated GitHub API call that hit rate limits
+- Removes macOS Keychain and `pass` secret providers from `DefaultSources`
+
+## Technical Changes
+
+- Freezes config schema v12 and opens v13 as the new latest
+- Refactors Anthropic prompt-cache checkpoint handling into consolidated owners, making known failure modes structurally impossible
+- Refreshes the embedded models.dev snapshot
+- Drops the unused `benchmarks/` folder
+- Exposes the current agent's supported thinking levels from the runtime
+### Pull Requests
+
+- [#3603](https://github.com/docker/docker-agent/pull/3603) - fix(rag): correctly attribute and track query embedding usage for active sessions
+- [#3637](https://github.com/docker/docker-agent/pull/3637) - feat(tools): add read-only "git" toolset for structured repository inspection
+- [#3641](https://github.com/docker/docker-agent/pull/3641) - feat(tools): add "webhook" toolset for outbound notifications
+- [#3694](https://github.com/docker/docker-agent/pull/3694) - docs: add Sessions, Code Mode, headless/CI guide, and expand the CLI reference
+- [#3695](https://github.com/docker/docker-agent/pull/3695) - feat(docs): self-maintaining llms.txt generated from nav.yml
+- [#3696](https://github.com/docker/docker-agent/pull/3696) - fix(docs): constrain content images and shrink demo GIF
+- [#3698](https://github.com/docker/docker-agent/pull/3698) - docs: add tour pointer, prompt-files subsection, and product-naming consistency
+- [#3699](https://github.com/docker/docker-agent/pull/3699) - Render images
+- [#3700](https://github.com/docker/docker-agent/pull/3700) - docs: sync documentation with recent main merges
+- [#3702](https://github.com/docker/docker-agent/pull/3702) - feat(budget): cap what an agent may spend in money, tokens, or working time
+- [#3703](https://github.com/docker/docker-agent/pull/3703) - docs: update CHANGELOG.md for v1.111.0
+- [#3704](https://github.com/docker/docker-agent/pull/3704) - test(mcp): fix flaky OAuth tests by not sharing http.DefaultTransport
+- [#3706](https://github.com/docker/docker-agent/pull/3706) - chore: bump direct Go dependencies
+- [#3707](https://github.com/docker/docker-agent/pull/3707) - fix(mcp): give allow-private-ips OAuth clients a private connection pool
+- [#3708](https://github.com/docker/docker-agent/pull/3708) - feat(tui): extend session browser search to match session IDs
+- [#3709](https://github.com/docker/docker-agent/pull/3709) - chore: drop benchmarks folder
+- [#3710](https://github.com/docker/docker-agent/pull/3710) - perf(tui): fix horrendous scrolling on very large sessions
+- [#3712](https://github.com/docker/docker-agent/pull/3712) - refactor: consolidate and harden Anthropic prompt-cache checkpoint handling
+- [#3713](https://github.com/docker/docker-agent/pull/3713) - feat(env): remove macOS keychain and pass secret providers
+- [#3714](https://github.com/docker/docker-agent/pull/3714) - feat(tui): show usage details per agent
+- [#3715](https://github.com/docker/docker-agent/pull/3715) - Mermaid flowchart directions
+- [#3716](https://github.com/docker/docker-agent/pull/3716) - Mermaid flowchart subgraphs
+- [#3717](https://github.com/docker/docker-agent/pull/3717) - fix: address Mermaid subgraph review findings
+- [#3718](https://github.com/docker/docker-agent/pull/3718) - Use golden files for Mermaid renders
+- [#3719](https://github.com/docker/docker-agent/pull/3719) - feat(openai): support explicit prompt cache breakpoints
+- [#3720](https://github.com/docker/docker-agent/pull/3720) - Render markdown images in agent responses
+- [#3721](https://github.com/docker/docker-agent/pull/3721) - fix(tui): address PR #3720 review feedback on markdown image rendering
+- [#3722](https://github.com/docker/docker-agent/pull/3722) - feat: add Claude Code harness setup and diagnostics
+- [#3723](https://github.com/docker/docker-agent/pull/3723) - fix(tui): match slash command value, not just label, in inline completion
+- [#3724](https://github.com/docker/docker-agent/pull/3724) - fix(tui): hide no-op slash commands (/settings) in lean mode
+- [#3726](https://github.com/docker/docker-agent/pull/3726) - fix(tui): label settings command consistently
+- [#3727](https://github.com/docker/docker-agent/pull/3727) - fix(tui): show usage and team roster in the collapsed sidebar band from startup
+- [#3728](https://github.com/docker/docker-agent/pull/3728) - feat(tui): argument auto-completion for /toolset-restart
+- [#3729](https://github.com/docker/docker-agent/pull/3729) - revert: pkg/tui lean-mode machinery from #3724
+- [#3731](https://github.com/docker/docker-agent/pull/3731) - feat(runtime): expose current agent's supported thinking levels
+- [#3733](https://github.com/docker/docker-agent/pull/3733) - feat(tui): argument auto-completion for /drop
+- [#3734](https://github.com/docker/docker-agent/pull/3734) - feat(tui): argument auto-completion for /effort
+- [#3735](https://github.com/docker/docker-agent/pull/3735) - docs: update documentation for recent merged PRs
+- [#3736](https://github.com/docker/docker-agent/pull/3736) - fix(tui): don't panic when the terminal reports a degenerate size
+- [#3737](https://github.com/docker/docker-agent/pull/3737) - feat: group session browser by git repo root (worktree-aware)
+- [#3738](https://github.com/docker/docker-agent/pull/3738) - feat(deferred): add fuzzy search matching for tool discovery
+- [#3739](https://github.com/docker/docker-agent/pull/3739) - fix: propagate HTTP error statuses in API tool
+- [#3740](https://github.com/docker/docker-agent/pull/3740) - chore(deps): bump mcp from 1.23.0 to 1.28.1 in /examples/dhi/dhi_mcp_server in the pip group across 1 directory
+- [#3741](https://github.com/docker/docker-agent/pull/3741) - docs: sync documentation with recent code changes
+- [#3743](https://github.com/docker/docker-agent/pull/3743) - feat(filesystem): add `.agentsignore` to keep files out of the agent's reach
+- [#3744](https://github.com/docker/docker-agent/pull/3744) - fix: use COPY --from for mcp-gateway in template stage
+- [#3747](https://github.com/docker/docker-agent/pull/3747) - chore: refresh embedded models.dev snapshot
+- [#3752](https://github.com/docker/docker-agent/pull/3752) - feat: allow configuring compaction_model on agents
+- [#3753](https://github.com/docker/docker-agent/pull/3753) - chore: freeze config v12 and open v13 as latest
+- [#3754](https://github.com/docker/docker-agent/pull/3754) - feat(tui): open the /cost dialog when clicking the sidebar cost reading
+
+
 ## [v1.111.0] - 2026-07-17
 
 This release adds a new scheduler toolset, inline Mermaid diagram rendering, model switching in the lean TUI, project config autodiscovery, and a range of bug fixes and performance improvements across the agent, TUI, and server.
@@ -4824,3 +4935,5 @@ This release improves the terminal user interface with better error handling and
 [v1.110.0]: https://github.com/docker/docker-agent/releases/tag/v1.110.0
 
 [v1.111.0]: https://github.com/docker/docker-agent/releases/tag/v1.111.0
+
+[v1.112.0]: https://github.com/docker/docker-agent/releases/tag/v1.112.0
