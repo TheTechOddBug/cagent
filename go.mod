@@ -33,7 +33,7 @@ require (
 	github.com/docker/cli v29.6.2+incompatible
 	github.com/docker/go-units v0.5.0
 	github.com/docker/portcullis v0.0.0-20260716075131-3d4d8c21f0db
-	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
+	github.com/dop251/goja v0.0.0-20260719185829-0fc1d42c1dc9
 	github.com/expr-lang/expr v1.17.8
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
@@ -45,14 +45,14 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/hcl/v2 v2.24.0
-	github.com/junegunn/fzf v0.74.0
+	github.com/junegunn/fzf v0.74.1
 	github.com/k3a/html2text v1.4.0
 	github.com/labstack/echo/v4 v4.15.4
 	github.com/mattn/go-isatty v0.0.23
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/natefinch/atomic v1.0.1
-	github.com/openai/openai-go/v3 v3.43.0
+	github.com/openai/openai-go/v3 v3.44.0
 	github.com/pb33f/libopenapi v0.38.7
 	github.com/rivo/uniseg v0.4.7
 	github.com/rumpl/harness v0.0.0-20260612213434-3f63cb8efc05
@@ -91,7 +91,7 @@ require (
 	github.com/apparentlymart/go-textseg/v17 v17.0.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
-	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/dvsekhvalnov/jose2go v1.7.0 // indirect
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
@@ -133,7 +133,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260713092251-4bee1914c0cf
+	github.com/charmbracelet/ultraviolet v0.0.0-20260720091822-7cc6674724ac
 	github.com/charmbracelet/x/exp/slice v0.0.0-20251113172435-cef867b85f6a // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect

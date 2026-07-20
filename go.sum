@@ -157,8 +157,8 @@ github.com/dgageot/ultraviolet v0.0.0-20260313154905-9451997d56b6 h1:88fWkkjwzuI
 github.com/dgageot/ultraviolet v0.0.0-20260313154905-9451997d56b6/go.mod h1:SQpCTRNBtzJkwku5ye4S3HEuthAlGy2n9VXZnWkEW98=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
 github.com/distribution/reference v0.6.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
-github.com/dlclark/regexp2/v2 v2.2.1 h1:mf4KkFUj0gJuarK8P+LgiS+Lit7m9N1yAwEfPbee7R0=
-github.com/dlclark/regexp2/v2 v2.2.1/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
+github.com/dlclark/regexp2/v2 v2.5.2 h1:HAsucWRhsqcDzl6Ua9aR8JwYOTzrZyPrF0/FNxJVAI0=
+github.com/dlclark/regexp2/v2 v2.5.2/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
 github.com/dnaeon/go-vcr v1.2.0/go.mod h1:R4UdLID7HZT3taECzJs4YgbbH6PIGXB6W/sc5OLb6RQ=
 github.com/docker/aijson v0.1.0 h1:61XgIzb5QJWd72sFchdTMwdwH4rA4G62X1KjneekNkY=
@@ -177,8 +177,8 @@ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/docker/portcullis v0.0.0-20260716075131-3d4d8c21f0db h1:DE7T6IqwqfOFme7T1oW6SZtUXp3WBKhBZHCG8V/Nh5w=
 github.com/docker/portcullis v0.0.0-20260716075131-3d4d8c21f0db/go.mod h1:Fqozd7Xl9v8M3SmCBHMHHd6+MRthduC6xVr4jnU1QAg=
-github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9 h1:q33zakIx+wEp1Ko5NpDyDBICuXL4JeHUaHbhPowcMEk=
-github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9/go.mod h1:Sc+QOu1WruvaaeT/cxFez/pXHpI9ZDjg/E8QNfSVveI=
+github.com/dop251/goja v0.0.0-20260719185829-0fc1d42c1dc9 h1:Z9u8XVKd8MPk81Wctd4bl7wZyYal2sgm06Oh6Ldulro=
+github.com/dop251/goja v0.0.0-20260719185829-0fc1d42c1dc9/go.mod h1:LiIEzozrcvNXorsG/3+ypGqdTUAqZryhzSsqi0oU/Qg=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/dvsekhvalnov/jose2go v1.7.0 h1:bnQc8+GMnidJZA8zc6lLEAb4xNrIqHwO+9TzqvtQZPo=
@@ -289,8 +289,8 @@ github.com/json-iterator/go v1.1.7/go.mod h1:KdQUCv79m/52Kvf8AW2vK1V8akMuk1QjK/u
 github.com/jtolds/gls v4.20.0+incompatible h1:xdiiI2gbIgH/gLH7ADydsJ1uDOEzR8yvV7C0MuV77Wo=
 github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
-github.com/junegunn/fzf v0.74.0 h1:Kp1qF2f1JjFqDea1EFzaUOM5ule+MZPIyKYcL6vmR4s=
-github.com/junegunn/fzf v0.74.0/go.mod h1:hKDkO8orBWT5VLIZOL8oyhxn7mRLXdGyu+gz1Ss58pU=
+github.com/junegunn/fzf v0.74.1 h1:rCGVdCSoOkfcfTxtxCO/vG2yceDjRlKSlv7IfCGkc/Y=
+github.com/junegunn/fzf v0.74.1/go.mod h1:hKDkO8orBWT5VLIZOL8oyhxn7mRLXdGyu+gz1Ss58pU=
 github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 h1:7dYDtfMDfKzjT+DVfIS4iqknSEKtZpEcXtu6vuaasHs=
 github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741/go.mod h1:6EILKtGpo5t+KLb85LNZLAF6P9LKp78hJI80PXMcn3c=
 github.com/k3a/html2text v1.4.0 h1:e4xarrVgZST+h+5C/fbA6AI49VFDSlEWMmIcDWcxsd0=
@@ -362,8 +362,8 @@ github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJm
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/onsi/gomega v1.34.1 h1:EUMJIKUjM8sKjYbtxQI9A4z2o+rruxnzNvpknOXie6k=
 github.com/onsi/gomega v1.34.1/go.mod h1:kU1QgUvBDLXBJq618Xvm2LUX6rSAfRaFRTcdOeDLwwY=
-github.com/openai/openai-go/v3 v3.43.0 h1:C+MFVUMU3TJNgES+Ikt7HF8xcX7J0wynKeR9ST22hZM=
-github.com/openai/openai-go/v3 v3.43.0/go.mod h1:cdufnVK14cWcT9qA1rRtrXx4FTRsgbDPW7Ia7SS5cZo=
+github.com/openai/openai-go/v3 v3.44.0 h1:kkGh+jb/sKfSh5P74Jk5mCRufaQ0q7oH+lq+pNlWjsk=
+github.com/openai/openai-go/v3 v3.44.0/go.mod h1:cdufnVK14cWcT9qA1rRtrXx4FTRsgbDPW7Ia7SS5cZo=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=

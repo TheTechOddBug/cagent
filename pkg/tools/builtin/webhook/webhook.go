@@ -372,8 +372,8 @@ func (t *ToolSet) recall(ctx context.Context, message string) {
 
 func (t *ToolSet) setRuntime(rt tools.Runtime) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.rt = rt
-	t.mu.Unlock()
 }
 
 func (t *ToolSet) runtime() tools.Runtime {
