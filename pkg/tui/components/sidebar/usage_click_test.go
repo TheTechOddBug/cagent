@@ -64,6 +64,36 @@ func TestSidebar_HandleClickType_Usage_Vertical_Hidden(t *testing.T) {
 	}
 }
 
+// TestSidebar_HandleClickType_Usage_Vertical_ScrollbarNotUsage verifies that
+// when the vertical sidebar overflows, a click on the scrollbar column beside
+// a Token Usage row is not swallowed as ClickUsage.
+func TestSidebar_HandleClickType_Usage_Vertical_ScrollbarNotUsage(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	sessionState := service.NewSessionState(sess)
+	sb := New(t.Context(), sessionState)
+
+	m := sb.(*model)
+	m.sessionHasContent = true
+	m.titleGenerated = true
+	m.sessionTitle = "Test"
+	m.width = 40
+	m.height = 4 // force overflow so the scrollbar renders
+
+	_ = sb.View()
+
+	require.True(t, m.cachedNeedsScrollbar, "the sidebar must overflow for this test")
+	require.Less(t, m.usageZoneStart, m.usageZoneEnd)
+
+	paddingLeft := m.layoutCfg.PaddingLeft
+	scrollbarX := paddingLeft + m.contentWidth(true) // first non-content column
+	for y := m.usageZoneStart; y < m.usageZoneEnd; y++ {
+		result, _ := sb.HandleClickType(scrollbarX, y)
+		assert.Equalf(t, ClickNone, result, "scrollbar column beside usage line %d must not be clickable content", y)
+	}
+}
+
 // TestSidebar_HandleClickType_Usage_Collapsed_SharedLine verifies the
 // right-aligned usage reading on the shared path/usage row reports
 // ClickUsage while the path part keeps reporting ClickWorkingDir.

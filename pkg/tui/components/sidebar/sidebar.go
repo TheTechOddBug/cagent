@@ -115,7 +115,7 @@ type Model interface {
 	ResetStreamTracking()
 	// HandleClick checks if click is on the star or title and returns true if handled
 	HandleClick(x, y int) bool
-	// HandleClickType returns the type of click (star, title, agent, or none).
+	// HandleClickType returns the type of click (see ClickResult).
 	// For ClickAgent, the second return value is the agent name.
 	HandleClickType(x, y int) (ClickResult, string)
 	// IsCollapsed returns whether the sidebar is collapsed
@@ -776,7 +776,7 @@ func (m *model) HandleClick(x, y int) bool {
 	return result != ClickNone
 }
 
-// HandleClickType returns what was clicked (star, title, working dir, agent, or nothing).
+// HandleClickType returns what was clicked (see ClickResult).
 // For ClickAgent, the second return value is the agent name.
 func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	// Account for left padding
@@ -837,6 +837,12 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	scrollOffset := m.scrollview.ScrollOffset()
 	contentY := y + scrollOffset // Convert viewport Y to content Y
 	titleLines := m.titleLineCount()
+
+	// The scrollbar and its gap are not content: clicks there must reach the
+	// scrollview, not the content click zones.
+	if m.cachedNeedsScrollbar && adjustedX >= m.contentWidth(true) {
+		return ClickNone, ""
+	}
 
 	// Check if click is within the title area
 	if contentY >= verticalStarY && contentY < verticalStarY+titleLines {
