@@ -157,12 +157,17 @@ func buildConfigureBackendConfig(contextSize *int64, runtimeFlags []string, spec
 	}
 	if contextSize != nil {
 		v := *contextSize
-		if v > math.MaxInt32 {
-			slog.Warn("context_size exceeds int32 max; clamping to math.MaxInt32", "requested", v, "clamped", int32(math.MaxInt32))
-			v = math.MaxInt32
+		switch {
+		case v > math.MaxInt32:
+			slog.Warn("context_size exceeds int32 max; clamping", "requested", v, "clamped", math.MaxInt32)
+			cs := int32(math.MaxInt32)
+			cfg.ContextSize = &cs
+		case v >= 0:
+			cs := int32(v) // 0 ≤ v ≤ math.MaxInt32 is guaranteed by the two guards
+			cfg.ContextSize = &cs
+		default:
+			slog.Warn("context_size is negative; ignoring", "requested", v)
 		}
-		cs := int32(v)
-		cfg.ContextSize = &cs
 	}
 	if specOpts != nil {
 		cfg.Speculative = &speculativeDecodingRequest{

@@ -330,6 +330,14 @@ func TestBuildConfigureRequest(t *testing.T) {
 		require.NotNil(t, req.ContextSize)
 		assert.Equal(t, int32(math.MaxInt32), *req.ContextSize)
 	})
+
+	t.Run("negative context size is ignored", func(t *testing.T) {
+		t.Parallel()
+		contextSize := int64(-1)
+		backendCfg := buildConfigureBackendConfig(&contextSize, nil, nil, nil, nil, nil)
+		req := buildConfigureRequest("ai/qwen3:14B-Q6_K", backendCfg, nil, "")
+		assert.Nil(t, req.ContextSize, "negative context size should be ignored")
+	})
 }
 
 func TestConfigureModelViaAPI(t *testing.T) {
