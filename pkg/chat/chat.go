@@ -180,6 +180,19 @@ type Usage struct {
 	ReasoningTokens   int64 `json:"reasoning_tokens,omitempty"`
 }
 
+// Add accumulates other's token counts into u. A nil other is a no-op so
+// callers can pass a message's optional usage without checking.
+func (u *Usage) Add(other *Usage) {
+	if other == nil {
+		return
+	}
+	u.InputTokens += other.InputTokens
+	u.OutputTokens += other.OutputTokens
+	u.CachedInputTokens += other.CachedInputTokens
+	u.CacheWriteTokens += other.CacheWriteTokens
+	u.ReasoningTokens += other.ReasoningTokens
+}
+
 // MessageStream interface represents a stream of chat completions
 type MessageStream interface {
 	// Recv gets the next completion chunk

@@ -137,7 +137,7 @@ func (s *stubRemoteClient) UpdateMessage(context.Context, string, string, *sessi
 	return nil
 }
 
-func (s *stubRemoteClient) AddSummary(context.Context, string, string, int, float64) error {
+func (s *stubRemoteClient) AddSummary(context.Context, string, session.Item) error {
 	return nil
 }
 

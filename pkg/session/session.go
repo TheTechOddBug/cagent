@@ -91,6 +91,15 @@ type Item struct {
 	// don't produce a regular message (e.g., compaction/summarization).
 	Cost float64 `json:"cost,omitempty"`
 
+	// Model names the model behind Cost for items that don't carry a
+	// regular message (e.g., compaction summaries), so cost-per-model
+	// breakdowns can attribute the spend.
+	Model string `json:"model,omitempty"`
+
+	// Usage records the token usage behind Cost for items that don't
+	// carry a regular message (e.g., compaction summaries).
+	Usage *chat.Usage `json:"usage,omitempty"`
+
 	// liveAttached marks a sub-session item appended by AddLiveSubSession
 	// in this process, i.e. a sub-session that ran live and reported its
 	// own cost through its own TokenUsageEvents. Deliberately unexported
@@ -547,8 +556,9 @@ func cloneMessage(m *Message) *Message {
 
 // snapshotItems returns a copy of s.Messages safe to use without holding
 // s.mu. Each Message value is deep-copied so concurrent UpdateMessage calls
-// cannot mutate the snapshot; non-Message fields (Summary, SubSession, Cost,
-// FirstKeptEntry) are shallow-copied since they are not mutated in place.
+// cannot mutate the snapshot; the remaining non-value fields (Summary,
+// SubSession, Cost, FirstKeptEntry, Model) are shallow-copied since they are
+// not mutated in place.
 func (s *Session) snapshotItems() []Item {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -557,6 +567,10 @@ func (s *Session) snapshotItems() []Item {
 		items[i] = item
 		if item.Message != nil {
 			items[i].Message = cloneMessage(item.Message)
+		}
+		if item.Usage != nil {
+			usage := *item.Usage
+			items[i].Usage = &usage
 		}
 	}
 	return items

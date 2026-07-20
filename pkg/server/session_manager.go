@@ -1583,11 +1583,11 @@ func (sm *SessionManager) UpdateMessage(ctx context.Context, sessionID, msgID st
 }
 
 // AddSummary adds a summary to a session.
-func (sm *SessionManager) AddSummary(ctx context.Context, sessionID, summary string, tokens int, cost float64) error {
+func (sm *SessionManager) AddSummary(ctx context.Context, sessionID string, item session.Item) error {
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 
-	return sm.sessionStore.AddSummary(ctx, sessionID, summary, tokens, cost)
+	return sm.sessionStore.AddSummary(ctx, sessionID, item)
 }
 
 // UpdateSessionTokens updates the token counts for a session.

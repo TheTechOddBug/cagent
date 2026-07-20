@@ -536,6 +536,41 @@ func TestRunLLM_SmallContextWindow(t *testing.T) {
 	assert.Positive(t, result.FirstKeptEntry)
 }
 
+// TestRunLLM_ReportsModelAndUsage verifies the summarization run's model and
+// token usage travel on the Result, so the summary's cost can be attributed
+// per model (e.g. in the /cost dialog).
+func TestRunLLM_ReportsModelAndUsage(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New(session.WithUserMessage("please do the task"))
+	sess.AddMessage(session.NewAgentMessage("root", &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "done",
+	}))
+	a := agent.New("root", "instr", agent.WithModel(fakeProvider{id: modelsdev.NewID("fake", "model")}))
+
+	result, err := RunLLM(t.Context(), LLMArgs{
+		Session:      sess,
+		Agent:        a,
+		ContextLimit: 8_192,
+		RunAgent: func(_ context.Context, _ *agent.Agent, cs *session.Session) error {
+			cs.AddMessage(session.NewAgentMessage("root", &chat.Message{
+				Role:    chat.MessageRoleAssistant,
+				Content: "the summary",
+				Model:   "fake/model",
+				Usage:   &chat.Usage{InputTokens: 123, OutputTokens: 45},
+			}))
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "fake/model", result.Model)
+	assert.Equal(t, int64(123), result.Usage.InputTokens)
+	assert.Equal(t, int64(45), result.Usage.OutputTokens)
+}
+
 // TestRunLLM_NoConversationFits_NoOps pins the safety net behind the
 // scaled budgets: when not a single conversation message fits the
 // summarization budget (e.g. one giant tool result), RunLLM must no-op

@@ -134,11 +134,13 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		Summary:        result.Summary,
 		FirstKeptEntry: result.FirstKeptEntry,
 		Cost:           result.Cost,
+		Model:          result.Model,
+		Usage:          summaryUsage(result),
 	})
 	_ = r.sessionStore.UpdateSession(ctx, sess)
 
 	slog.DebugContext(ctx, "Generated session summary", "session_id", sess.ID, "summary_length", len(result.Summary))
-	events.Emit(SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry, result.Cost))
+	events.Emit(SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry, result.Cost, result.Model, summaryUsage(result)))
 
 	// after_compaction: observational. Fired only when a summary was
 	// actually applied to the session. The hook receives the
@@ -147,6 +149,17 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	// counts live on sess.InputTokens / sess.OutputTokens after this
 	// returns and are exposed via the next TokenUsageEvent.
 	r.executeAfterCompactionHooks(ctx, sess, a, reason, contextLimit, preInputTokens, preOutputTokens, result.Summary, events)
+}
+
+// summaryUsage lifts a result's usage into the *chat.Usage form session
+// items and events carry, mapping the zero value (hook-supplied summaries,
+// no LLM call) to nil so nothing pretends tokens were consumed.
+func summaryUsage(result *compactor.Result) *chat.Usage {
+	if result.Usage == (chat.Usage{}) {
+		return nil
+	}
+	usage := result.Usage
+	return &usage
 }
 
 // summaryFromHook lifts a before_compaction hook's Summary verdict into

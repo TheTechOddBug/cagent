@@ -1101,9 +1101,10 @@ func TestSQLiteStore_CostsSurviveReload(t *testing.T) {
 	root.AddSubSession(child)
 
 	require.NoError(t, store.AddSession(t.Context(), root))
-	require.NoError(t, store.AddSummary(t.Context(), root.ID, "root summary", 1, 0.01))
+	rootSummary := Item{Summary: "root summary", FirstKeptEntry: 1, Cost: 0.01, Model: "openai/gpt-4o-mini", Usage: &chat.Usage{InputTokens: 100, OutputTokens: 20}}
+	require.NoError(t, store.AddSummary(t.Context(), root.ID, rootSummary))
 	// Mirror AddSummary in memory so the pre-reload total includes it.
-	root.Messages = append(root.Messages, Item{Summary: "root summary", FirstKeptEntry: 1, Cost: 0.01})
+	root.Messages = append(root.Messages, rootSummary)
 
 	want := root.TotalCost()
 	require.InDelta(t, 0.18, want, 1e-9)
@@ -1120,6 +1121,10 @@ func TestSQLiteStore_CostsSurviveReload(t *testing.T) {
 	require.Equal(t, "root summary", last.Summary)
 	assert.Equal(t, 1, last.FirstKeptEntry)
 	assert.InDelta(t, 0.01, last.Cost, 1e-9, "the summary item's cost must survive persistence")
+	assert.Equal(t, "openai/gpt-4o-mini", last.Model, "the summary item's model must survive persistence")
+	require.NotNil(t, last.Usage, "the summary item's usage must survive persistence")
+	assert.Equal(t, int64(100), last.Usage.InputTokens)
+	assert.Equal(t, int64(20), last.Usage.OutputTokens)
 	assert.InDelta(t, want, got.TotalCost(), 1e-9,
 		"TotalCost must be identical after closing and reopening the store")
 }

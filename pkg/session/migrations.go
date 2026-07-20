@@ -419,6 +419,15 @@ func getAllMigrations() []Migration {
 			Description: "Add safety_policy column to sessions table",
 			UpSQL:       `ALTER TABLE sessions ADD COLUMN safety_policy TEXT DEFAULT ''`,
 		},
+		{
+			ID:          25,
+			Name:        "025_add_model_usage_to_session_items",
+			Description: "Add model and usage_json columns to session_items so compaction summary costs can be attributed per model",
+			UpSQL: `
+				ALTER TABLE session_items ADD COLUMN model TEXT NOT NULL DEFAULT '';
+				ALTER TABLE session_items ADD COLUMN usage_json TEXT NOT NULL DEFAULT '';
+			`,
+		},
 	}
 }
 

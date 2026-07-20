@@ -688,10 +688,19 @@ func (c *Client) UpdateMessage(ctx context.Context, sessionID, msgID string, msg
 	return c.doRequest(ctx, http.MethodPatch, endpoint, req, nil)
 }
 
-// AddSummary adds a summary to a session.
-func (c *Client) AddSummary(ctx context.Context, sessionID, summary string, tokens int, cost float64) error {
+// AddSummary adds a summary item to a session.
+func (c *Client) AddSummary(ctx context.Context, sessionID string, item session.Item) error {
 	endpoint := fmt.Sprintf("/api/sessions/%s/summaries", sessionID)
-	req := api.AddSummaryRequest{Summary: summary, Tokens: tokens, Cost: cost}
+	// Tokens mirrors FirstKeptEntry under its legacy wire name so older
+	// servers keep understanding the request.
+	req := api.AddSummaryRequest{
+		Summary:        item.Summary,
+		Tokens:         item.FirstKeptEntry,
+		FirstKeptEntry: item.FirstKeptEntry,
+		Cost:           item.Cost,
+		Model:          item.Model,
+		Usage:          item.Usage,
+	}
 	return c.doRequest(ctx, http.MethodPost, endpoint, req, nil)
 }
 
