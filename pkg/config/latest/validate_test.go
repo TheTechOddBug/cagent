@@ -123,11 +123,13 @@ func TestAgentConfigValidateHarness(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		harness *HarnessConfig
-		wantErr string
+		name            string
+		harness         *HarnessConfig
+		compactionModel string
+		wantErr         string
 	}{
 		{name: "nil harness", harness: nil},
+		{name: "nil harness with compaction model", harness: nil, compactionModel: "fast"},
 		{name: "claude-code", harness: &HarnessConfig{Type: "claude-code"}},
 		{name: "codex", harness: &HarnessConfig{Type: "codex"}},
 		{name: "pi", harness: &HarnessConfig{Type: "pi"}},
@@ -145,12 +147,13 @@ func TestAgentConfigValidateHarness(t *testing.T) {
 		{name: "agent on wrong type", harness: &HarnessConfig{Type: "claude-code", Agent: "build"}, wantErr: "harness.agent can only be used with harness.type 'opencode'"},
 		{name: "thinking on opencode", harness: &HarnessConfig{Type: "opencode", Thinking: true}},
 		{name: "thinking on wrong type", harness: &HarnessConfig{Type: "codex", Thinking: true}, wantErr: "harness.thinking can only be used with harness.type 'opencode'"},
+		{name: "compaction model on harness", harness: &HarnessConfig{Type: "claude-code"}, compactionModel: "fast", wantErr: "compaction_model cannot be used with a harness"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			agent := AgentConfig{Name: "root", Harness: tt.harness}
+			agent := AgentConfig{Name: "root", Harness: tt.harness, CompactionModel: tt.compactionModel}
 			err := agent.validateHarness()
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)

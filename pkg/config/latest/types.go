@@ -651,11 +651,17 @@ type AgentConfig struct {
 	// proactive auto-compaction triggers for this agent. Must be greater than
 	// 0 and at most 1; defaults to 0.9 when unset. A `compaction_threshold`
 	// set on the agent's model takes precedence.
-	CompactionThreshold *float64          `json:"compaction_threshold,omitempty"`
-	AddPromptFiles      []string          `json:"add_prompt_files,omitempty" yaml:"add_prompt_files,omitempty"`
-	Commands            types.Commands    `json:"commands,omitempty"`
-	StructuredOutput    *StructuredOutput `json:"structured_output,omitempty"`
-	Skills              SkillsConfig      `json:"skills,omitzero"`
+	CompactionThreshold *float64 `json:"compaction_threshold,omitempty"`
+	// CompactionModel names the model used to summarize the conversation when
+	// this agent's session is compacted. The value can be a model name from
+	// the models section or an inline "provider/model" spec. A
+	// `compaction_model` set on the agent's model takes precedence; when both
+	// are unset, compaction reuses the agent's own model.
+	CompactionModel  string            `json:"compaction_model,omitempty"`
+	AddPromptFiles   []string          `json:"add_prompt_files,omitempty" yaml:"add_prompt_files,omitempty"`
+	Commands         types.Commands    `json:"commands,omitempty"`
+	StructuredOutput *StructuredOutput `json:"structured_output,omitempty"`
+	Skills           SkillsConfig      `json:"skills,omitzero"`
 	// UseCommands and UseSkills reference reusable groups defined in the
 	// top-level Config.Commands / Config.Skills sections. The referenced
 	// groups are merged into Commands / Skills during config resolution;
@@ -1100,8 +1106,9 @@ type ModelConfig struct {
 	// session; pointing this at a smaller/faster model makes compaction cheaper
 	// and more reliable without changing the model that runs the conversation.
 	// The value can be a model name from the models section or an inline
-	// "provider/model" spec. When empty, compaction reuses the agent's own
-	// model. If the compaction model has a smaller context window than the
+	// "provider/model" spec. It takes precedence over the agent-level
+	// `compaction_model`; when both are empty, compaction reuses the agent's
+	// own model. If the compaction model has a smaller context window than the
 	// primary, compaction is triggered against the smaller window so the
 	// summary call can always ingest the conversation it must compact.
 	CompactionModel string `json:"compaction_model,omitempty"`
