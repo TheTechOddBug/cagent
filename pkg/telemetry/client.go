@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/desktop"
@@ -19,24 +21,53 @@ func NewTelemetryLogger(logger *slog.Logger) *telemetryLogger {
 	return &telemetryLogger{logger: logger}
 }
 
+// sanitizeLogValue replaces newline and carriage-return characters in s to
+// prevent log-injection when the value is forwarded to a text-format sink.
+func sanitizeLogValue(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
+// sanitizeLogArgs replaces newline characters in any string values within
+// the args slice to prevent log injection through structured fields.
+// Named string types (e.g. EventType) are handled via reflect so they are
+// also sanitized without requiring an explicit type assertion per type.
+func sanitizeLogArgs(args []any) []any {
+	if len(args) == 0 {
+		return args
+	}
+	result := make([]any, len(args))
+	for i, v := range args {
+		if s, ok := v.(string); ok {
+			result[i] = sanitizeLogValue(s)
+		} else if rv := reflect.ValueOf(v); rv.IsValid() && rv.Kind() == reflect.String {
+			result[i] = sanitizeLogValue(rv.String())
+		} else {
+			result[i] = v
+		}
+	}
+	return result
+}
+
 // Debug logs a debug message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Debug(msg string, args ...any) {
-	tl.logger.Debug("[Telemetry]", append([]any{"msg", msg}, args...)...)
+	tl.logger.Debug("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Info logs an info message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Info(msg string, args ...any) {
-	tl.logger.Info("[Telemetry]", append([]any{"msg", msg}, args...)...)
+	tl.logger.Info("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Warn logs a warning message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Warn(msg string, args ...any) {
-	tl.logger.Warn("[Telemetry]", append([]any{"msg", msg}, args...)...)
+	tl.logger.Warn("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Error logs an error message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Error(msg string, args ...any) {
-	tl.logger.Error("[Telemetry]", append([]any{"msg", msg}, args...)...)
+	tl.logger.Error("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Enabled returns whether the logger is enabled for the given level
