@@ -32,7 +32,7 @@ No configuration is required to get this behavior — it's on by default. Three 
 | --- | --- | --- |
 | `session_compaction` | agent | Set to `false` to disable automatic compaction entirely for this agent (both the proactive threshold trigger and the post-overflow auto-recovery). The manual `/compact` command still works. Default: `true`. |
 | `compaction_threshold` | agent or model | Fraction of the context window (greater than `0`, at most `1`) at which proactive compaction fires. A value set on the model takes precedence over the agent-level value. Default: `0.9`. |
-| `compaction_model` | model | Delegate the compaction (summary-generation) call to a different, usually cheaper and faster, model. |
+| `compaction_model` | agent or model | Delegate the compaction (summary-generation) call to a different, usually cheaper and faster, model. A value set on the model takes precedence over the agent-level value. |
 
 Lower the threshold to compact earlier and keep individual requests smaller and cheaper; raise it to keep more verbatim history in context before the first summary happens:
 

@@ -13,6 +13,9 @@
 # summary call only. Everything else still runs on the primary model. When
 # `compaction_model` is omitted, compaction reuses the agent's own model.
 #
+# The field can also be set directly on an agent. A `compaction_model` set on
+# the agent's model takes precedence over the agent-level value.
+#
 # Note: if the compaction model has a SMALLER context window than the primary,
 # docker-agent triggers compaction against the smaller window so the summary
 # call can always ingest the conversation it must compact. Pair the primary
@@ -34,3 +37,9 @@ agents:
     model: primary
     description: An assistant that compacts its sessions with a cheaper model.
     instruction: You are a helpful assistant.
+  reviewer:
+    model: anthropic/claude-sonnet-4-5
+    description: An assistant configuring its compaction model at the agent level.
+    instruction: You are a helpful code reviewer.
+    # Agent-level alternative: same effect, no models section entry needed.
+    compaction_model: fast

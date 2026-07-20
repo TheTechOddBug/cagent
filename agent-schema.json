@@ -700,6 +700,14 @@
             0.9
           ]
         },
+        "compaction_model": {
+          "type": "string",
+          "description": "Model used to summarize the conversation when this agent's session is compacted (manual /compact, the proactive threshold trigger, or post-overflow recovery). Value can be a model name from the models section or an inline 'provider/model' spec. A compaction_model set on the agent's model takes precedence over this value; when both are omitted, compaction reuses the agent's own model.",
+          "examples": [
+            "fast",
+            "openai/gpt-4o-mini"
+          ]
+        },
         "add_prompt_files": {
           "type": "array",
           "description": "List of prompt files to add",

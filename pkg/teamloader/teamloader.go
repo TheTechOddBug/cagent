@@ -680,10 +680,11 @@ func getTitleModelForAgent(ctx context.Context, cfg *latest.Config, a *latest.Ag
 }
 
 // getCompactionModelForAgent resolves the dedicated compaction (summary
-// generation) model for an agent, if any. It returns the model named by the
-// `compaction_model` field of the first of the agent's configured models that
-// sets it, or nil when none do. It mirrors getTitleModelForAgent: the value may
-// be a named model from the models section or an inline "provider/model" spec.
+// generation) model for an agent, if any. The `compaction_model` field of the
+// first of the agent's configured models that sets it wins (mirroring
+// compactionThresholdForAgent); the agent-level value is the fallback. It
+// returns nil when neither sets one. The value may be a named model from the
+// models section or an inline "provider/model" spec.
 func getCompactionModelForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentConfig, runConfig *config.RuntimeConfig, providerRegistry *provider.Registry, modelOpts []options.Opt) (provider.Provider, error) {
 	var compactionRef string
 	for name := range strings.SplitSeq(a.Model, ",") {
@@ -691,6 +692,9 @@ func getCompactionModelForAgent(ctx context.Context, cfg *latest.Config, a *late
 			compactionRef = modelCfg.CompactionModel
 			break
 		}
+	}
+	if compactionRef == "" {
+		compactionRef = a.CompactionModel
 	}
 	if compactionRef == "" {
 		return nil, nil
