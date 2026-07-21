@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/docker/docker-agent/pkg/content"
+	desktoptransport "github.com/docker/docker-agent/pkg/desktop/transport"
 )
 
 // NormalizeReference parses an OCI reference and returns the normalized
@@ -65,7 +66,7 @@ func IsDigestReference(registryRef string) bool {
 // underlying connection are established only once, rather than re-doing
 // authentication for each step.
 func Pull(ctx context.Context, registryRef string, force bool, opts ...crane.Option) (string, error) {
-	opts = append(opts, crane.WithContext(ctx), crane.WithTransport(NewTransport(ctx)))
+	opts = append(opts, crane.WithContext(ctx), crane.WithTransport(desktoptransport.New(ctx)))
 	o := crane.GetOptions(opts...)
 
 	ref, err := name.ParseReference(registryRef, o.Name...)

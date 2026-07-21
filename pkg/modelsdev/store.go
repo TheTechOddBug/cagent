@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker-agent/pkg/remote"
+	"github.com/docker/docker-agent/pkg/desktop/transport"
 )
 
 const (
@@ -376,7 +376,7 @@ func fetchFromAPI(ctx context.Context, etag string) (*Database, string, error) {
 		req.Header.Set("If-None-Match", etag)
 	}
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: remote.NewTransport(ctx)}).Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: transport.New(ctx)}).Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch from API: %w", err)
 	}

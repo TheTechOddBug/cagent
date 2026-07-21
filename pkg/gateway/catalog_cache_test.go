@@ -38,7 +38,7 @@ var (
 
 // fakeCatalogTransport serves canned responses for the fixed catalog URL and
 // records the If-None-Match header of every request. It is deliberately not
-// an *http.Transport: remote.NewTransport returns any other RoundTripper
+// an *http.Transport: transport.New returns any other RoundTripper
 // unchanged, so these tests never probe Docker Desktop (whose availability is
 // memoized process-wide) and never touch the network.
 type fakeCatalogTransport struct {

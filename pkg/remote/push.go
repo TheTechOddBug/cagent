@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/docker/docker-agent/pkg/content"
+	"github.com/docker/docker-agent/pkg/desktop/transport"
 )
 
 // Push pushes an artifact from the content store to an OCI registry
@@ -46,7 +47,7 @@ func Push(ctx context.Context, reference string) error {
 		return fmt.Errorf("parsing registry reference %s: %w", reference, err)
 	}
 
-	if err := crane.Push(img, ref.String(), crane.WithContext(ctx), crane.WithTransport(NewTransport(ctx))); err != nil {
+	if err := crane.Push(img, ref.String(), crane.WithContext(ctx), crane.WithTransport(transport.New(ctx))); err != nil {
 		return fmt.Errorf("pushing image to registry %s: %w", reference, err)
 	}
 
