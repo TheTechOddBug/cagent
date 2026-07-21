@@ -174,62 +174,49 @@ func (c *Checker) DenyPatterns() []string {
 func parsePattern(pattern string) (toolPattern string, argPatterns map[string]string) {
 	argPatterns = make(map[string]string)
 
-	// The tool name is everything before the first ":key=" argument condition.
-	start := indexArgCondition(pattern)
-	if start < 0 {
-		return pattern, argPatterns
-	}
-	toolPattern = pattern[:start]
-
-	// Parse "key=value" conditions from the remainder, breaking a value only at
-	// the next ":key=" boundary so colons inside a value are kept.
-	for rest := pattern[start+1:]; rest != ""; {
-		key, value, _ := strings.Cut(rest, "=")
-		if end := indexArgCondition(value); end >= 0 {
-			argPatterns[key] = value[:end]
-			rest = value[end+1:]
-			continue
-		}
+	// The tool name runs up to the first ":key=" condition; each condition then
+	// runs up to the next one, so colons inside a value are kept.
+	toolPattern, rest := cutAtArgCondition(pattern)
+	for rest != "" {
+		condition, next := cutAtArgCondition(rest)
+		key, value, _ := strings.Cut(condition, "=")
 		argPatterns[key] = value
-		break
+		rest = next
 	}
 
 	return toolPattern, argPatterns
 }
 
-// indexArgCondition returns the index of the first ":" in s that begins an
-// argument condition — a ":" immediately followed by "<identifier>=" — or -1 if
-// there is none. This distinguishes a genuine ":key=value" boundary from a colon
-// that merely appears inside a tool name or an argument value (a URL scheme, a
-// Windows drive letter, etc.).
-func indexArgCondition(s string) int {
+// cutAtArgCondition cuts s around the first ":" that begins an argument
+// condition — a ":" immediately followed by "key=" — returning the text before
+// and after it. If there is no such boundary, before is all of s and after is
+// empty. This tells a genuine ":key=value" boundary apart from a colon inside a
+// tool name or an argument value (a URL scheme, a Windows drive letter).
+func cutAtArgCondition(s string) (before, after string) {
 	for i := range len(s) {
-		if s[i] == ':' && startsWithArgKey(s[i+1:]) {
-			return i
+		if s[i] != ':' {
+			continue
+		}
+		if key, _, found := strings.Cut(s[i+1:], "="); found && isArgKey(key) {
+			return s[:i], s[i+1:]
 		}
 	}
-	return -1
+	return s, ""
 }
 
-// startsWithArgKey reports whether s begins with "<identifier>=": a letter or
-// "_", then any run of letters, digits or "_", then "=".
-func startsWithArgKey(s string) bool {
-	if s == "" || !isIdentStart(s[0]) {
-		return false
+// isArgKey reports whether s is a valid argument key: a non-empty run of
+// letters, digits or "_".
+func isArgKey(s string) bool {
+	for i := range len(s) {
+		if !isArgKeyByte(s[i]) {
+			return false
+		}
 	}
-	i := 1
-	for i < len(s) && isIdentByte(s[i]) {
-		i++
-	}
-	return i < len(s) && s[i] == '='
+	return s != ""
 }
 
-func isIdentStart(c byte) bool {
-	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
-}
-
-func isIdentByte(c byte) bool {
-	return isIdentStart(c) || ('0' <= c && c <= '9')
+func isArgKeyByte(c byte) bool {
+	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
 // matchToolPattern checks if a tool name and its arguments match a pattern.
