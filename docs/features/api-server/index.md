@@ -37,6 +37,15 @@ All endpoints are under the `/api` prefix.
 | `GET`  | `/api/agents`     | List all available agents         |
 | `GET`  | `/api/agents/:id` | Get an agent's full configuration |
 
+Each agent entry in the `GET /api/agents` response contains:
+
+| Field        | Type            | Description                                                                                   |
+| ------------ | --------------- | --------------------------------------------------------------------------------------------- |
+| `name`       | string          | Agent identifier (config filename without `.yaml`).                                           |
+| `description`| string          | The root agent's `description` field.                                                         |
+| `multi`      | boolean         | `true` when the config defines more than one agent.                                           |
+| `commands`   | array of string | Sorted list of named command keys defined on the root agent. Omitted when no commands exist.  |
+
 ### Sessions
 
 | Method   | Path                                | Description                                             |
@@ -153,7 +162,7 @@ Event types include:
 ```bash
 # 1. List available agents
 $ curl http://localhost:8080/api/agents
-[{"name":"my-agent","multi":false,"description":"A helpful assistant"}]
+[{"name":"my-agent","multi":false,"description":"A helpful assistant","commands":["deploy","review"]}]
 
 # 2. Create a session
 $ curl -X POST http://localhost:8080/api/sessions \
