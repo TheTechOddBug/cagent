@@ -1,4 +1,4 @@
-package mcp
+package oauthflow
 
 import (
 	"fmt"
@@ -146,12 +146,23 @@ func TestCallbackServer_ResolveRedirectURI(t *testing.T) {
 	}
 	defer func() { _ = cs.Shutdown(t.Context()) }()
 
-	if got := cs.resolveRedirectURI(""); got != cs.GetRedirectURI() {
-		t.Errorf("resolveRedirectURI(\"\") = %q, want %q", got, cs.GetRedirectURI())
+	if got := cs.ResolveRedirectURI(""); got != cs.GetRedirectURI() {
+		t.Errorf("ResolveRedirectURI(\"\") = %q, want %q", got, cs.GetRedirectURI())
 	}
 
 	want := fmt.Sprintf("https://host.example/cb?port=%d", cs.Port())
-	if got := cs.resolveRedirectURI("https://host.example/cb?port=${callbackPort}"); got != want {
-		t.Errorf("resolveRedirectURI with placeholder = %q, want %q", got, want)
+	if got := cs.ResolveRedirectURI("https://host.example/cb?port=${callbackPort}"); got != want {
+		t.Errorf("ResolveRedirectURI with placeholder = %q, want %q", got, want)
 	}
+}
+
+// newTestTransport returns a transport private to the test. Parallel tests
+// must not share http.DefaultTransport: httptest.Server.Close calls
+// http.DefaultTransport.CloseIdleConnections, which can break another
+// test's in-flight request ("transport connection broken").
+func newTestTransport(t *testing.T) *http.Transport {
+	t.Helper()
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	t.Cleanup(tr.CloseIdleConnections)
+	return tr
 }

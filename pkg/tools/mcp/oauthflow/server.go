@@ -1,4 +1,4 @@
-package mcp
+package oauthflow
 
 import (
 	"context"
@@ -106,7 +106,7 @@ func (cs *CallbackServer) Port() int {
 	return 0
 }
 
-// resolveRedirectURI returns the OAuth redirect URI to advertise to the
+// ResolveRedirectURI returns the OAuth redirect URI to advertise to the
 // authorization server.
 //
 // When callbackRedirectURL is empty, the local callback server's URI is
@@ -117,11 +117,11 @@ func (cs *CallbackServer) Port() int {
 // the actual port the local callback server is listening on. The external
 // URL is expected to eventually redirect the browser back to the local
 // callback server, preserving the OAuth query parameters.
-func (cs *CallbackServer) resolveRedirectURI(callbackRedirectURL string) string {
+func (cs *CallbackServer) ResolveRedirectURI(callbackRedirectURL string) string {
 	return buildRedirectURI(callbackRedirectURL, cs.GetRedirectURI(), cs.Port())
 }
 
-// buildRedirectURI is the pure string-handling core of resolveRedirectURI,
+// buildRedirectURI is the pure string-handling core of ResolveRedirectURI,
 // factored out so it can be unit-tested without starting a listener.
 func buildRedirectURI(override, fallback string, port int) string {
 	if override == "" {

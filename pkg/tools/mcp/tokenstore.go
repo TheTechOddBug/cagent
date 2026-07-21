@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/docker/docker-agent/pkg/concurrent"
 )
@@ -66,34 +65,6 @@ func defaultTokenStore() OAuthTokenStore {
 // registered by pkg/tools/mcp/keyringstore, it falls back to an in-memory store.
 func NewKeyringTokenStore() OAuthTokenStore {
 	return defaultTokenStore()
-}
-
-type OAuthToken struct {
-	AccessToken  string    `json:"access_token"`
-	TokenType    string    `json:"token_type"`
-	ExpiresIn    int       `json:"expires_in,omitempty"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	Scope        string    `json:"scope,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	ClientID     string    `json:"client_id,omitempty"`
-	ClientSecret string    `json:"client_secret,omitempty"`
-	AuthServer   string    `json:"auth_server,omitempty"`
-
-	// RequestedScopes records the scope list the config asked for when this
-	// token was obtained. Unlike Scope (which is whatever the authorization
-	// server chose to return, sometimes empty, sometimes comma/space
-	// separated), RequestedScopes reflects our intent and is used to detect
-	// when the config has changed and a new OAuth flow is required.
-	RequestedScopes []string `json:"requested_scopes,omitempty"`
-}
-
-// IsExpired checks if the token is expired
-func (t *OAuthToken) IsExpired() bool {
-	if t.ExpiresAt.IsZero() {
-		return false
-	}
-	// Consider token expired 30 seconds before actual expiry for safety
-	return time.Now().Add(30 * time.Second).After(t.ExpiresAt)
 }
 
 // OAuthTokenEntry pairs a stored OAuth token with its resource URL.

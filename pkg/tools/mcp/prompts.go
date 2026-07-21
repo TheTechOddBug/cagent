@@ -1,15 +1,13 @@
 package mcp
 
-// PromptInfo contains metadata about an available MCP prompt
-type PromptInfo struct {
-	Name        string           `json:"name"`        // The prompt name/identifier
-	Description string           `json:"description"` // Human-readable description of what this prompt does
-	Arguments   []PromptArgument `json:"arguments"`   // List of arguments this prompt accepts
-}
+import "github.com/docker/docker-agent/pkg/tools"
 
-// PromptArgument represents a single argument for an MCP prompt
-type PromptArgument struct {
-	Name        string `json:"name"`        // The name of the argument
-	Description string `json:"description"` // Human-readable description of the argument
-	Required    bool   `json:"required"`    // Whether this argument is required
-}
+// PromptInfo and PromptArgument moved to pkg/tools so the runtime can expose
+// MCP prompts without importing this package; the aliases keep existing
+// callers working.
+
+// PromptInfo is an alias for [tools.PromptInfo].
+type PromptInfo = tools.PromptInfo
+
+// PromptArgument is an alias for [tools.PromptArgument].
+type PromptArgument = tools.PromptArgument
