@@ -159,13 +159,13 @@ models:
     model: claude-opus-4-7
     thinking_budget: adaptive
     provider_opts:
-      thinking_display: omitted   # summarized | display | omitted
+      thinking_display: omitted   # summarized | omitted (display: pre-4.6 models only)
 ```
 
 | Value        | Behavior                                                                              |
 | ------------ | ------------------------------------------------------------------------------------- |
 | `summarized` | Thinking blocks returned with a text summary (Docker Agent default for adaptive thinking). |
-| `display`    | Full thinking blocks returned for display.                                            |
+| `display`    | Full thinking blocks returned for display. Pre-4.6 token-thinking models only — rejected by Opus/Sonnet 4.6+, Sonnet 5, and Fable 5 (Docker Agent fails fast with a configuration error). |
 | `omitted`    | Thinking blocks hidden — only the signature is returned.                               |
 
 Full thinking tokens are billed regardless of `thinking_display`.

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
@@ -97,6 +98,79 @@ func TestAnthropicThinkingDisplay(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestValidateThinkingDisplay(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		model   string
+		opts    map[string]any
+		wantErr string
+	}{
+		{
+			name:  "no thinking_display",
+			model: "claude-sonnet-5",
+		},
+		{
+			name:  "summarized on adaptive model",
+			model: "claude-sonnet-5",
+			opts:  map[string]any{"thinking_display": "summarized"},
+		},
+		{
+			name:  "omitted on adaptive model",
+			model: "claude-opus-4-7",
+			opts:  map[string]any{"thinking_display": "omitted"},
+		},
+		{
+			name:  "display on token-thinking model",
+			model: "claude-sonnet-4-5",
+			opts:  map[string]any{"thinking_display": "display"},
+		},
+		{
+			name:    "display on claude-sonnet-5",
+			model:   "claude-sonnet-5",
+			opts:    map[string]any{"thinking_display": "display"},
+			wantErr: `does not support thinking_display: "display"`,
+		},
+		{
+			name:    "display on claude-opus-4-7",
+			model:   "claude-opus-4-7",
+			opts:    map[string]any{"thinking_display": "display"},
+			wantErr: `does not support thinking_display: "display"`,
+		},
+		{
+			// Invalid values keep their warn-and-ignore behavior.
+			name:  "invalid value ignored",
+			model: "claude-sonnet-5",
+			opts:  map[string]any{"thinking_display": "bogus"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateThinkingDisplay(&latest.ModelConfig{Model: tt.model, ProviderOpts: tt.opts})
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewClient_RejectsFullThinkingDisplayOnUnsupportedModel(t *testing.T) {
+	t.Parallel()
+	cfg := &latest.ModelConfig{
+		Provider:     "anthropic",
+		Model:        "claude-sonnet-5",
+		ProviderOpts: map[string]any{"thinking_display": "display"},
+	}
+	_, err := NewClient(t.Context(), cfg, environment.NewMapEnvProvider(nil))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support thinking_display")
 }
 
 // defaultTestModel is an Anthropic model that supports adaptive thinking but is
