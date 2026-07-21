@@ -18,11 +18,6 @@ type sourceLoader struct {
 	err  error
 }
 
-// NewSourceLoader creates a new source loader that caches and periodically refreshes a config source.
-func NewSourceLoader(ctx context.Context, inner config.Source, refreshInterval time.Duration) *sourceLoader {
-	return newSourceLoader(ctx, inner, refreshInterval)
-}
-
 func newSourceLoader(ctx context.Context, inner config.Source, refreshInterval time.Duration) *sourceLoader {
 	sl := &sourceLoader{
 		inner:           inner,

@@ -62,11 +62,6 @@ func (p *Printer) PrintWelcomeMessage(appName string) {
 	p.Printf("\n------- Welcome to %s! -------\n(Ctrl+C to stop the agent and exit)\n\n", bold(appName))
 }
 
-// PrintError prints an error message
-func (p *Printer) PrintError(err error) {
-	p.Printf("❌ %s", err)
-}
-
 // PrintWarning prints a warning message on its own line. Used for non-fatal
 // notices such as a turn that produced only reasoning or an empty response,
 // which would otherwise be invisible in non-TUI runs.
