@@ -44,8 +44,11 @@ func GatewayAuthToken(ctx context.Context, env environment.Provider, gateway str
 // gateway-mode provider clients: the proxied base URL (the provider's public
 // endpoint unless the model overrides base_url), provider/model identity,
 // the gateway's query parameters, and the title-generation / compaction
-// markers.
+// markers. A nil modelOpts is treated as zero options (no markers).
 func GatewayHTTPOptions(gatewayURL *url.URL, defaultBaseURL string, cfg *latest.ModelConfig, modelOpts *options.ModelOptions) []httpclient.Opt {
+	if modelOpts == nil {
+		modelOpts = &options.ModelOptions{}
+	}
 	opts := []httpclient.Opt{
 		httpclient.WithProxiedBaseURL(cmp.Or(cfg.BaseURL, defaultBaseURL)),
 		httpclient.WithProvider(cfg.Provider),

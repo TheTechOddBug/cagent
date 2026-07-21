@@ -119,4 +119,13 @@ func TestGatewayHTTPOptions(t *testing.T) {
 		assert.Equal(t, "1", o.Header.Get("X-Cagent-Compacting"))
 		assert.Empty(t, o.Header.Get("X-Cagent-GeneratingTitle"))
 	})
+
+	t.Run("nil model options adds no markers", func(t *testing.T) {
+		t.Parallel()
+		cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-4o"}
+		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, nil))
+		assert.Equal(t, "https://api.openai.com/v1", o.Header.Get("X-Cagent-Forward"))
+		assert.Empty(t, o.Header.Get("X-Cagent-GeneratingTitle"))
+		assert.Empty(t, o.Header.Get("X-Cagent-Compacting"))
+	})
 }
