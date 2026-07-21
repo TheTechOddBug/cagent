@@ -501,14 +501,12 @@ func TestParsePattern(t *testing.T) {
 			wantArgPattern: map[string]string{"url": "https://example.com/*"},
 		},
 		{
-			// Windows drive paths in argument values contain a colon too.
 			pattern:        `shell:cwd=C:\work\*`,
 			wantTool:       "shell",
 			wantArgPattern: map[string]string{"cwd": `C:\work\*`},
 		},
 		{
-			// A value colon followed by a second condition still splits on the
-			// ":key=" boundary.
+			// A value colon followed by a second condition still splits on ":key=".
 			pattern:        "shell:cmd=ls*:cwd=C:\\home",
 			wantTool:       "shell",
 			wantArgPattern: map[string]string{"cmd": "ls*", "cwd": "C:\\home"},
@@ -619,9 +617,8 @@ func TestDenyGlobCrossesPathSeparator(t *testing.T) {
 }
 
 // TestDenyRuleWithColonInValue guards against a deny rule failing open when its
-// argument value contains a colon. parsePattern used to split the whole pattern
-// on every ":", so "fetch:url=https://evil.com/*" was parsed as url="https" and
-// the rule silently never matched a real URL. The value must survive intact.
+// argument value contains a colon: "fetch:url=https://evil.com/*" used to parse
+// as url="https" and silently never match.
 func TestDenyRuleWithColonInValue(t *testing.T) {
 	t.Parallel()
 
