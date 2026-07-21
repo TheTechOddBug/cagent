@@ -43,7 +43,7 @@ func TestGetToken(t *testing.T) {
 		assert.Equal(t, 1, backend.refreshes())
 	})
 
-	t.Run("cooldown prevents repeated refresh nudges", func(t *testing.T) {
+	t.Run("backoff prevents repeated refresh nudges", func(t *testing.T) {
 		backend := &fakeBackend{token: expired}
 		installFakeBackend(t, backend)
 
@@ -52,14 +52,46 @@ func TestGetToken(t *testing.T) {
 		assert.Equal(t, 1, backend.refreshes())
 	})
 
-	t.Run("cooldown path picks up token refreshed by another caller", func(t *testing.T) {
+	t.Run("rate-limited caller reuses last refresh result", func(t *testing.T) {
 		backend := &fakeBackend{token: expired}
+		backend.onRefresh = func() { backend.setToken(valid) }
 		installFakeBackend(t, backend)
 
-		assert.Equal(t, expired, GetToken(t.Context()))
-		backend.setToken(valid)
+		assert.Equal(t, valid, GetToken(t.Context()))
+
+		// Desktop regressed to an expired token, but a new nudge is
+		// rate-limited: the cached result of the last refresh is reused.
+		backend.setToken(makeToken(t, time.Now().Add(-time.Minute)))
 		assert.Equal(t, valid, GetToken(t.Context()))
 		assert.Equal(t, 1, backend.refreshes())
+	})
+
+	t.Run("concurrent callers share a single refresh", func(t *testing.T) {
+		backend := &fakeBackend{token: expired}
+		backend.onRefresh = func() { backend.setToken(valid) }
+		installFakeBackend(t, backend)
+
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				assert.Equal(t, valid, GetToken(t.Context()))
+			})
+		}
+		wg.Wait()
+		assert.Equal(t, 1, backend.refreshes())
+	})
+
+	t.Run("canceled caller returns promptly with stale token", func(t *testing.T) {
+		backend := &fakeBackend{token: expired}
+		installFakeBackend(t, backend)
+		refreshBudget = time.Second
+
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		assert.Equal(t, expired, GetToken(ctx))
+		assert.Less(t, time.Since(start), 500*time.Millisecond)
 	})
 
 	t.Run("non-JWT token returned as-is", func(t *testing.T) {
@@ -81,6 +113,7 @@ func TestGetToken(t *testing.T) {
 
 func TestTokenExpired(t *testing.T) {
 	assert.False(t, tokenExpired(makeToken(t, time.Now().Add(time.Minute))))
+	assert.False(t, tokenExpired(makeToken(t, time.Now().Add(-10*time.Second))), "within clock-skew leeway")
 	assert.True(t, tokenExpired(makeToken(t, time.Now().Add(-time.Minute))))
 	assert.False(t, tokenExpired("not-a-jwt"))
 }
@@ -149,18 +182,43 @@ func installFakeBackend(t *testing.T, backend *fakeBackend) {
 	ClientBackend = newRawClient(ln.dial)
 	t.Cleanup(func() { ClientBackend = oldClient })
 
-	oldCooldown, oldBudget, oldInterval := refreshCooldown, refreshPollBudget, refreshPollInterval
-	refreshPollBudget = 100 * time.Millisecond
+	oldCooldown, oldBackoff, oldBudget, oldInterval := refreshCooldown, refreshFailureBackoff, refreshBudget, refreshPollInterval
+	refreshCooldown = time.Hour
+	refreshFailureBackoff = time.Hour
+	refreshBudget = 150 * time.Millisecond
 	refreshPollInterval = 5 * time.Millisecond
 	t.Cleanup(func() {
-		refreshCooldown, refreshPollBudget, refreshPollInterval = oldCooldown, oldBudget, oldInterval
+		refreshCooldown, refreshFailureBackoff, refreshBudget, refreshPollInterval = oldCooldown, oldBackoff, oldBudget, oldInterval
 	})
 
 	func() {
 		refreshState.Lock()
 		defer refreshState.Unlock()
-		refreshState.lastAttempt = time.Time{}
+		refreshState.nextAttempt = time.Time{}
+		refreshState.inflight = nil
+		refreshState.result = ""
 	}()
+
+	// Runs first on cleanup (LIFO): a detached refresh goroutine must finish
+	// before the fake backend and globals are torn down.
+	t.Cleanup(func() { drainInflightRefresh(t) })
+}
+
+func drainInflightRefresh(t *testing.T) {
+	t.Helper()
+
+	refreshState.Lock()
+	inflight := refreshState.inflight
+	refreshState.Unlock()
+
+	if inflight == nil {
+		return
+	}
+	select {
+	case <-inflight:
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight token refresh did not finish")
+	}
 }
 
 // memListener is an in-memory net.Listener fed by its dial method, so the

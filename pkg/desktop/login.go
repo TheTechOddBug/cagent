@@ -42,7 +42,8 @@ func fetchToken(ctx context.Context) string {
 	return token
 }
 
-// tokenExpired reports whether the JWT's exp claim is in the past.
+// tokenExpired reports whether the JWT's exp claim is in the past, with
+// leeway for clock skew between this machine and the token issuer.
 // Tokens that don't parse or carry no exp claim are treated as valid.
 func tokenExpired(token string) bool {
 	parsed, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
@@ -53,61 +54,114 @@ func tokenExpired(token string) bool {
 	if err != nil || exp == nil {
 		return false
 	}
-	return exp.Before(time.Now())
+	return exp.Before(time.Now().Add(-expiryLeeway))
 }
+
+const expiryLeeway = 30 * time.Second
 
 var refreshState struct {
 	sync.Mutex
 
-	lastAttempt time.Time
+	nextAttempt time.Time     // earliest time a new refresh may start
+	inflight    chan struct{} // closed when the in-flight refresh completes
+	result      string        // token produced by the last refresh, "" if none
 }
 
 // Vars, not consts, so tests can shorten them.
 var (
-	refreshCooldown     = 30 * time.Second
-	refreshPollBudget   = 10 * time.Second
-	refreshPollInterval = 500 * time.Millisecond
+	refreshCooldown       = 30 * time.Second
+	refreshFailureBackoff = 2 * time.Minute
+	refreshBudget         = 10 * time.Second
+	refreshPollInterval   = 500 * time.Millisecond
 )
 
 // forceTokenRefresh nudges Docker Desktop to reload its session from the OS
 // credential store and refresh it — the same hook the Docker CLI triggers
 // after `docker login`. Desktop handles it asynchronously, so we poll until a
 // non-expired token shows up. Returns "" if no fresh token was obtained.
+//
+// Refreshes are singleflighted: one goroutine talks to Desktop while
+// concurrent callers wait for its result (or bail out when their own context
+// is canceled). Attempts are rate-limited so a persistently stale Desktop
+// doesn't stall every request.
 func forceTokenRefresh(ctx context.Context) string {
 	refreshState.Lock()
-	defer refreshState.Unlock()
 
-	if time.Since(refreshState.lastAttempt) < refreshCooldown {
-		// A concurrent caller may have just refreshed; re-check once
-		// instead of nudging Desktop again.
-		if token := fetchToken(ctx); token != "" && !tokenExpired(token) {
+	if inflight := refreshState.inflight; inflight != nil {
+		refreshState.Unlock()
+		return awaitRefresh(ctx, inflight)
+	}
+
+	if time.Now().Before(refreshState.nextAttempt) {
+		// Rate-limited, but a refresh may have just completed: reuse its
+		// result if still valid.
+		token := refreshState.result
+		refreshState.Unlock()
+		if token != "" && !tokenExpired(token) {
 			return token
 		}
 		return ""
 	}
-	refreshState.lastAttempt = time.Now()
 
+	done := make(chan struct{})
+	refreshState.inflight = done
+	refreshState.Unlock()
+
+	go func() {
+		// Detached from the caller: the refresh benefits all requests, so a
+		// single canceled request must not abort it. refreshBudget bounds the
+		// whole attempt (POST + polling).
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshBudget)
+		defer cancel()
+
+		token := runTokenRefresh(ctx)
+
+		refreshState.Lock()
+		refreshState.result = token
+		backoff := refreshCooldown
+		if token == "" {
+			backoff = refreshFailureBackoff
+		}
+		refreshState.nextAttempt = time.Now().Add(backoff)
+		refreshState.inflight = nil
+		refreshState.Unlock()
+		close(done)
+	}()
+
+	return awaitRefresh(ctx, done)
+}
+
+func awaitRefresh(ctx context.Context, done <-chan struct{}) string {
+	select {
+	case <-done:
+		refreshState.Lock()
+		defer refreshState.Unlock()
+		return refreshState.result
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+func runTokenRefresh(ctx context.Context) string {
 	slog.DebugContext(ctx, "Docker Desktop returned an expired token, forcing a refresh")
 	if err := ClientBackend.Post(ctx, "/registry/credstore-updated"); err != nil {
 		slog.DebugContext(ctx, "Failed to trigger Docker Desktop token refresh", "error", err)
 		return ""
 	}
 
-	deadline := time.After(refreshPollBudget)
 	ticker := time.NewTicker(refreshPollInterval)
 	defer ticker.Stop()
 
 	for {
+		// Check right away: Desktop may have refreshed synchronously.
+		if token := fetchToken(ctx); token != "" && !tokenExpired(token) {
+			return token
+		}
 		select {
 		case <-ctx.Done():
-			return ""
-		case <-deadline:
 			slog.DebugContext(ctx, "Docker Desktop did not deliver a fresh token in time")
 			return ""
 		case <-ticker.C:
-			if token := fetchToken(ctx); token != "" && !tokenExpired(token) {
-				return token
-			}
 		}
 	}
 }
