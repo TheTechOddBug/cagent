@@ -13,7 +13,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
 // ElicitationResult represents the result of an elicitation request.
@@ -479,7 +478,7 @@ func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitPa
 	// --exec CLI path, which never registers OnElicitationRequest), nobody at
 	// all can answer this request. Decline immediately with a model-readable
 	// note instead of parking a goroutine forever (#3584).
-	if !mcptools.InteractivePromptsAllowed(ctx) && !r.hasElicitationSink() {
+	if !tools.InteractivePromptsAllowed(ctx) && !r.hasElicitationSink() {
 		slog.WarnContext(ctx, "Declining elicitation: background session has no UI to answer it", "message", req.Message)
 		r.elicitationDeclines.record(genai.ConversationIDFromContext(ctx), backgroundElicitationDeclinedNote(req.Message))
 		return tools.ElicitationResult{

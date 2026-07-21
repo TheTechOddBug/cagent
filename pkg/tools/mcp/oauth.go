@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	otelmcp "github.com/docker/docker-agent/pkg/telemetry/mcp"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/mcp/oauthflow"
 )
 
 // resourceMetadataFromWWWAuth extracts resource metadata URL from WWW-Authenticate header.
@@ -72,24 +73,6 @@ type protectedResourceMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	BearerMethodsSupported            []string `json:"bearer_methods_supported,omitempty"`
 	ResourceSigningAlgValuesSupported []string `json:"resource_signing_alg_values_supported,omitempty"`
-}
-
-// AuthorizationServerMetadata represents OAuth 2.0 Authorization Server Metadata (RFC 8414)
-type AuthorizationServerMetadata struct {
-	Issuer                                 string   `json:"issuer"`
-	AuthorizationEndpoint                  string   `json:"authorization_endpoint"`
-	TokenEndpoint                          string   `json:"token_endpoint"`
-	RegistrationEndpoint                   string   `json:"registration_endpoint,omitempty"`
-	RevocationEndpoint                     string   `json:"revocation_endpoint,omitempty"`
-	IntrospectionEndpoint                  string   `json:"introspection_endpoint,omitempty"`
-	JwksURI                                string   `json:"jwks_uri,omitempty"`
-	ScopesSupported                        []string `json:"scopes_supported,omitempty"`
-	ResponseTypesSupported                 []string `json:"response_types_supported"`
-	ResponseModesSupported                 []string `json:"response_modes_supported,omitempty"`
-	GrantTypesSupported                    []string `json:"grant_types_supported,omitempty"`
-	TokenEndpointAuthMethodsSupported      []string `json:"token_endpoint_auth_methods_supported,omitempty"`
-	RevocationEndpointAuthMethodsSupported []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
-	CodeChallengeMethodsSupported          []string `json:"code_challenge_methods_supported,omitempty"`
 }
 
 func (o *oauth) getAuthorizationServerMetadata(ctx context.Context, authServerURL string) (*AuthorizationServerMetadata, error) {
@@ -386,7 +369,7 @@ func (t *oauthTransport) oauthClient() *http.Client {
 	if t.oauthHTTPClient != nil {
 		return t.oauthHTTPClient
 	}
-	return oauthHTTPClient
+	return oauthflow.DefaultHTTPClient()
 }
 
 // waitTimeoutOrDefault returns the unmanaged-OAuth reply wait bound for this
@@ -902,7 +885,7 @@ func (t *oauthTransport) refreshStoredToken(ctx context.Context, prev *OAuthToke
 		return nil, err
 	}
 
-	newToken, err := refreshAccessToken(
+	newToken, err := oauthflow.RefreshAccessTokenWithClient(
 		ctx,
 		t.oauthClient(),
 		metadata.TokenEndpoint,
@@ -1074,7 +1057,7 @@ func (t *oauthTransport) handleManagedOAuthFlow(ctx context.Context, authServer,
 		return fmt.Errorf("failed to start callback server: %w", err)
 	}
 
-	redirectURI := callbackServer.resolveRedirectURI(callbackRedirectURLFrom(t.oauthConfig))
+	redirectURI := callbackServer.ResolveRedirectURI(callbackRedirectURLFrom(t.oauthConfig))
 	slog.DebugContext(ctx, "Using redirect URI", "uri", redirectURI)
 
 	clientID, clientSecret, scopes, err := t.resolveClientCredentials(ctx, authServerMetadata, redirectURI)
@@ -1133,7 +1116,7 @@ func (t *oauthTransport) handleManagedOAuthFlow(ctx context.Context, authServer,
 
 	slog.DebugContext(ctx, "Exchanging authorization code for token")
 	span.AddEvent("oauth.step", trace.WithAttributes(attribute.String("cagent.oauth.step", "token_exchange")))
-	token, err := exchangeCodeForToken(
+	token, err := oauthflow.ExchangeCodeForTokenWithClient(
 		ctx,
 		t.oauthClient(),
 		authServerMetadata.TokenEndpoint,
@@ -1178,7 +1161,7 @@ func (t *oauthTransport) resolveClientCredentials(ctx context.Context, authServe
 		return t.oauthConfig.ClientID, t.oauthConfig.ClientSecret, t.oauthConfig.Scopes, nil
 	case authServerMetadata.RegistrationEndpoint != "":
 		slog.DebugContext(ctx, "Attempting dynamic client registration")
-		clientID, clientSecret, err = registerClient(
+		clientID, clientSecret, err = oauthflow.RegisterClientWithClient(
 			ctx,
 			t.oauthClient(),
 			authServerMetadata,
@@ -1624,7 +1607,7 @@ func (t *oauthTransport) exchangeAuthorizationCode(
 	pkceVerifier, clientID, clientSecret, redirectURI, resourceIndicator string,
 ) (*OAuthToken, error) {
 	slog.DebugContext(ctx, "Exchanging authorization code received from client")
-	token, err := exchangeCodeForToken(
+	token, err := oauthflow.ExchangeCodeForTokenWithClient(
 		ctx,
 		t.oauthClient(),
 		authServerMetadata.TokenEndpoint,

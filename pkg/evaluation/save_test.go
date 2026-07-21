@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -96,7 +97,7 @@ func TestSaveRunSessions(t *testing.T) {
 	assert.FileExists(t, dbPath)
 
 	// Verify we can read sessions back from the database
-	store, err := session.NewSQLiteSessionStore(t.Context(), dbPath)
+	store, err := sqlitestore.New(t.Context(), dbPath)
 	require.NoError(t, err)
 	defer func() {
 		if closer, ok := store.(interface{ Close() error }); ok {
@@ -323,7 +324,7 @@ func TestSaveRunSessionsWithCost(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify we can read sessions back with cost preserved
-	store, err := session.NewSQLiteSessionStore(t.Context(), dbPath)
+	store, err := sqlitestore.New(t.Context(), dbPath)
 	require.NoError(t, err)
 	defer func() {
 		if closer, ok := store.(interface{ Close() error }); ok {

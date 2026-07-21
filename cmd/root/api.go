@@ -16,7 +16,7 @@ import (
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/profiling"
 	"github.com/docker/docker-agent/pkg/server"
-	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
 
@@ -117,7 +117,7 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 		return err
 	}
 
-	sessionStore, err := session.NewSQLiteSessionStore(ctx, sessionDB)
+	sessionStore, err := sqlitestore.New(ctx, sessionDB)
 	if err != nil {
 		return fmt.Errorf("creating session store: %w", err)
 	}

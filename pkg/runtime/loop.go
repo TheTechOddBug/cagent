@@ -33,7 +33,6 @@ import (
 	"github.com/docker/docker-agent/pkg/tools/builtin/sessionplan"
 	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 	"github.com/docker/docker-agent/pkg/userconfig"
 )
 
@@ -284,7 +283,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// authorizes such servers from an interactive turn (or transfer_task, which
 	// keeps NonInteractive=false and forwards the dialog to the TUI).
 	if sess.NonInteractive {
-		ctx = mcptools.WithoutInteractivePrompts(ctx)
+		ctx = tools.WithoutInteractivePrompts(ctx)
 	}
 
 	// runtime.session is the root span for one stream. gen_ai.* keys

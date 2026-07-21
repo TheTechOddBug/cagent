@@ -22,7 +22,7 @@ import (
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
-	"github.com/docker/docker-agent/pkg/tools/mcp"
+	"github.com/docker/docker-agent/pkg/tools/mcp/oauthflow"
 )
 
 // RemoteRuntime implements the Runtime interface using a remote client.
@@ -433,7 +433,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 		return err
 	}
 
-	var authMetadata mcp.AuthorizationServerMetadata
+	var authMetadata oauthflow.AuthorizationServerMetadata
 	metadataBytes, err := json.Marshal(authServerMetadata)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to marshal auth_server_metadata", "error", err)
@@ -459,7 +459,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	defer cancel()
 
 	slog.DebugContext(ctx, "Creating OAuth callback server")
-	callbackServer, err := mcp.NewCallbackServer(ctx)
+	callbackServer, err := oauthflow.NewCallbackServer(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create callback server", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil, req.ElicitationID)
@@ -487,7 +487,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	var clientID, clientSecret string
 	if authMetadata.RegistrationEndpoint != "" {
 		slog.DebugContext(ctx, "Attempting dynamic client registration")
-		clientID, clientSecret, err = mcp.RegisterClient(oauthCtx, &authMetadata, redirectURI, nil)
+		clientID, clientSecret, err = oauthflow.RegisterClient(oauthCtx, &authMetadata, redirectURI, nil)
 		if err != nil {
 			slog.ErrorContext(ctx, "Dynamic client registration failed", "error", err)
 			_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil, req.ElicitationID)
@@ -501,7 +501,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 		return err
 	}
 
-	state, err := mcp.GenerateState()
+	state, err := oauthflow.GenerateState()
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to generate state", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil, req.ElicitationID)
@@ -509,9 +509,9 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	}
 
 	callbackServer.SetExpectedState(state)
-	verifier := mcp.GeneratePKCEVerifier()
+	verifier := oauthflow.GeneratePKCEVerifier()
 
-	authURL := mcp.BuildAuthorizationURL(
+	authURL := oauthflow.BuildAuthorizationURL(
 		authMetadata.AuthorizationEndpoint,
 		clientID,
 		redirectURI,
@@ -524,7 +524,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	slog.DebugContext(ctx, "Authorization URL built", "url", authURL)
 
 	slog.DebugContext(ctx, "Requesting authorization code")
-	code, receivedState, err := mcp.RequestAuthorizationCode(oauthCtx, authURL, callbackServer, state)
+	code, receivedState, err := oauthflow.RequestAuthorizationCode(oauthCtx, authURL, callbackServer, state)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to get authorization code", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil, req.ElicitationID)
@@ -540,7 +540,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 
 	slog.DebugContext(ctx, "Authorization code received, exchanging for token")
 
-	token, err := mcp.ExchangeCodeForTokenWithResource(
+	token, err := oauthflow.ExchangeCodeForTokenWithResource(
 		oauthCtx,
 		authMetadata.TokenEndpoint,
 		code,
@@ -658,21 +658,31 @@ func (r *RemoteRuntime) UpdateSessionTitle(ctx context.Context, sess *session.Se
 }
 
 // CurrentMCPPrompts returns available MCP prompts from the server.
-func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcp.PromptInfo {
+func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]tools.PromptInfo {
 	if r.sessionID == "" {
-		return make(map[string]mcp.PromptInfo)
+		return make(map[string]tools.PromptInfo)
 	}
 	prompts, err := r.client.GetSessionMCPPrompts(ctx, r.sessionID)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to get MCP prompts", "error", err)
-		return make(map[string]mcp.PromptInfo)
+		return make(map[string]tools.PromptInfo)
 	}
-	// Convert map[string]any to map[string]mcp.PromptInfo
-	result := make(map[string]mcp.PromptInfo)
+	// The client decodes the JSON response into map[string]any, so each
+	// value is a map[string]any, never a concrete PromptInfo; round-trip
+	// through JSON to get typed values.
+	result := make(map[string]tools.PromptInfo)
 	for k, v := range prompts {
-		if info, ok := v.(mcp.PromptInfo); ok {
-			result[k] = info
+		b, err := json.Marshal(v)
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to convert MCP prompt info", "prompt", k, "error", err)
+			continue
 		}
+		var info tools.PromptInfo
+		if err := json.Unmarshal(b, &info); err != nil {
+			slog.WarnContext(ctx, "Failed to convert MCP prompt info", "prompt", k, "error", err)
+			continue
+		}
+		result[k] = info
 	}
 	return result
 }

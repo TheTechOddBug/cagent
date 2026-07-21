@@ -1,4 +1,9 @@
-package dmr
+// Package dmrmodels handles Docker Model Runner endpoint discovery and model
+// listing. It is deliberately free of the OpenAI SDK (and any other model
+// client dependency) so that pkg/runtime — which only needs DMR model
+// discovery — does not link the full DMR provider client into embedders'
+// binaries. The full client lives in the parent dmr package.
+package dmrmodels
 
 import (
 	"bytes"
@@ -14,11 +19,35 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/openai/openai-go/v3/option"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 )
+
+const (
+	// dmrInferencePrefix mirrors github.com/docker/model-runner/pkg/inference.InferencePrefix.
+	dmrInferencePrefix = "/engines"
+	// dmrExperimentalEndpointsPrefix mirrors github.com/docker/model-runner/pkg/inference.ExperimentalEndpointsPrefix.
+	dmrExperimentalEndpointsPrefix = "/exp/vDD4.40"
+
+	// dmrDefaultPort is the default port for Docker Model Runner.
+	dmrDefaultPort = "12434"
+
+	// connectivityTimeout is the timeout for testing DMR endpoint connectivity.
+	// This is kept short to quickly detect unreachable endpoints and try fallbacks.
+	connectivityTimeout = 2 * time.Second
+)
+
+// ErrNotInstalled is returned when Docker Model Runner is not installed.
+var ErrNotInstalled = errors.New("docker model runner is not available\nplease install it and try again (https://docs.docker.com/ai/model-runner/get-started/)")
+
+// IsNotInstalledError reports whether a `docker model` invocation failed
+// because the Docker installation predates Model Runner (the CLI rejects the
+// --json flag). Matching on content rather than the exact message keeps the
+// detection stable across docker CLI usage-text changes.
+func IsNotInstalledError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unknown flag: --json")
+}
 
 // defaultURL builds the standard DMR inference URL for a given host and port.
 // Example: defaultURL("127.0.0.1", "12434") → "http://127.0.0.1:12434/engines/v1/"
@@ -95,9 +124,9 @@ func getDMRFallbackURLs(containerized bool) []string {
 	return []string{defaultHostURL()}
 }
 
-// resolveDMRBaseURL determines the correct base URL and HTTP options to talk to
-// Docker Model Runner, mirroring the behavior of the `docker model` CLI as
-// closely as possible.
+// ResolveBaseURL determines the correct base URL to talk to Docker Model
+// Runner, mirroring the behavior of the `docker model` CLI as closely as
+// possible.
 //
 // High‑level rules:
 //   - If the user explicitly configured a BaseURL or MODEL_RUNNER_HOST, use that (no fallbacks).
@@ -109,20 +138,20 @@ func getDMRFallbackURLs(containerized bool) []string {
 //   - Test connectivity and try fallback URLs if the primary endpoint is unreachable.
 //
 // It also returns an *http.Client when a custom transport (e.g., Docker Unix socket) is needed.
-func resolveDMRBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint string) (string, []option.RequestOption, *http.Client) {
+func ResolveBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint string) (string, *http.Client) {
 	// Explicit configuration — return immediately without fallback testing.
 	if cfg != nil && cfg.BaseURL != "" {
 		slog.DebugContext(ctx, "DMR using explicitly configured BaseURL", "url", cfg.BaseURL)
-		return cfg.BaseURL, nil, nil
+		return cfg.BaseURL, nil
 	}
 	if host := os.Getenv("MODEL_RUNNER_HOST"); host != "" {
 		baseURL := strings.TrimRight(host, "/") + dmrInferencePrefix + "/v1/"
 		slog.DebugContext(ctx, "DMR using MODEL_RUNNER_HOST", "url", baseURL)
-		return baseURL, nil, nil
+		return baseURL, nil
 	}
 
 	// Resolve primary URL based on endpoint
-	baseURL, clientOptions, httpClient := resolvePrimaryDMRURL(endpoint)
+	baseURL, httpClient := resolvePrimaryDMRURL(endpoint)
 
 	// Test connectivity and try fallbacks if needed
 	testClient := cmp.Or(httpClient, &http.Client{})
@@ -138,7 +167,7 @@ func resolveDMRBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint st
 			slog.DebugContext(ctx, "DMR trying fallback endpoint", "url", fallbackURL)
 			if testDMRConnectivity(ctx, &http.Client{}, fallbackURL) {
 				slog.InfoContext(ctx, "DMR using fallback endpoint", "fallback_url", fallbackURL, "original_url", baseURL)
-				return fallbackURL, nil, nil
+				return fallbackURL, nil
 			}
 		}
 		// All endpoints unreachable — continue with primary URL.
@@ -148,28 +177,28 @@ func resolveDMRBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint st
 		slog.DebugContext(ctx, "DMR primary endpoint reachable", "url", baseURL)
 	}
 
-	return baseURL, clientOptions, httpClient
+	return baseURL, httpClient
 }
 
 // resolvePrimaryDMRURL resolves the primary DMR URL based on the endpoint string.
 // This handles the various endpoint formats and platform-specific routing without
 // connectivity testing or fallbacks.
-func resolvePrimaryDMRURL(endpoint string) (string, []option.RequestOption, *http.Client) {
+func resolvePrimaryDMRURL(endpoint string) (string, *http.Client) {
 	ep := strings.TrimSpace(endpoint)
 
 	// Legacy bug workaround: old DMR versions <= 0.1.44 could report http://:0/engines/v1/.
 	if ep == "http://:0/engines/v1/" {
-		return defaultHostURL(), nil, nil
+		return defaultHostURL(), nil
 	}
 
 	if ep == "" {
-		return defaultForEnvironment(), nil, nil
+		return defaultForEnvironment(), nil
 	}
 
 	u, err := url.Parse(ep)
 	if err != nil {
 		slog.Debug("failed to parse DMR endpoint, falling back to defaults", "endpoint", ep, "error", err)
-		return defaultForEnvironment(), nil, nil
+		return defaultForEnvironment(), nil
 	}
 
 	host := u.Hostname()
@@ -189,7 +218,7 @@ func resolvePrimaryDMRURL(endpoint string) (string, []option.RequestOption, *htt
 			},
 		}
 
-		return baseURL, []option.RequestOption{option.WithHTTPClient(httpClient)}, httpClient
+		return baseURL, httpClient
 	}
 
 	port = cmp.Or(port, dmrDefaultPort)
@@ -200,17 +229,17 @@ func resolvePrimaryDMRURL(endpoint string) (string, []option.RequestOption, *htt
 		if !strings.HasSuffix(baseURL, "/") {
 			baseURL += "/"
 		}
-		return baseURL, nil, nil
+		return baseURL, nil
 	}
 
 	// Host case — always talk to localhost:<port>, even if the status
 	// endpoint uses a gateway IP like 172.17.0.1.
-	return defaultURL("127.0.0.1", port), nil, nil
+	return defaultURL("127.0.0.1", port), nil
 }
 
-// getDockerModelEndpointAndEngine shells out to `docker model status --json`
+// DockerModelEndpointAndEngine shells out to `docker model status --json`
 // and returns the resolved endpoint URL and the active inference engine name.
-func getDockerModelEndpointAndEngine(ctx context.Context) (endpoint, engine string, err error) {
+func DockerModelEndpointAndEngine(ctx context.Context) (endpoint, engine string, err error) {
 	cmd := exec.CommandContext(ctx, "docker", "model", "status", "--json")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

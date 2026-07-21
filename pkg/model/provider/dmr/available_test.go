@@ -8,19 +8,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 )
 
 func TestErrIndicatesNotInstalled(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, errIndicatesNotInstalled(nil))
-	assert.False(t, errIndicatesNotInstalled(errors.New("dial tcp: connection refused")))
+	assert.False(t, dmrmodels.IsNotInstalledError(nil))
+	assert.False(t, dmrmodels.IsNotInstalledError(errors.New("dial tcp: connection refused")))
 
 	// The exact message the docker CLI printed when the test suite was
 	// written, and a variant with different usage text around it: detection
 	// must not depend on the full message staying byte-identical.
-	assert.True(t, errIndicatesNotInstalled(errors.New("unknown flag: --json\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information")))
-	assert.True(t, errIndicatesNotInstalled(errors.New("some prefix\nunknown flag: --json\nsome other usage text")))
+	assert.True(t, dmrmodels.IsNotInstalledError(errors.New("unknown flag: --json\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information")))
+	assert.True(t, dmrmodels.IsNotInstalledError(errors.New("some prefix\nunknown flag: --json\nsome other usage text")))
 }
 
 func TestModelAvailable(t *testing.T) {

@@ -27,7 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
-	"github.com/docker/docker-agent/pkg/model/provider/dmr"
+	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -36,7 +36,6 @@ import (
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	"github.com/docker/docker-agent/pkg/tools/lifecycle"
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
 // ToolHandlerFunc is a function type for handling tool calls
@@ -115,7 +114,7 @@ type Runtime interface {
 
 	// CurrentMCPPrompts returns MCP prompts available from the current agent's toolsets.
 	// Returns an empty map if no MCP prompts are available.
-	CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo
+	CurrentMCPPrompts(ctx context.Context) map[string]tools.PromptInfo
 
 	// ExecuteMCPPrompt executes a named MCP prompt with the given arguments.
 	ExecuteMCPPrompt(ctx context.Context, promptName string, arguments map[string]string) (string, error)
@@ -365,7 +364,7 @@ type LocalRuntime struct {
 
 	// dmrModelLister lists the models pulled locally in Docker Model Runner,
 	// used to populate DMR entries in the model picker. Defaults to
-	// dmr.ListModels in NewLocalRuntime; left nil by runtimes built directly
+	// dmrmodels.ListModels in NewLocalRuntime; left nil by runtimes built directly
 	// (e.g. tests) so DMR discovery stays opt-in. Tests inject a stub here.
 	dmrModelLister func(ctx context.Context) ([]string, error)
 
@@ -695,7 +694,7 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		maxOverflowCompactions: defaultMaxOverflowCompactions,
 		toolListTimeout:        defaultToolListTimeout,
 		toolStartTimeout:       defaultToolStartTimeout,
-		dmrModelLister:         dmr.ListModels,
+		dmrModelLister:         dmrmodels.ListModels,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
 
@@ -1209,11 +1208,20 @@ func nameFor(ts tools.ToolSet, fallback string) string {
 	return fallback
 }
 
+// mcpPromptToolset is the subset of the MCP toolset's API the runtime needs
+// for prompt discovery and execution. It is an interface (satisfied by
+// *mcp.Toolset) so pkg/runtime does not import the MCP toolset package,
+// which would link its whole dependency tree into every embedder.
+type mcpPromptToolset interface {
+	ListPrompts(ctx context.Context) ([]tools.PromptInfo, error)
+	GetPrompt(ctx context.Context, name string, arguments map[string]string) (*mcp.GetPromptResult, error)
+}
+
 // CurrentMCPPrompts returns the available MCP prompts from all active MCP toolsets
 // for the current agent. It discovers prompts by calling ListPrompts on each MCP toolset
 // and aggregates the results into a map keyed by prompt name.
-func (r *LocalRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo {
-	prompts := make(map[string]mcptools.PromptInfo)
+func (r *LocalRuntime) CurrentMCPPrompts(ctx context.Context) map[string]tools.PromptInfo {
+	prompts := make(map[string]tools.PromptInfo)
 
 	// Get the current agent to access its toolsets
 	currentAgent := r.CurrentAgent()
@@ -1224,7 +1232,7 @@ func (r *LocalRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptool
 
 	// Iterate through all toolsets of the current agent
 	for _, toolset := range currentAgent.ToolSets() {
-		if mcpToolset, ok := tools.As[*mcptools.Toolset](toolset); ok {
+		if mcpToolset, ok := tools.As[mcpPromptToolset](toolset); ok {
 			slog.DebugContext(ctx, "Found MCP toolset", "toolset", mcpToolset)
 			// Discover prompts from this MCP toolset
 			mcpPrompts := r.discoverMCPPrompts(ctx, mcpToolset)
@@ -1244,23 +1252,23 @@ func (r *LocalRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptool
 // discoverMCPPrompts queries an MCP toolset for available prompts and converts them
 // to PromptInfo structures. This method handles the MCP protocol communication
 // and gracefully handles any errors during prompt discovery.
-func (r *LocalRuntime) discoverMCPPrompts(ctx context.Context, toolset *mcptools.Toolset) map[string]mcptools.PromptInfo {
+func (r *LocalRuntime) discoverMCPPrompts(ctx context.Context, toolset mcpPromptToolset) map[string]tools.PromptInfo {
 	mcpPrompts, err := toolset.ListPrompts(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to list MCP prompts from toolset", "error", err)
 		return nil
 	}
 
-	prompts := make(map[string]mcptools.PromptInfo, len(mcpPrompts))
+	prompts := make(map[string]tools.PromptInfo, len(mcpPrompts))
 	for _, mcpPrompt := range mcpPrompts {
-		promptInfo := mcptools.PromptInfo{
+		promptInfo := tools.PromptInfo{
 			Name:        mcpPrompt.Name,
 			Description: mcpPrompt.Description,
-			Arguments:   make([]mcptools.PromptArgument, 0, len(mcpPrompt.Arguments)),
+			Arguments:   make([]tools.PromptArgument, 0, len(mcpPrompt.Arguments)),
 		}
 
 		for _, arg := range mcpPrompt.Arguments {
-			promptInfo.Arguments = append(promptInfo.Arguments, mcptools.PromptArgument{
+			promptInfo.Arguments = append(promptInfo.Arguments, tools.PromptArgument{
 				Name:        arg.Name,
 				Description: arg.Description,
 				Required:    arg.Required,
@@ -1308,7 +1316,7 @@ func (r *LocalRuntime) ExecuteMCPPrompt(ctx context.Context, promptName string, 
 	}
 
 	for _, toolset := range currentAgent.ToolSets() {
-		mcpToolset, ok := tools.As[*mcptools.Toolset](toolset)
+		mcpToolset, ok := tools.As[mcpPromptToolset](toolset)
 		if !ok {
 			continue
 		}
@@ -1685,7 +1693,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	// fast with a recognisable error rather than blocking on a dialog
 	// the TUI is not yet ready to render. The actual prompt happens on
 	// the first RunStream when the user is interacting with the agent.
-	nonInteractiveCtx := mcptools.WithoutInteractivePrompts(ctx)
+	nonInteractiveCtx := tools.WithoutInteractivePrompts(ctx)
 	r.emitToolsProgressively(nonInteractiveCtx, a, send)
 
 	// Flush any agent warnings: load-time warnings recorded at agent
@@ -1784,7 +1792,7 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 				// failure-reported flag here would suppress the *real*
 				// failure (e.g. server 4xx on the eventual interactive
 				// retry) that the user actually needs to see.
-				if mcptools.IsAuthorizationRequired(err) {
+				if tools.IsAuthorizationRequired(err) {
 					// Two cases:
 					// 1. Initial startup deferral (toolset never ran): the
 					//    OAuth dialog will appear naturally on the first user

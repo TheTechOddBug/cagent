@@ -3,6 +3,8 @@ package mcp
 import (
 	"os"
 	"testing"
+
+	"github.com/docker/docker-agent/pkg/tools/mcp/oauthflow"
 )
 
 // TestMain swaps the OAuth helpers' SSRF-safe HTTP client for the
@@ -12,6 +14,6 @@ import (
 // servers (which prunes http.DefaultTransport's pool) can't break its
 // in-flight requests.
 func TestMain(m *testing.M) {
-	oauthHTTPClient = oauthHTTPClientForAllowPrivateIPs(true)
+	oauthflow.SetHTTPClientForTesting(oauthflow.HTTPClientForAllowPrivateIPs(true))
 	os.Exit(m.Run())
 }

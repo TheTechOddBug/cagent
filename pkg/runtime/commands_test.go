@@ -111,6 +111,26 @@ func TestResolveCommand_SimpleCommand(t *testing.T) {
 	assert.Equal(t, "This is the test instruction", result)
 }
 
+// TestResolveCommand_NoEvaluatorRegistered covers embedders that never call
+// jscommands.Register: ${...} expressions must degrade to being left
+// unexpanded, not error out. Deliberately not parallel: it swaps the
+// package-global evaluator factory, and sequential top-level tests never
+// overlap parallel ones.
+func TestResolveCommand_NoEvaluatorRegistered(t *testing.T) {
+	prev := commandEvaluatorFactory.Load()
+	commandEvaluatorFactory.Store(nil)
+	t.Cleanup(func() { commandEvaluatorFactory.Store(prev) })
+
+	rt := &mockRuntime{
+		commands: types.Commands{
+			"fix": types.Command{Instruction: "Fix the file ${args[0]}"},
+		},
+	}
+
+	result := ResolveCommand(t.Context(), rt, "/fix main.go")
+	assert.Equal(t, "Fix the file ${args[0]}", result)
+}
+
 func TestResolveCommand_CommandNotFound(t *testing.T) {
 	t.Parallel()
 

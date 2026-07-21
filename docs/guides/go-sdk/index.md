@@ -259,6 +259,23 @@ func main() {
 
 If you do not need persistent OAuth tokens (for example, in short-lived batch jobs or tests), omit the call and tokens will be kept in-memory for the process lifetime.
 
+## JavaScript Command Expressions (opt-in)
+
+Slash-command instructions can embed `${...}` JavaScript expressions (`${args[0]}`, `${args.join(" ")}`, `${tool({...})}`). Evaluating them requires the goja JavaScript engine, which is deliberately kept out of `pkg/runtime`'s import graph so code-built embedders don't link it by default.
+
+The CLI, `teamloader.Load()`, `pkg/cli.Run()` and `embeddedchat/defaults` enable it automatically. If you build teams in code, call `runtime.ResolveCommand` (or `cli.PrepareUserMessage`) directly **and** use `${...}` expressions in commands, register the evaluator yourself:
+
+```go
+import "github.com/docker/docker-agent/pkg/runtime/jscommands"
+
+func main() {
+    jscommands.Register()
+    // ... rest of your startup code
+}
+```
+
+Without the registration, `${...}` expressions are left unexpanded and a warning naming the fix is logged; everything else about command resolution (including the legacy `!tool(...)` syntax) works as usual.
+
 ## Basic Example
 
 Create a simple agent and run it:

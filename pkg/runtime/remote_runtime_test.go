@@ -103,3 +103,46 @@ func TestRemoteRuntime_SetAgentModel_LatestQueuedWins(t *testing.T) {
 	rt.pendingMu.Unlock()
 	assert.Equal(t, "second", got)
 }
+
+// mcpPromptsClient is a stubRemoteClient variant returning MCP prompts the
+// way the HTTP client does: decoded into map[string]any, with each prompt a
+// nested map — never a concrete tools.PromptInfo.
+type mcpPromptsClient struct {
+	stubRemoteClient
+}
+
+func (c *mcpPromptsClient) GetSessionMCPPrompts(context.Context, string) (map[string]any, error) {
+	return map[string]any{
+		"review": map[string]any{
+			"name":        "review",
+			"description": "Review code",
+			"arguments": []any{
+				map[string]any{"name": "path", "description": "File to review", "required": true},
+			},
+		},
+	}, nil
+}
+
+// TestRemoteRuntime_CurrentMCPPrompts pins the JSON-decoded-map conversion:
+// values arrive as map[string]any, so a plain type assertion would silently
+// drop every prompt.
+func TestRemoteRuntime_CurrentMCPPrompts(t *testing.T) {
+	t.Parallel()
+
+	client := &mcpPromptsClient{
+		stubRemoteClient: stubRemoteClient{
+			cfg: &latest.Config{Agents: latest.Agents{{Name: "test"}}},
+		},
+	}
+	rt, err := NewRemoteRuntime(client)
+	require.NoError(t, err)
+	rt.sessionID = "session-1"
+
+	prompts := rt.CurrentMCPPrompts(t.Context())
+	require.Len(t, prompts, 1)
+	assert.Equal(t, "review", prompts["review"].Name)
+	assert.Equal(t, "Review code", prompts["review"].Description)
+	require.Len(t, prompts["review"].Arguments, 1)
+	assert.Equal(t, "path", prompts["review"].Arguments[0].Name)
+	assert.True(t, prompts["review"].Arguments[0].Required)
+}

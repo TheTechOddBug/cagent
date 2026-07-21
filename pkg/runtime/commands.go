@@ -8,12 +8,32 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/config/types"
-	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/tools"
 )
+
+// CommandEvaluator expands ${...} JavaScript expressions in a /command
+// instruction, with access to the agent's tools and the command arguments.
+type CommandEvaluator interface {
+	Evaluate(ctx context.Context, instruction string, args []string) string
+}
+
+// commandEvaluatorFactory builds the CommandEvaluator used by
+// ResolveCommand. It is empty until a JS engine is registered: calling
+// jscommands.Register (done by teamloader, the CLI and
+// embeddedchat/defaults) wires in the goja-backed evaluator from pkg/js.
+// The indirection keeps the JS engine out of pkg/runtime's import graph for
+// embedders that build teams in code and never use JS command expressions.
+var commandEvaluatorFactory atomic.Pointer[func(agentTools []tools.Tool) CommandEvaluator]
+
+// RegisterCommandEvaluator installs the factory ResolveCommand uses to
+// expand ${...} expressions. See pkg/runtime/jscommands.
+func RegisterCommandEvaluator(factory func(agentTools []tools.Tool) CommandEvaluator) {
+	commandEvaluatorFactory.Store(&factory)
+}
 
 // argsPlaceholderRegex matches ${args...} patterns to check if args are used.
 // This includes ${args}, ${args[N]}, ${args.join(...)}, ${args.length}, etc.
@@ -73,12 +93,14 @@ func ResolveCommand(ctx context.Context, rt Runtime, userInput string) string {
 	// Execute JavaScript expressions (${...} syntax) with args array
 	// We execute JS first to prevent tool output (from !tool commands) from being evaluated as JS,
 	// which would be a security vulnerability (injection).
-	agentTools, err := rt.CurrentAgentTools(ctx)
-	if err != nil {
+	if factory := commandEvaluatorFactory.Load(); factory == nil {
+		if strings.Contains(instruction, "${") {
+			slog.WarnContext(ctx, "No JavaScript evaluator registered; ${...} expressions left unexpanded (call jscommands.Register to enable them)")
+		}
+	} else if agentTools, err := rt.CurrentAgentTools(ctx); err != nil {
 		slog.WarnContext(ctx, "Failed to get agent tools for JS expression execution", "error", err)
 	} else {
-		evaluator := js.NewEvaluator(agentTools)
-		instruction = evaluator.Evaluate(ctx, instruction, args)
+		instruction = (*factory)(agentTools).Evaluate(ctx, instruction, args)
 	}
 
 	// Execute tool commands and substitute their output (legacy !tool() syntax)

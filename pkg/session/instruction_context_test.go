@@ -136,7 +136,7 @@ func TestGetMessagesWithoutInstructionContextUsesLegacyExtras(t *testing.T) {
 }
 
 func TestInstructionContextPersistsInSQLite(t *testing.T) {
-	store, err := NewSQLiteSessionStore(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	store, err := newSQLiteStoreForTest(t, filepath.Join(t.TempDir(), "sessions.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 

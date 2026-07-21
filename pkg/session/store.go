@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/concurrent"
-	"github.com/docker/docker-agent/pkg/sqliteutil"
 )
 
 var (
@@ -471,59 +469,6 @@ func (s *InMemorySessionStore) Close() error {
 	return nil
 }
 
-// NewSQLiteSessionStore creates a new SQLite session store backed by a file
-// at path. If migrations fail (other than a version mismatch or a filesystem
-// open failure) the existing database is moved aside to <path>.bak and a
-// fresh one is created.
-func NewSQLiteSessionStore(ctx context.Context, path string) (Store, error) {
-	store, err := openAndMigrateSQLiteStore(ctx, path)
-	if err != nil {
-		// Don't attempt recovery for version mismatch - the user needs to upgrade,
-		// not silently lose their data by starting fresh.
-		if errors.Is(err, ErrNewerDatabase) {
-			return nil, err
-		}
-
-		// Don't attempt recovery if we couldn't even open/create the database file
-		// (e.g., permission denied, read-only filesystem, missing directory).
-		// The backup+retry dance can't fix a filesystem-level problem, and would just
-		// wrap the real error in a confusing "migration failed even after database reset"
-		// message.
-		if sqliteutil.IsCantOpenError(err) {
-			return nil, err
-		}
-
-		// Don't attempt recovery for transient errors: a canceled context
-		// (e.g. Ctrl-C during startup) or a BUSY/LOCKED database (e.g. a
-		// second docker-agent instance holding a write lock). A fresh database
-		// can't fix those, and the reset would silently discard a perfectly
-		// healthy session history.
-		if sqliteutil.IsTransientError(err) {
-			return nil, err
-		}
-
-		// If migrations failed, try to recover by backing up the database and starting fresh
-		slog.WarnContext(ctx, "Failed to open session store, attempting recovery", "error", err)
-
-		backupErr := backupDatabase(path)
-		if backupErr != nil {
-			// Return the original error if backup failed
-			slog.ErrorContext(ctx, "Failed to backup database for recovery", "error", backupErr)
-			return nil, fmt.Errorf("migration failed: %w (backup also failed: %w)", err, backupErr)
-		}
-
-		// Try again with a fresh database
-		store, err = openAndMigrateSQLiteStore(ctx, path)
-		if err != nil {
-			return nil, fmt.Errorf("migration failed even after database reset: %w", err)
-		}
-
-		slog.InfoContext(ctx, "Successfully recovered session store with fresh database")
-	}
-
-	return store, nil
-}
-
 // NewSQLiteSessionStoreFromDB wraps an already-open *sql.DB in a session store,
 // running the bootstrap schema and migrations against it. The caller retains
 // ownership of db: it is not closed on error, and Store.Close() will close it
@@ -531,7 +476,7 @@ func NewSQLiteSessionStore(ctx context.Context, path string) (Store, error) {
 //
 // This is intended primarily for tests that want to use an in-memory database
 // (sql.Open("sqlite", ":memory:")) or pre-seed a database with non-default
-// state. Production callers should use NewSQLiteSessionStore.
+// state. Production callers should use sqlitestore.New.
 func NewSQLiteSessionStoreFromDB(ctx context.Context, db *sql.DB) (*SQLiteSessionStore, error) {
 	if db == nil {
 		return nil, errors.New("db is nil")
@@ -539,24 +484,6 @@ func NewSQLiteSessionStoreFromDB(ctx context.Context, db *sql.DB) (*SQLiteSessio
 	if err := setupAndMigrate(ctx, db); err != nil {
 		return nil, err
 	}
-	return &SQLiteSessionStore{db: db}, nil
-}
-
-// openAndMigrateSQLiteStore opens the database and runs migrations
-func openAndMigrateSQLiteStore(ctx context.Context, path string) (*SQLiteSessionStore, error) {
-	db, err := sqliteutil.OpenDB(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := setupAndMigrate(ctx, db); err != nil {
-		db.Close()
-		if sqliteutil.IsCantOpenError(err) {
-			return nil, sqliteutil.DiagnoseDBOpenError(path, err)
-		}
-		return nil, err
-	}
-
 	return &SQLiteSessionStore{db: db}, nil
 }
 
@@ -578,39 +505,6 @@ func setupAndMigrate(ctx context.Context, db *sql.DB) error {
 
 	migrationManager := NewMigrationManager(db)
 	return migrationManager.InitializeMigrations(ctx)
-}
-
-// backupDatabase moves the database file (and related WAL files) to a backup
-func backupDatabase(path string) error {
-	backupPath := path + ".bak"
-
-	slog.Info("Backing up database", "from", path, "to", backupPath)
-
-	// Move the main database file
-	if err := os.Rename(path, backupPath); err != nil {
-		if os.IsNotExist(err) {
-			// No database file to backup, that's fine
-			return nil
-		}
-		return fmt.Errorf("failed to move database file: %w", err)
-	}
-
-	// Also move WAL and SHM files if they exist (SQLite WAL mode artifacts)
-	walPath := path + "-wal"
-	if _, err := os.Stat(walPath); err == nil {
-		if err := os.Rename(walPath, backupPath+"-wal"); err != nil {
-			slog.Warn("Failed to move WAL file", "error", err)
-		}
-	}
-
-	shmPath := path + "-shm"
-	if _, err := os.Stat(shmPath); err == nil {
-		if err := os.Rename(shmPath, backupPath+"-shm"); err != nil {
-			slog.Warn("Failed to move SHM file", "error", err)
-		}
-	}
-
-	return nil
 }
 
 // parseCreatedAt parses a created_at column value. A corrupt timestamp in a

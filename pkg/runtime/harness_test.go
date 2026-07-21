@@ -13,8 +13,10 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // harnessBinDir holds shim executables (codex, claude) shared by every
@@ -27,6 +29,13 @@ import (
 var harnessBinDir string
 
 func TestMain(m *testing.M) {
+	// The production JS-command wiring lives in pkg/runtime/jscommands,
+	// which in-package tests cannot import (cycle); register the same
+	// evaluator directly for the command-resolution tests.
+	RegisterCommandEvaluator(func(agentTools []tools.Tool) CommandEvaluator {
+		return js.NewEvaluator(agentTools)
+	})
+
 	//nolint:forbidigo // TestMain has no *testing.T, so t.TempDir is unavailable.
 	dir, err := os.MkdirTemp("", "harness-shim")
 	if err != nil {

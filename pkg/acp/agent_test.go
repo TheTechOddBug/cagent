@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -131,7 +132,7 @@ func TestACPSessionPersistence(t *testing.T) {
 
 	// Create a temp SQLite session DB
 	dbPath := filepath.Join(t.TempDir(), "session.db")
-	sessStore, err := session.NewSQLiteSessionStore(t.Context(), dbPath)
+	sessStore, err := sqlitestore.New(t.Context(), dbPath)
 	require.NoError(t, err)
 
 	// Close the store at the end

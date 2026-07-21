@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 	"github.com/docker/docker-agent/pkg/model/provider/oaistream"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelinfo"
@@ -29,24 +30,12 @@ const (
 	// configureTimeout is the timeout for the model configure HTTP request.
 	// This is kept short to avoid stalling client creation.
 	configureTimeout = 10 * time.Second
-
-	// connectivityTimeout is the timeout for testing DMR endpoint connectivity.
-	// This is kept short to quickly detect unreachable endpoints and try fallbacks.
-	connectivityTimeout = 2 * time.Second
 )
 
 // ErrNotInstalled is returned when Docker Model Runner is not installed.
-var ErrNotInstalled = errors.New("docker model runner is not available\nplease install it and try again (https://docs.docker.com/ai/model-runner/get-started/)")
-
-const (
-	// dmrInferencePrefix mirrors github.com/docker/model-runner/pkg/inference.InferencePrefix.
-	dmrInferencePrefix = "/engines"
-	// dmrExperimentalEndpointsPrefix mirrors github.com/docker/model-runner/pkg/inference.ExperimentalEndpointsPrefix.
-	dmrExperimentalEndpointsPrefix = "/exp/vDD4.40"
-
-	// dmrDefaultPort is the default port for Docker Model Runner.
-	dmrDefaultPort = "12434"
-)
+// It aliases [dmrmodels.ErrNotInstalled] so both packages' callers can
+// match it with errors.Is.
+var ErrNotInstalled = dmrmodels.ErrNotInstalled
 
 // Client represents an DMR client wrapper
 // It implements the provider.Provider interface
@@ -85,7 +74,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 	verifyViaAPI := false
 	if cfg.BaseURL == "" && os.Getenv("MODEL_RUNNER_HOST") == "" {
 		var err error
-		endpoint, engine, err = getDockerModelEndpointAndEngine(ctx)
+		endpoint, engine, err = dmrmodels.DockerModelEndpointAndEngine(ctx)
 		switch {
 		case err == nil:
 			// Auto-pull the model if needed
@@ -93,7 +82,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 				slog.DebugContext(ctx, "docker model pull failed", "error", err)
 				return nil, err
 			}
-		case errIndicatesNotInstalled(err):
+		case dmrmodels.IsNotInstalledError(err):
 			slog.DebugContext(ctx, "docker model status query failed", "error", err)
 			return nil, ErrNotInstalled
 		default:
@@ -106,7 +95,14 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 		}
 	}
 
-	baseURL, clientOptions, httpClient := resolveDMRBaseURL(ctx, cfg, endpoint)
+	baseURL, httpClient := dmrmodels.ResolveBaseURL(ctx, cfg, endpoint)
+
+	// A custom transport (e.g. the Docker Unix socket) must also be used by
+	// the OpenAI adapter, not just the direct HTTP calls.
+	var clientOptions []option.RequestOption
+	if httpClient != nil {
+		clientOptions = append(clientOptions, option.WithHTTPClient(httpClient))
+	}
 
 	// Ensure we always have a non-nil HTTP client for both OpenAI adapter and direct HTTP calls (rerank).
 	if httpClient == nil {

@@ -18,7 +18,6 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 	"github.com/docker/docker-agent/pkg/tools/builtin/handoff"
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
 // agentNames returns the names of the given agents.
@@ -470,14 +469,14 @@ func prependNote(result, note string) string {
 // agent's MCP toolsets that could not start because they require first-time
 // interactive OAuth authorization, which a background agent cannot complete
 // (issue #3200). It returns "" when no toolset is in that state. Detection is
-// typed (mcptools.IsAuthorizationRequired against the toolset's recorded
+// typed (tools.IsAuthorizationRequired against the toolset's recorded
 // LastError) rather than string-matched, so it stays correct if the user-facing
 // error text changes.
 func backgroundAuthRequiredNote(child *agent.Agent) string {
 	var needAuth []string
 	for _, ts := range child.ToolSets() {
 		status := toolsetStatusFor(ts)
-		if mcptools.IsAuthorizationRequired(status.LastError) {
+		if tools.IsAuthorizationRequired(status.LastError) {
 			needAuth = append(needAuth, status.Name)
 		}
 	}

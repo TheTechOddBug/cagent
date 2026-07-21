@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	loaderdefaults "github.com/docker/docker-agent/pkg/teamloader/defaults"
 )
@@ -64,7 +65,7 @@ func TestRuntime_MultiAgent_SessionReload(t *testing.T) {
 
 	// Use a SQLite store so we test real persistence and reload.
 	dbPath := filepath.Join(t.TempDir(), "session.db")
-	store, err := session.NewSQLiteSessionStore(t.Context(), dbPath)
+	store, err := sqlitestore.New(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 

@@ -11,6 +11,7 @@ import (
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/tui"
 )
@@ -96,7 +97,7 @@ func (b *localBackend) sessionStore(ctx context.Context, req runtime.CreateSessi
 			b.storeErr = err
 			return
 		}
-		store, err := session.NewSQLiteSessionStore(context.WithoutCancel(ctx), sessionDB)
+		store, err := sqlitestore.New(context.WithoutCancel(ctx), sessionDB)
 		if err != nil {
 			b.storeErr = fmt.Errorf("creating session store: %w", err)
 			return

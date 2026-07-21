@@ -434,7 +434,7 @@ func (s *KeyringTokenStore) persistLocked() error {
 		return err
 	}
 
-	plaintext, err := json.Marshal(s.cache) //nolint:gosec // OAuth token bundle is intentionally serialized for storage
+	plaintext, err := json.Marshal(s.cache)
 	if err != nil {
 		return fmt.Errorf("failed to marshal token bundle: %w", err)
 	}

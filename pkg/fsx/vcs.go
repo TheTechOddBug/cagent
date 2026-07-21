@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
@@ -46,9 +46,11 @@ func NewVCSMatcher(basePath string) (*VCSMatcher, error) {
 	}
 	matcherCacheMu.RUnlock()
 
-	// PlainOpen automatically searches up the directory tree for .git
-	repo, err := git.PlainOpen(basePath)
-	if err != nil {
+	// A .git entry directly under basePath is the marker for a repository
+	// worktree, mirroring the previous go-git PlainOpen behavior (which did
+	// not search parent directories either).
+	repoRoot, found := findRepoRoot(basePath)
+	if !found {
 		slog.Debug("No git repository found", "directory", basePath)
 		// Cache the negative result
 		matcherCacheMu.Lock()
@@ -56,16 +58,6 @@ func NewVCSMatcher(basePath string) (*VCSMatcher, error) {
 		matcherCacheMu.Unlock()
 		return nil, nil
 	}
-
-	// Get the worktree
-	worktree, err := repo.Worktree()
-	if err != nil {
-		slog.Warn("Failed to get worktree", "path", basePath, "error", err)
-		return nil, err
-	}
-
-	// Get the repository root path
-	repoRoot := worktree.Filesystem.Root()
 
 	// Check cache by repo root (read lock)
 	matcherCacheMu.RLock()
@@ -92,7 +84,7 @@ func NewVCSMatcher(basePath string) (*VCSMatcher, error) {
 	}
 
 	// Read gitignore patterns from the repository
-	patterns, err := gitignore.ReadPatterns(worktree.Filesystem, nil)
+	patterns, err := gitignore.ReadPatterns(osfs.New(repoRoot), nil)
 	if err != nil {
 		slog.Warn("Failed to read gitignore patterns", "path", repoRoot, "error", err)
 		return nil, err
@@ -113,6 +105,81 @@ func NewVCSMatcher(basePath string) (*VCSMatcher, error) {
 	basePathToRoot[basePath] = repoRoot
 
 	return vcsMatcher, nil
+}
+
+// findRepoRoot reports the git worktree root for basePath. Only basePath
+// itself is checked for a .git entry — like the git.PlainOpen call this
+// replaces, parent directories are not searched. The entry is lightly
+// validated so stray files named .git don't turn a directory into a
+// "repository": a .git directory must contain a HEAD file, and a .git
+// gitfile (linked worktree / submodule) must carry a "gitdir:" pointer to an
+// existing directory. Bare repositories have no .git entry and thus no
+// matcher, which is fine: there is no worktree to ignore files in.
+//
+// The returned root is absolute with symlinks resolved, matching what
+// go-billy reported when this used go-git.
+func findRepoRoot(basePath string) (string, bool) {
+	if !isGitWorktree(basePath) {
+		return "", false
+	}
+	absPath, err := filepath.Abs(basePath)
+	if err != nil {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolved
+	}
+	return absPath, true
+}
+
+// isGitWorktree reports whether dir/.git denotes a plausible git worktree.
+func isGitWorktree(dir string) bool {
+	dotGit := filepath.Join(dir, ".git")
+	fi, err := os.Stat(dotGit)
+	if err != nil {
+		return false
+	}
+
+	if fi.IsDir() {
+		_, err := os.Stat(filepath.Join(dotGit, "HEAD"))
+		return err == nil
+	}
+
+	// Gitfile: "gitdir: <path>" pointing at the real git dir.
+	gitDir, ok := readGitfile(dotGit)
+	if !ok {
+		return false
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	target, err := os.Stat(gitDir)
+	return err == nil && target.IsDir()
+}
+
+// readGitfile extracts the "gitdir:" target from a .git gitfile.
+func readGitfile(path string) (string, bool) {
+	// Gitfiles are one line; cap the read defensively.
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+
+	buf := make([]byte, 4096)
+	n, err := f.Read(buf)
+	if n == 0 && err != nil {
+		return "", false
+	}
+	content := string(buf[:n])
+
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(content, prefix) {
+		return "", false
+	}
+	gitDir, _, _ := strings.Cut(content[len(prefix):], "\n")
+	gitDir = strings.TrimSpace(gitDir)
+	return gitDir, gitDir != ""
 }
 
 // RepoRoot returns the repository root path for this matcher
