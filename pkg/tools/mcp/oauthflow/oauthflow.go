@@ -29,6 +29,12 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 )
 
+// maxErrorBodyBytes caps how much of a non-200 response body is read for
+// error messages. The body comes from a server the user pointed us at, but
+// errors end up in logs; a bound keeps a hostile or misconfigured endpoint
+// from stuffing megabytes (or secrets past the first error fields) into them.
+const maxErrorBodyBytes = 512
+
 // defaultHTTPClient is the *http.Client used for outbound OAuth requests
 // (metadata discovery, token exchange, refresh, dynamic client registration).
 // The endpoint URLs come from MCP server metadata, i.e. effectively the remote
@@ -72,9 +78,15 @@ func HTTPClientForAllowPrivateIPs(allowPrivateIPs bool) *http.Client {
 		// client its own connection pool: a nil Transport would share
 		// http.DefaultTransport's pool, which third parties may prune via
 		// CloseIdleConnections (httptest.Server.Close does).
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			// Something replaced DefaultTransport (test helper, proxy shim);
+			// fall back to a fresh default rather than panicking.
+			transport = &http.Transport{}
+		}
 		return &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: http.DefaultTransport.(*http.Transport).Clone(),
+			Transport: transport.Clone(),
 		}
 	}
 	return DefaultHTTPClient()
@@ -156,7 +168,7 @@ func ExchangeCodeForTokenWithClient(ctx context.Context, client *http.Client, to
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return nil, fmt.Errorf("token exchange failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -328,7 +340,7 @@ func RegisterClientWithClient(ctx context.Context, client *http.Client, authMeta
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return "", "", fmt.Errorf("client registration failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -380,7 +392,7 @@ func RefreshAccessTokenWithClient(ctx context.Context, client *http.Client, toke
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return nil, fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
