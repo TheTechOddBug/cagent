@@ -424,6 +424,18 @@ func (ts *Toolset) Restart(ctx context.Context) error {
 	return ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout)
 }
 
+// SetStandaloneSSE opts a remote streamable toolset in to the transport's
+// standalone SSE GET stream. Required for servers that send server-initiated
+// requests outside of client calls (some MCP gateways send a
+// keepalive ping on the standalone stream and close the session when
+// it cannot be delivered). No-op for stdio toolsets. Call before Start; takes
+// effect on the next connect.
+func (ts *Toolset) SetStandaloneSSE(enable bool) {
+	if c, ok := ts.mcpClient.(*remoteMCPClient); ok {
+		c.SetStandaloneSSE(enable)
+	}
+}
+
 // buildStdioDescription produces a user-visible description for a stdio MCP toolset.
 func buildStdioDescription(command string, args []string) string {
 	if len(args) == 0 {

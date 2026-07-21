@@ -31,6 +31,14 @@ type remoteMCPClient struct {
 	unmanagedOAuthRedirectURI string
 	oauthConfig               *latest.RemoteOAuthConfig
 	allowPrivateIPs           bool
+	// standaloneSSE opts in to the streamable transport's standalone SSE GET
+	// stream. Off by default: some remote servers hang when the client opens
+	// the persistent stream (see commit 332f5928, go-sdk issue #633). Servers
+	// that send server-initiated requests outside of client calls, most
+	// importantly keepalive pings (e.g. some MCP gateways send keepalive pings
+	// and close the session when the ping cannot be delivered), require
+	// it, so such toolsets opt in via Toolset.SetStandaloneSSE(true).
+	standaloneSSE bool
 }
 
 func newRemoteClient(
@@ -121,10 +129,13 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeReq
 			HTTPClient: httpClient,
 		}
 	case "streamable", "streamable-http":
+		c.mu.RLock()
+		standaloneSSE := c.standaloneSSE
+		c.mu.RUnlock()
 		transport = &gomcp.StreamableClientTransport{
 			Endpoint:             endpoint,
 			HTTPClient:           httpClient,
-			DisableStandaloneSSE: true,
+			DisableStandaloneSSE: !standaloneSSE,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported transport type: %s", c.transportType)
@@ -199,6 +210,15 @@ func (c *remoteMCPClient) SetManagedOAuth(managed bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.managed = managed
+}
+
+// SetStandaloneSSE opts this client in (or out) of the streamable
+// transport's standalone SSE GET stream. Takes effect on the next
+// Initialize (i.e. the next connect/reconnect).
+func (c *remoteMCPClient) SetStandaloneSSE(enable bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.standaloneSSE = enable
 }
 
 // SetUnmanagedOAuthRedirectURI sets the redirect URI docker-agent advertises
