@@ -152,6 +152,9 @@ var blockRules = map[string]blockRule{
 	// budgets: { tight: { ... } }. The run-wide `budget` block is a
 	// singleton and needs no rule — the 0-label default already covers it.
 	"budgets": {mode: modeMapByLabel, outKey: "budgets"},
+	// Top-level named flavor patches: `flavors "cheap" { ... }` becomes
+	// flavors: { cheap: { ... } }.
+	"flavors": {mode: modeMapByLabel, outKey: "flavors"},
 	// `shell "name" { ... }` is used inside script toolsets as a map of
 	// scripted shell commands.
 	"shell": {mode: modeMapByLabel, outKey: "shell"},

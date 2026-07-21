@@ -42,6 +42,10 @@ type Config struct {
 	Models         map[string]latest.ModelConfig
 	Providers      map[string]latest.ProviderConfig
 
+	// Flavors are the config flavor patches to enable when loading agent
+	// configs, applied in order. Names a config does not define are ignored.
+	Flavors []string
+
 	// Hook overrides from user config and CLI flags
 	GlobalHooks      *latest.HooksConfig
 	HookPreToolUse   []string
@@ -92,6 +96,7 @@ func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
 	clone.envProviderOnce.Do(func() {})    // mark as resolved
 	clone.modelsDevStoreOnce.Do(func() {}) // mark as resolved
 	clone.EnvFiles = slices.Clone(runConfig.EnvFiles)
+	clone.Flavors = slices.Clone(runConfig.Flavors)
 	clone.Models = maps.Clone(runConfig.Models)
 	clone.Providers = maps.Clone(runConfig.Providers)
 	clone.DefaultModel = runConfig.DefaultModel.Clone()

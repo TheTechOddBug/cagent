@@ -21,7 +21,28 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 )
 
-func Load(ctx context.Context, source Source) (*latest.Config, error) {
+// LoadOption customizes a single Load call.
+type LoadOption func(*loadOptions)
+
+type loadOptions struct {
+	flavors []string
+}
+
+// WithFlavors enables the named flavor patches for this load. Order matters:
+// patches are applied in the order given. Names the config does not define
+// are ignored with a debug log.
+func WithFlavors(names ...string) LoadOption {
+	return func(o *loadOptions) {
+		o.flavors = append(o.flavors, names...)
+	}
+}
+
+func Load(ctx context.Context, source Source, opts ...LoadOption) (*latest.Config, error) {
+	var options loadOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	data, err := source.Read(ctx)
 	if err != nil {
 		return nil, err
@@ -36,6 +57,12 @@ func Load(ctx context.Context, source Source) (*latest.Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing HCL config file: %w", err)
 		}
+	}
+
+	// Flavor patches rewrite the raw document, so they run before anything
+	// (including the version sniff below) reads it.
+	if data, err = applyFlavors(ctx, data, options.flavors); err != nil {
+		return nil, err
 	}
 
 	var raw struct {

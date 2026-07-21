@@ -29,6 +29,7 @@ const (
 func addRuntimeConfigFlags(cmd *cobra.Command, runConfig *config.RuntimeConfig) {
 	addGatewayFlags(cmd, runConfig, userconfig.Load)
 	cmd.PersistentFlags().StringSliceVar(&runConfig.EnvFiles, "env-from-file", nil, "Set environment variables from file")
+	cmd.PersistentFlags().StringArrayVar(&runConfig.Flavors, "flavor", nil, "Enable a config flavor, a YAML patch defined under the config's 'flavors' section (repeatable, applied in order)")
 	cmd.PersistentFlags().BoolVar(&runConfig.GlobalCodeMode, "code-mode-tools", false, "Provide a single tool to call other tools via Javascript")
 	cmd.PersistentFlags().StringVar(&runConfig.WorkingDir, "working-dir", "", "Set the working directory for the session (applies to tools and relative paths)")
 	cmd.PersistentFlags().StringArrayVar(&runConfig.HookPreToolUse, "hook-pre-tool-use", nil, "Add a pre-tool-use hook command that runs before every tool call (repeatable)")
