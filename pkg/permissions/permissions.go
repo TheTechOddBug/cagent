@@ -166,30 +166,70 @@ func (c *Checker) DenyPatterns() []string {
 // Pattern format: "toolname" or "toolname:arg1=val1:arg2=val2"
 // Returns the tool pattern and a map of argument patterns.
 //
-// The parser looks for the first `:key=value` segment to split tool name from arguments.
-// This allows tool names with colons (like "mcp:github:create_issue") to work correctly.
+// The tool name runs up to the first ":key=" argument condition, so tool names
+// with colons (like "mcp:github:create_issue") are preserved. Argument values
+// may themselves contain colons (URLs like "https://…", Windows paths like
+// "C:\…"): a value extends up to the next ":key=" boundary rather than the next
+// colon, so such values survive intact.
 func parsePattern(pattern string) (toolPattern string, argPatterns map[string]string) {
 	argPatterns = make(map[string]string)
 
-	// Find the first occurrence of :key=value pattern
-	// We look for ":" followed by an identifier and "="
-	parts := strings.Split(pattern, ":")
-	toolParts := []string{parts[0]} // First part is always part of the tool name
+	// The tool name is everything before the first ":key=" argument condition.
+	start := indexArgCondition(pattern)
+	if start < 0 {
+		return pattern, argPatterns
+	}
+	toolPattern = pattern[:start]
 
-	for _, part := range parts[1:] {
-		// Check if this part looks like an argument pattern (contains =)
-		if key, value, found := strings.Cut(part, "="); found && key != "" {
-			// This is an argument pattern - this and all remaining parts are args
-			argPatterns[key] = value
-		} else if len(argPatterns) == 0 {
-			// No = found and we haven't started args yet, so it's part of tool name
-			toolParts = append(toolParts, part)
+	// Parse "key=value" conditions from the remainder, breaking a value only at
+	// the next ":key=" boundary so colons inside a value are kept.
+	for rest := pattern[start+1:]; rest != ""; {
+		key, value, _ := strings.Cut(rest, "=")
+		if end := indexArgCondition(value); end >= 0 {
+			argPatterns[key] = value[:end]
+			rest = value[end+1:]
+			continue
 		}
-		// If we've started collecting args but this part has no =, skip it
+		argPatterns[key] = value
+		break
 	}
 
-	toolPattern = strings.Join(toolParts, ":")
 	return toolPattern, argPatterns
+}
+
+// indexArgCondition returns the index of the first ":" in s that begins an
+// argument condition — a ":" immediately followed by "<identifier>=" — or -1 if
+// there is none. This distinguishes a genuine ":key=value" boundary from a colon
+// that merely appears inside a tool name or an argument value (a URL scheme, a
+// Windows drive letter, etc.).
+func indexArgCondition(s string) int {
+	for i := range len(s) {
+		if s[i] == ':' && startsWithArgKey(s[i+1:]) {
+			return i
+		}
+	}
+	return -1
+}
+
+// startsWithArgKey reports whether s begins with "<identifier>=": a letter or
+// "_", then any run of letters, digits or "_", then "=".
+func startsWithArgKey(s string) bool {
+	if s == "" || !isIdentStart(s[0]) {
+		return false
+	}
+	i := 1
+	for i < len(s) && isIdentByte(s[i]) {
+		i++
+	}
+	return i < len(s) && s[i] == '='
+}
+
+func isIdentStart(c byte) bool {
+	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+}
+
+func isIdentByte(c byte) bool {
+	return isIdentStart(c) || ('0' <= c && c <= '9')
 }
 
 // matchToolPattern checks if a tool name and its arguments match a pattern.
