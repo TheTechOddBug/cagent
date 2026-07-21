@@ -162,61 +162,32 @@ func (c *Checker) DenyPatterns() []string {
 	return c.denyPatterns
 }
 
+// argCondition matches the ":key=" boundary that starts an argument condition.
+// Tool names may contain colons ("mcp:github:create_issue") and so may values
+// (URLs, Windows drive paths), so a bare ":" is not a separator: only a ":"
+// immediately followed by "key=" is.
+var argCondition = regexp.MustCompile(`:(\w+)=`)
+
 // parsePattern parses a permission pattern into tool name pattern and argument conditions.
 // Pattern format: "toolname" or "toolname:arg1=val1:arg2=val2"
-// Returns the tool pattern and a map of argument patterns.
-//
-// The tool name runs up to the first ":key=" argument condition, so tool names
-// with colons (like "mcp:github:create_issue") are preserved. Argument values
-// may themselves contain colons (URLs like "https://…", Windows paths like
-// "C:\…"): a value extends up to the next ":key=" boundary rather than the next
-// colon, so such values survive intact.
+// The tool name runs up to the first ":key=" boundary and each value up to the
+// next one, so colons inside tool names and values are preserved.
 func parsePattern(pattern string) (toolPattern string, argPatterns map[string]string) {
 	argPatterns = make(map[string]string)
 
-	// The tool name runs up to the first ":key=" condition; each condition then
-	// runs up to the next one, so colons inside a value are kept.
-	toolPattern, rest := cutAtArgCondition(pattern)
-	for rest != "" {
-		condition, next := cutAtArgCondition(rest)
-		key, value, _ := strings.Cut(condition, "=")
-		argPatterns[key] = value
-		rest = next
+	matches := argCondition.FindAllStringSubmatchIndex(pattern, -1)
+	if len(matches) == 0 {
+		return pattern, argPatterns
 	}
 
-	return toolPattern, argPatterns
-}
-
-// cutAtArgCondition cuts s around the first ":" that begins an argument
-// condition — a ":" immediately followed by "key=" — returning the text before
-// and after it. If there is no such boundary, before is all of s and after is
-// empty. This tells a genuine ":key=value" boundary apart from a colon inside a
-// tool name or an argument value (a URL scheme, a Windows drive letter).
-func cutAtArgCondition(s string) (before, after string) {
-	for i := range len(s) {
-		if s[i] != ':' {
-			continue
+	for i, m := range matches {
+		valueEnd := len(pattern)
+		if i+1 < len(matches) {
+			valueEnd = matches[i+1][0]
 		}
-		if key, _, found := strings.Cut(s[i+1:], "="); found && isArgKey(key) {
-			return s[:i], s[i+1:]
-		}
+		argPatterns[pattern[m[2]:m[3]]] = pattern[m[1]:valueEnd]
 	}
-	return s, ""
-}
-
-// isArgKey reports whether s is a valid argument key: a non-empty run of
-// letters, digits or "_".
-func isArgKey(s string) bool {
-	for i := range len(s) {
-		if !isArgKeyByte(s[i]) {
-			return false
-		}
-	}
-	return s != ""
-}
-
-func isArgKeyByte(c byte) bool {
-	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
+	return pattern[:matches[0][0]], argPatterns
 }
 
 // matchToolPattern checks if a tool name and its arguments match a pattern.
