@@ -126,6 +126,7 @@ Models can be referenced inline or defined in the `models` section:
 - [**Permissions**](../permissions/index.md) — control which tools auto-approve, require confirmation, or are blocked.
 - [**Sandbox Mode**](../sandbox/index.md) — run agents in an isolated Docker container for security.
 - [**Structured Output**](../structured-output/index.md) — constrain agent responses to match a specific JSON schema.
+- [**Flavors**](../flavors/index.md) — ship one agent file with named variants, enabled at run time as YAML patches.
 
 ## Environment Variables
 
@@ -294,10 +295,10 @@ For YAML editor autocompletion and validation, use the [Docker Agent JSON Schema
 
 ## Config Versioning
 
-Docker Agent configs are versioned. The current version is `12`. Add the version at the top of your config:
+Docker Agent configs are versioned. The current version is `13`. Add the version at the top of your config:
 
 ```yaml
-version: 12
+version: 13
 
 agents:
   root:
