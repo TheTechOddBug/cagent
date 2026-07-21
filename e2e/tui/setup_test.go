@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	loaderdefaults "github.com/docker/docker-agent/pkg/teamloader/defaults"
 	"github.com/docker/docker-agent/pkg/tui"
@@ -61,7 +62,7 @@ func newTUIWithProxyOptions(t *testing.T, agentFile string, width, height int, p
 	agent, err := team.AgentOrDefault("")
 	require.NoError(t, err)
 
-	store, err := session.NewSQLiteSessionStore(ctx, filepath.Join(t.TempDir(), "session.db"))
+	store, err := sqlitestore.New(ctx, filepath.Join(t.TempDir(), "session.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 

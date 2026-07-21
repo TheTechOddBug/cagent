@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,77 @@ func TestDependencies(t *testing.T) {
 		assert.True(t, imports["github.com/docker/docker-agent/pkg/runtime"])
 		assert.False(t, imports["github.com/docker/docker-agent/pkg/team"])
 	})
+
+	// Embedders that build teams in code (agent.New + team.New + the runtime,
+	// see docs/guides/go-sdk) must not link docker-agent's heavy optional dependencies:
+	// the goja JS engine, the OpenAI SDK, the SQLite driver, full go-git or
+	// expr. Each entry below was cut deliberately; if this test fails you
+	// probably added an import that drags one of them back in — keep it
+	// behind a leaf package or a registration hook instead.
+	t.Run("code-built team surface stays lean", func(t *testing.T) {
+		t.Parallel()
+
+		deps := listTransitiveDeps(t,
+			"./pkg/runtime",
+			"./pkg/agent",
+			"./pkg/team",
+			"./pkg/session",
+			"./pkg/tools",
+			"./pkg/model/provider/anthropic",
+		)
+
+		// Prefixes, so subpackage-only leaks (e.g. openai-go/v3/option) are
+		// caught too.
+		forbiddenPrefixes := []string{
+			"github.com/dop251/goja",
+			"github.com/expr-lang/expr",
+			"github.com/openai/openai-go",
+			"github.com/go-git/go-git",
+			"modernc.org/sqlite",
+			"github.com/docker/docker-agent/pkg/js",
+			"github.com/docker/docker-agent/pkg/tools/mcp",
+			"github.com/docker/docker-agent/pkg/toolinstall",
+		}
+		// Deliberate exceptions: fsx's gitignore matching uses go-git's
+		// lightweight format package (and the helpers it drags in), not the
+		// full object/transport stack; the runtime's remote OAuth login uses
+		// the MCP-toolset-free oauthflow leaf.
+		allowed := map[string]bool{
+			"github.com/go-git/go-git/v5/plumbing/format/gitignore":  true,
+			"github.com/go-git/go-git/v5/plumbing/format/config":     true,
+			"github.com/go-git/go-git/v5/internal/path_util":         true,
+			"github.com/go-git/go-git/v5/utils/ioutil":               true,
+			"github.com/docker/docker-agent/pkg/tools/mcp/oauthflow": true,
+		}
+
+		for dep := range deps {
+			if allowed[dep] {
+				continue
+			}
+			for _, prefix := range forbiddenPrefixes {
+				if dep == prefix || strings.HasPrefix(dep, prefix+"/") {
+					assert.Fail(t, "heavy dependency leaked back into the embedder surface", "%s (matched %s)", dep, prefix)
+				}
+			}
+		}
+	})
+}
+
+// listTransitiveDeps returns the full (non-test) dependency closure of the
+// given packages, as reported by `go list -deps`.
+func listTransitiveDeps(t *testing.T, pkgs ...string) map[string]bool {
+	t.Helper()
+
+	cmd := exec.CommandContext(t.Context(), "go", append([]string{"list", "-deps"}, pkgs...)...)
+	cmd.Dir = ".."
+	out, err := cmd.Output()
+	require.NoError(t, err)
+
+	deps := map[string]bool{}
+	for dep := range strings.FieldsSeq(string(out)) {
+		deps[dep] = true
+	}
+	return deps
 }
 
 func listImports(t *testing.T, pkg string) map[string]bool {

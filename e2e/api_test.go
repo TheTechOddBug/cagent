@@ -15,7 +15,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/server"
-	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 )
 
 type Session struct {
@@ -85,7 +85,7 @@ func startCagentAPI(t *testing.T, db string) string {
 		_ = ln.Close()
 	})
 
-	sessionStore, err := session.NewSQLiteSessionStore(t.Context(), dbCopy)
+	sessionStore, err := sqlitestore.New(t.Context(), dbCopy)
 	require.NoError(t, err)
 
 	srv, err := server.New(t.Context(), sessionStore, &config.RuntimeConfig{}, 0, nil, "")
