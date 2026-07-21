@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
 	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
@@ -256,16 +257,23 @@ func anthropicThinkingDisplay(opts map[string]any) (string, bool) {
 // validateThinkingDisplay rejects a thinking_display mode the target model
 // does not accept. Models from the adaptive-thinking generation onward only
 // accept "summarized" and "omitted"; sending "display" fails with an HTTP
-// 400 (see [modelinfo.SupportsFullThinkingDisplay]). Called at client
-// construction so a bad config fails fast instead of on the first request.
+// 400 (see [modelinfo.SupportsFullThinkingDisplay]). Server-side fallback
+// models receive the exact same request shape, so they are validated too.
+// Called at client construction so a bad config fails fast instead of on the
+// first request.
 func validateThinkingDisplay(cfg *latest.ModelConfig) error {
 	display, ok := anthropicThinkingDisplay(cfg.ProviderOpts)
 	if !ok || display != thinkingDisplayDisplay {
 		return nil
 	}
-	if !modelinfo.SupportsFullThinkingDisplay(cfg.Model) {
-		return fmt.Errorf("anthropic: model %q does not support thinking_display: %q; use %q or %q",
-			cfg.Model, thinkingDisplayDisplay, thinkingDisplaySummarized, thinkingDisplayOmitted)
+	// Read fallbacks directly (not via fallbackModels) to avoid its
+	// "enabling server-side fallbacks" debug log during validation.
+	fallbacks, _ := providerutil.GetProviderOptStringSlice(cfg.ProviderOpts, "fallbacks")
+	for _, model := range append([]string{cfg.Model}, fallbacks...) {
+		if !modelinfo.SupportsFullThinkingDisplay(model) {
+			return fmt.Errorf("anthropic: model %q does not support thinking_display: %q; use %q or %q",
+				model, thinkingDisplayDisplay, thinkingDisplaySummarized, thinkingDisplayOmitted)
+		}
 	}
 	return nil
 }

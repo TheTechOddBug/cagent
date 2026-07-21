@@ -145,6 +145,25 @@ func TestValidateThinkingDisplay(t *testing.T) {
 			model: "claude-sonnet-5",
 			opts:  map[string]any{"thinking_display": "bogus"},
 		},
+		{
+			name:  "display with supported fallback",
+			model: "claude-sonnet-4-5",
+			opts: map[string]any{
+				"thinking_display": "display",
+				"fallbacks":        []any{"claude-haiku-4-5"},
+			},
+		},
+		{
+			// Fallbacks receive the exact same request shape, so an
+			// unsupported fallback must be rejected too.
+			name:  "display with unsupported fallback",
+			model: "claude-sonnet-4-5",
+			opts: map[string]any{
+				"thinking_display": "display",
+				"fallbacks":        []any{"claude-haiku-4-5", "claude-sonnet-5"},
+			},
+			wantErr: `model "claude-sonnet-5" does not support thinking_display: "display"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,6 +188,19 @@ func TestNewClient_RejectsFullThinkingDisplayOnUnsupportedModel(t *testing.T) {
 		ProviderOpts: map[string]any{"thinking_display": "display"},
 	}
 	_, err := NewClient(t.Context(), cfg, environment.NewMapEnvProvider(nil))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support thinking_display")
+}
+
+func TestNewVertexClient_RejectsFullThinkingDisplayOnUnsupportedModel(t *testing.T) {
+	t.Parallel()
+	cfg := &latest.ModelConfig{
+		Provider:     "anthropic",
+		Model:        "claude-sonnet-5",
+		ProviderOpts: map[string]any{"thinking_display": "display"},
+	}
+	// Validation runs before GCP credential discovery, so no credentials needed.
+	_, err := NewVertexClient(t.Context(), cfg, environment.NewMapEnvProvider(nil), "project", "location")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support thinking_display")
 }
