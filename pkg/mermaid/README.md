@@ -98,5 +98,5 @@ Mermaid blocks remain syntax-highlighted code blocks.
 | Concurrent states | ❌ | ❌ | |
 | State notes | ❌ | ❌ | |
 | Choice, fork, and join pseudostates | ❌ | ❌ | |
-| State direction declarations | ❌ | ❌ | |
+| State direction declarations | ✅ | ✅ | `TD`, `TB`, `BT`, `LR`, and `RL` are supported |
 | Styling and classes | ❌ | ❌ | |

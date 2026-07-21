@@ -26,7 +26,7 @@ func Render(source string, width int) (string, bool) {
 	case mermaidparser.DiagramSequence:
 		return drawMermaidSequence(document.Edges, document.SequenceEvents, document.Participants, labels, width), true
 	case mermaidparser.DiagramState:
-		return drawMermaidGraph(document.Edges, document.NodeOrder, labels, width), true
+		return drawMermaidFlowchart(document.Edges, document.NodeOrder, labels, document.Direction, width), true
 	default:
 		return "", false
 	}

@@ -141,6 +141,29 @@ Working --> [*]: complete`)
 	assert.Equal(t, "End", doc.Nodes[doc.Edges[2].To].Label)
 }
 
+func TestParseStateDiagramDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		direction string
+		want      string
+	}{
+		{direction: "LR", want: "LR"},
+		{direction: "rl", want: "RL"},
+		{direction: "TB", want: "TB"},
+		{direction: "BT", want: "BT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.direction, func(t *testing.T) {
+			t.Parallel()
+
+			doc, err := Parse("stateDiagram-v2\ndirection " + tt.direction + "\n[*] --> Idle\nIdle --> [*]")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, doc.Direction)
+		})
+	}
+}
+
 func TestSplitMermaidStatementsHonorsQuotedAndDelimitedSemicolons(t *testing.T) {
 	t.Parallel()
 
