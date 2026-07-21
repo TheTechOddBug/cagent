@@ -6,15 +6,9 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-)
 
-// errIndicatesNotInstalled reports whether a `docker model` invocation failed
-// because the Docker installation predates Model Runner (the CLI rejects the
-// --json flag). Matching on content rather than the exact message keeps the
-// detection stable across docker CLI usage-text changes.
-func errIndicatesNotInstalled(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "unknown flag: --json")
-}
+	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
+)
 
 // ModelNotAvailableError is returned at client-creation time when the
 // requested model is not pulled in Docker Model Runner and the `docker model`
@@ -40,7 +34,7 @@ func (e *ModelNotAvailableError) ModelPullErrorSummary() string {
 // (missing or broken CLI plugin) and the CLI-based inspect/pull flow is
 // therefore unusable.
 func checkModelAvailable(ctx context.Context, httpClient *http.Client, baseURL, model string) error {
-	available, err := listModelsAt(ctx, httpClient, baseURL)
+	available, err := dmrmodels.ListModelsAt(ctx, httpClient, baseURL)
 	if err != nil {
 		return fmt.Errorf("cannot query Docker Model Runner at %s (is it installed and running? https://docs.docker.com/ai/model-runner/get-started/): %w", baseURL, err)
 	}

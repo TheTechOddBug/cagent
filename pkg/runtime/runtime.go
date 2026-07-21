@@ -27,7 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
-	"github.com/docker/docker-agent/pkg/model/provider/dmr"
+	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -365,7 +365,7 @@ type LocalRuntime struct {
 
 	// dmrModelLister lists the models pulled locally in Docker Model Runner,
 	// used to populate DMR entries in the model picker. Defaults to
-	// dmr.ListModels in NewLocalRuntime; left nil by runtimes built directly
+	// dmrmodels.ListModels in NewLocalRuntime; left nil by runtimes built directly
 	// (e.g. tests) so DMR discovery stays opt-in. Tests inject a stub here.
 	dmrModelLister func(ctx context.Context) ([]string, error)
 
@@ -695,7 +695,7 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		maxOverflowCompactions: defaultMaxOverflowCompactions,
 		toolListTimeout:        defaultToolListTimeout,
 		toolStartTimeout:       defaultToolStartTimeout,
-		dmrModelLister:         dmr.ListModels,
+		dmrModelLister:         dmrmodels.ListModels,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
 

@@ -1,4 +1,4 @@
-package dmr
+package dmrmodels
 
 import (
 	"net/http"
@@ -26,7 +26,7 @@ func TestListModelsAt(t *testing.T) {
 		}))
 		defer server.Close()
 
-		models, err := listModelsAt(t.Context(), server.Client(), server.URL+"/")
+		models, err := ListModelsAt(t.Context(), server.Client(), server.URL+"/")
 		require.NoError(t, err)
 		// Sorted, embedding models are NOT filtered here (callers do that).
 		assert.Equal(t, []string{"ai/embeddinggemma", "ai/gemma3:latest", "ai/qwen3:latest"}, models)
@@ -41,7 +41,7 @@ func TestListModelsAt(t *testing.T) {
 		}))
 		defer server.Close()
 
-		models, err := listModelsAt(t.Context(), server.Client(), server.URL)
+		models, err := ListModelsAt(t.Context(), server.Client(), server.URL)
 		require.NoError(t, err)
 		assert.Empty(t, models)
 	})
@@ -60,7 +60,7 @@ func TestListModelsAt(t *testing.T) {
 		}))
 		defer server.Close()
 
-		models, err := listModelsAt(t.Context(), server.Client(), server.URL)
+		models, err := ListModelsAt(t.Context(), server.Client(), server.URL)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"ai/qwen3:latest"}, models)
 	})
@@ -73,7 +73,7 @@ func TestListModelsAt(t *testing.T) {
 		}))
 		defer server.Close()
 
-		_, err := listModelsAt(t.Context(), server.Client(), server.URL)
+		_, err := ListModelsAt(t.Context(), server.Client(), server.URL)
 		require.Error(t, err)
 	})
 
@@ -86,20 +86,20 @@ func TestListModelsAt(t *testing.T) {
 		}))
 		defer server.Close()
 
-		_, err := listModelsAt(t.Context(), server.Client(), server.URL)
+		_, err := ListModelsAt(t.Context(), server.Client(), server.URL)
 		require.Error(t, err)
 	})
 
 	t.Run("unreachable endpoint is an error", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := listModelsAt(t.Context(), &http.Client{}, "http://127.0.0.1:59998/")
+		_, err := ListModelsAt(t.Context(), &http.Client{}, "http://127.0.0.1:59998/")
 		require.Error(t, err)
 	})
 }
 
 // TestListModels exercises the exported entry point through MODEL_RUNNER_HOST,
-// which makes resolveDMRBaseURL bypass the `docker model` CLI and return a
+// which makes ResolveBaseURL bypass the `docker model` CLI and return a
 // nil http client (so ListModels falls back to its default client). It is not
 // parallel because it mutates the environment.
 func TestListModels(t *testing.T) {
