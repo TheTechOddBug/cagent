@@ -667,12 +667,22 @@ func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]tools.
 		slog.WarnContext(ctx, "Failed to get MCP prompts", "error", err)
 		return make(map[string]tools.PromptInfo)
 	}
-	// Convert map[string]any to map[string]tools.PromptInfo
+	// The client decodes the JSON response into map[string]any, so each
+	// value is a map[string]any, never a concrete PromptInfo; round-trip
+	// through JSON to get typed values.
 	result := make(map[string]tools.PromptInfo)
 	for k, v := range prompts {
-		if info, ok := v.(tools.PromptInfo); ok {
-			result[k] = info
+		b, err := json.Marshal(v)
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to convert MCP prompt info", "prompt", k, "error", err)
+			continue
 		}
+		var info tools.PromptInfo
+		if err := json.Unmarshal(b, &info); err != nil {
+			slog.WarnContext(ctx, "Failed to convert MCP prompt info", "prompt", k, "error", err)
+			continue
+		}
+		result[k] = info
 	}
 	return result
 }
