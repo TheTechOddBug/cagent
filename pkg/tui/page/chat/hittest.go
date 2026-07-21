@@ -1,8 +1,6 @@
 package chat
 
 import (
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/docker/docker-agent/pkg/tui/components/sidebar"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
@@ -102,22 +100,6 @@ func (h *HitTest) isOnSidebarResizeHandle(x, y int) bool {
 	}
 	adjustedX := x - styles.AppPadding
 	return sl.isOnHandle(adjustedX)
-}
-
-// ExtractCoords extracts x, y coordinates from a mouse message.
-func ExtractCoords(msg tea.Msg) (x, y int, ok bool) {
-	switch m := msg.(type) {
-	case tea.MouseClickMsg:
-		return m.X, m.Y, true
-	case tea.MouseMotionMsg:
-		return m.X, m.Y, true
-	case tea.MouseReleaseMsg:
-		return m.X, m.Y, true
-	case tea.MouseWheelMsg:
-		return m.X, m.Y, true
-	default:
-		return 0, 0, false
-	}
 }
 
 // sidebarClickTarget determines the specific target within the sidebar area.

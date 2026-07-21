@@ -27,18 +27,6 @@ func Resolve(toolsetWorkingDir, agentWorkingDir string) string {
 	return toolsetWorkingDir
 }
 
-// Default returns the configured agent working directory or the process cwd.
-func Default(agentWorkingDir string) string {
-	if agentWorkingDir != "" {
-		return agentWorkingDir
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return wd
-}
-
 // CheckDirExists returns an error if the given directory does not exist or is
 // not a directory. kind is used only in the error message.
 func CheckDirExists(dir, kind string) error {
