@@ -97,7 +97,7 @@ func (f *debugFlags) runDebugConfigCommand(cmd *cobra.Command, args []string) (c
 		return err
 	}
 
-	cfg, err := config.Load(cmd.Context(), agentSource)
+	cfg, err := config.Load(cmd.Context(), agentSource, config.WithFlavors(f.runConfig.Flavors...))
 	if err != nil {
 		return err
 	}

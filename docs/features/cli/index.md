@@ -57,6 +57,7 @@ $ docker agent run [config] [message...] [flags]
 | `--worktree-pr <number\|url>`            | Run the agent in a git worktree checked out on an existing GitHub pull request (PR number, `#123`, or PR URL). Continues the PR's branch so commits push back to it. Requires the [GitHub CLI](https://cli.github.com/) (`gh`). Cannot be combined with `--worktree`, `--remote`, or `--sandbox`. |
 | `--working-dir <path>`                  | Set the working directory for the session (applies to tools and relative paths)                                                           |
 | `--env-from-file <path>`                | Load environment variables from file (repeatable)                                                                                         |
+| `--flavor <name>`                       | Enable a config flavor, a YAML patch defined under the config's `flavors` section (repeatable, applied in order). See [Flavors](../../configuration/flavors/index.md). |
 | `--code-mode-tools`                     | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally)                                                |
 | `--models-gateway <addr>`               | Route model traffic through a gateway. Also reads `DOCKER_AGENT_MODELS_GATEWAY` (legacy `CAGENT_MODELS_GATEWAY`) env var.                  |
 | `--hook-pre-tool-use <cmd>`             | Add a pre-tool-use hook command (repeatable). See [Hooks](../../configuration/hooks/index.md).                                  |
@@ -684,6 +685,7 @@ These flags are accepted by every command that loads an agent (`run`, `run --exe
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `--working-dir <path>`          | Set the working directory for the session (applies to tools and relative paths).                                         |
 | `--env-from-file <path>`        | Load environment variables from file (repeatable).                                                                       |
+| `--flavor <name>`               | Enable a config flavor, a YAML patch defined under the config's `flavors` section (repeatable, applied in order). See [Flavors](../../configuration/flavors/index.md). |
 | `--code-mode-tools`             | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally).                              |
 | `--models-gateway <addr>`       | Route model traffic through a gateway. Reads `DOCKER_AGENT_MODELS_GATEWAY` (legacy `CAGENT_MODELS_GATEWAY`) env var.      |
 | `--hook-pre-tool-use <cmd>`     | Add a pre-tool-use hook command (repeatable). See [Hooks](../../configuration/hooks/index.md).                 |

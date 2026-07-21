@@ -1,0 +1,57 @@
+#!/usr/bin/env docker agent run
+# Flavors are named YAML patches applied on top of the rest of the file when
+# enabled at run time, in the order they are requested:
+#
+#   docker agent run examples/flavors.yaml --flavor cheap --flavor verbose
+#
+# Objects merge recursively, scalars and arrays replace, and a null value
+# deletes a key. A key ending in '+' appends to an existing array; a key
+# ending in '-' removes entries (from an object by key name, from an array by
+# value or partial match). Requested flavors the file does not define are
+# ignored.
+
+agents:
+  root:
+    model: claude
+    description: A helpful AI assistant
+    instruction: |
+      You are a knowledgeable assistant that helps users with various tasks.
+      Be helpful, accurate, and concise in your responses.
+    toolsets:
+      - type: think
+
+models:
+  claude:
+    provider: anthropic
+    model: claude-sonnet-4-5
+
+flavors:
+  # Swap the model for a cheaper one.
+  cheap:
+    models:
+      claude:
+        model: claude-3-5-haiku-latest
+
+  # Tweak the root agent without touching the rest of its definition.
+  verbose:
+    agents:
+      root:
+        instruction: |
+          You are a knowledgeable assistant that helps users with various tasks.
+          Explain your reasoning in detail and cover edge cases.
+
+  # Append to an existing array with the 'key+' suffix: this adds the shell
+  # toolset on top of the ones the agent already declares.
+  with-shell:
+    agents:
+      root:
+        toolsets+:
+          - type: shell
+
+  # Remove entries with the 'key-' suffix: array elements are matched by
+  # value or partial object match.
+  no-think:
+    agents:
+      root:
+        toolsets-:
+          - type: think

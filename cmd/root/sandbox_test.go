@@ -316,7 +316,7 @@ func TestResolveSandboxDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, cfg := resolveSandboxDefault(t.Context(), tt.agentRef, tt.current)
+			got, cfg := resolveSandboxDefault(t.Context(), tt.agentRef, tt.current, nil)
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, tt.wantCfg, cfg != nil)
 		})
@@ -354,18 +354,18 @@ func TestPeekAgentSandbox(t *testing.T) {
 			path := filepath.Join(dir, "agent.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(tt.yaml), 0o600))
 
-			cfg := loadAgentConfig(t.Context(), path)
+			cfg := loadAgentConfig(t.Context(), path, nil)
 			got := cfg != nil && cfg.Runtime != nil && cfg.Runtime.Sandbox
 			assert.Equal(t, tt.want, got)
 		})
 	}
 
 	t.Run("empty ref", func(t *testing.T) {
-		assert.Nil(t, loadAgentConfig(t.Context(), ""))
+		assert.Nil(t, loadAgentConfig(t.Context(), "", nil))
 	})
 
 	t.Run("unresolvable ref", func(t *testing.T) {
-		assert.Nil(t, loadAgentConfig(t.Context(), "/nonexistent/agent.yaml"))
+		assert.Nil(t, loadAgentConfig(t.Context(), "/nonexistent/agent.yaml", nil))
 	})
 }
 
@@ -381,7 +381,7 @@ func TestAgentNetworkAllowlist(t *testing.T) {
 		"agents:\n  root:\n    model: openai/gpt-4o\n    description: t\n    instruction: t\n"
 	require.NoError(t, os.WriteFile(path, []byte(yamlBody), 0o600))
 
-	cfg := loadAgentConfig(t.Context(), path)
+	cfg := loadAgentConfig(t.Context(), path, nil)
 	require.NotNil(t, cfg)
 	assert.Equal(t, []string{"api.example.com", "registry.npmjs.org:443"},
 		agentNetworkAllowlist(t.Context(), cfg))
@@ -403,7 +403,7 @@ func TestAgentNetworkAllowlist_FiltersMalformed(t *testing.T) {
 		"agents:\n  root:\n    model: openai/gpt-4o\n    description: t\n    instruction: t\n"
 	require.NoError(t, os.WriteFile(path, []byte(yamlBody), 0o600))
 
-	cfg := loadAgentConfig(t.Context(), path)
+	cfg := loadAgentConfig(t.Context(), path, nil)
 	require.NotNil(t, cfg)
 	assert.Equal(t, []string{"api.example.com", "registry.npmjs.org:443"},
 		agentNetworkAllowlist(t.Context(), cfg))

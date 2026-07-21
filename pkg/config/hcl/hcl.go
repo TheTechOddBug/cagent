@@ -68,7 +68,7 @@ func LooksLikeHCL(data []byte) bool {
 // topLevelHCLKeywords lists the block names that may legitimately appear at
 // the top level of a docker-agent HCL document.
 var topLevelHCLKeywords = []string{
-	"agent", "model", "provider", "mcp", "rag", "metadata", "permissions", "toolsets",
+	"agent", "model", "provider", "mcp", "rag", "metadata", "permissions", "toolsets", "flavors",
 }
 
 // ToYAML parses an HCL document and returns an equivalent YAML document
@@ -152,6 +152,9 @@ var blockRules = map[string]blockRule{
 	// budgets: { tight: { ... } }. The run-wide `budget` block is a
 	// singleton and needs no rule — the 0-label default already covers it.
 	"budgets": {mode: modeMapByLabel, outKey: "budgets"},
+	// Top-level named flavor patches: `flavors "cheap" { ... }` becomes
+	// flavors: { cheap: { ... } }.
+	"flavors": {mode: modeMapByLabel, outKey: "flavors"},
 	// `shell "name" { ... }` is used inside script toolsets as a map of
 	// scripted shell commands.
 	"shell": {mode: modeMapByLabel, outKey: "shell"},

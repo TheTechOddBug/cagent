@@ -100,7 +100,7 @@ type agentChoice struct {
 // show a name and description. A ref that fails to load is still listed (with
 // the error surfaced) so the user can see what went wrong instead of it
 // silently disappearing.
-func loadAgentChoices(ctx context.Context, refs []string, env environment.Provider) []agentChoice {
+func loadAgentChoices(ctx context.Context, refs []string, env environment.Provider, flavors []string) []agentChoice {
 	choices := make([]agentChoice, 0, len(refs))
 	for _, ref := range refs {
 		choice := agentChoice{ref: ref}
@@ -116,7 +116,7 @@ func loadAgentChoices(ctx context.Context, refs []string, env environment.Provid
 			choice.yaml = string(raw)
 		}
 
-		cfg, err := config.Load(ctx, source)
+		cfg, err := config.Load(ctx, source, config.WithFlavors(flavors...))
 		if err != nil {
 			choice.err = err
 			choices = append(choices, choice)
@@ -144,7 +144,7 @@ func loadAgentChoices(ctx context.Context, refs []string, env environment.Provid
 // always matches what will run; the returned value is authoritative. When
 // only a single ref is supplied there is nothing to choose, so it is
 // returned directly without showing any UI (the board button included).
-func selectAgentRef(ctx context.Context, refs []string, env environment.Provider, initialLean bool) (ref string, lean bool, err error) {
+func selectAgentRef(ctx context.Context, refs []string, env environment.Provider, initialLean bool, flavors []string) (ref string, lean bool, err error) {
 	if len(refs) == 0 {
 		return "", false, errors.New("no agent refs to choose from")
 	}
@@ -152,7 +152,7 @@ func selectAgentRef(ctx context.Context, refs []string, env environment.Provider
 		return refs[0], initialLean, nil
 	}
 
-	choices := loadAgentChoices(ctx, refs, env)
+	choices := loadAgentChoices(ctx, refs, env, flavors)
 	m := newAgentPickerModel(choices)
 	m.leanMode = initialLean
 

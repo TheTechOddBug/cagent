@@ -46,6 +46,8 @@
       url: /configuration/sandbox/
     - title: Structured Output
       url: /configuration/structured-output/
+    - title: Flavors
+      url: /configuration/flavors/
     - title: Model Routing
       url: /configuration/routing/
     - title: User Settings

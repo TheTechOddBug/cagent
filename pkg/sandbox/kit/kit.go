@@ -98,6 +98,11 @@ type Options struct {
 	// CacheDir is the parent directory under which the kit will be
 	// staged. Empty means "use [paths.GetCacheDir]/sandbox-kits".
 	CacheDir string
+
+	// Flavors are the config flavor patches to enable when loading the
+	// agent config, so the kit stages prompt files and skills for the
+	// flavored configuration the sandboxed run will actually use.
+	Flavors []string
 }
 
 // Result is what [Build] returns.
@@ -395,7 +400,7 @@ func loadConfig(ctx context.Context, opts Options) (*latestcfg.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.Load(ctx, source)
+	return config.Load(ctx, source, config.WithFlavors(opts.Flavors...))
 }
 
 // stageSkills copies every local skill the agent config enables into

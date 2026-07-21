@@ -172,7 +172,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	}
 
 	// Load the agent's configuration
-	cfg, err := config.Load(ctx, agentSource)
+	cfg, err := config.Load(ctx, agentSource, config.WithFlavors(runConfig.Flavors...))
 	if err != nil {
 		return nil, err
 	}

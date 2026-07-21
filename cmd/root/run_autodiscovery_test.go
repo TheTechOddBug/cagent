@@ -100,7 +100,7 @@ func TestDiscoverRunAgentArgs(t *testing.T) {
 			0o644))
 
 		args, discovered := (&runExecFlags{}).discoverRunAgentArgs(nil)
-		got, cfg := resolveSandboxDefault(t.Context(), args[0], false)
+		got, cfg := resolveSandboxDefault(t.Context(), args[0], false, nil)
 
 		assert.True(t, discovered)
 		assert.True(t, got)
