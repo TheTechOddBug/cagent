@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -952,7 +953,7 @@ func TestAddMessage_SQLitePersistedToolResultCappedOnReload(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	store, err := session.NewSQLiteSessionStore(ctx, filepath.Join(t.TempDir(), "sessions.db"))
+	store, err := sqlitestore.New(ctx, filepath.Join(t.TempDir(), "sessions.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 

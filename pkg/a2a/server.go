@@ -21,7 +21,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config"
 	pathx "github.com/docker/docker-agent/pkg/path"
-	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	loaderdefaults "github.com/docker/docker-agent/pkg/teamloader/defaults"
 	"github.com/docker/docker-agent/pkg/version"
@@ -62,7 +62,7 @@ func Run(ctx context.Context, agentFilename, agentName, sessionDB string, runCon
 	if err != nil {
 		return fmt.Errorf("failed to expand session db path: %w", err)
 	}
-	sessStore, err := session.NewSQLiteSessionStore(ctx, expandedSessionDB)
+	sessStore, err := sqlitestore.New(ctx, expandedSessionDB)
 	if err != nil {
 		return fmt.Errorf("failed to open session store: %w", err)
 	}

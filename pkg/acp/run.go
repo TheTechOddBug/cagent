@@ -9,7 +9,7 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 )
 
 func Run(ctx context.Context, agentFilename string, stdin io.Reader, stdout io.Writer, runConfig *config.RuntimeConfig, sessionDB string) error {
@@ -21,7 +21,7 @@ func Run(ctx context.Context, agentFilename string, stdin io.Reader, stdout io.W
 	}
 
 	// Create SQLite session store for persistent sessions
-	sessStore, err := session.NewSQLiteSessionStore(ctx, sessionDB)
+	sessStore, err := sqlitestore.New(ctx, sessionDB)
 	if err != nil {
 		return fmt.Errorf("creating session store: %w", err)
 	}
