@@ -178,4 +178,29 @@ func TestBackupDatabase(t *testing.T) {
 		err := backupDatabase(dbPath)
 		require.NoError(t, err)
 	})
+
+	t.Run("preserves an existing backup", func(t *testing.T) {
+		tempDir := t.TempDir()
+		dbPath := filepath.Join(tempDir, "test.db")
+		backupPath := dbPath + ".bak"
+
+		// A backup from an earlier recovery, plus a fresh corrupt database.
+		require.NoError(t, os.WriteFile(backupPath, []byte("previous backup"), 0o644))
+		require.NoError(t, os.WriteFile(dbPath, []byte("new corrupt db"), 0o644))
+
+		require.NoError(t, backupDatabase(dbPath))
+
+		// The prior backup must be untouched...
+		prev, err := os.ReadFile(backupPath)
+		require.NoError(t, err)
+		assert.Equal(t, "previous backup", string(prev))
+
+		// ...and the new file moved aside under a timestamped name.
+		matches, err := filepath.Glob(dbPath + ".bak.*")
+		require.NoError(t, err)
+		require.Len(t, matches, 1)
+		moved, err := os.ReadFile(matches[0])
+		require.NoError(t, err)
+		assert.Equal(t, "new corrupt db", string(moved))
+	})
 }

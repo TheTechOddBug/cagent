@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sqliteutil"
@@ -91,6 +92,11 @@ func open(ctx context.Context, path string) (*session.SQLiteSessionStore, error)
 // backupDatabase moves the database file (and related WAL files) to a backup
 func backupDatabase(path string) error {
 	backupPath := path + ".bak"
+	if _, err := os.Stat(backupPath); err == nil {
+		// A backup from an earlier recovery already exists; renaming over it
+		// would destroy the last known-good copy, so keep both.
+		backupPath = fmt.Sprintf("%s.bak.%d", path, time.Now().Unix())
+	}
 
 	slog.Info("Backing up database", "from", path, "to", backupPath)
 
