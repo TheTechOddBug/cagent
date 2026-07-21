@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -22,6 +23,22 @@ import (
 // testClient creates a minimal Client for testing convertMessages.
 func testClient() *Client {
 	return &Client{}
+}
+
+func TestNewClientFromFactory_RequiresArguments(t *testing.T) {
+	t.Parallel()
+	cfg := &latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-6"}
+	env := environment.NewMapEnvProvider(nil)
+	factory := func(context.Context) (anthropic.Client, error) { return anthropic.Client{}, nil }
+
+	_, err := NewClientFromFactory(t.Context(), nil, env, factory)
+	require.ErrorContains(t, err, "model configuration is required")
+
+	_, err = NewClientFromFactory(t.Context(), cfg, nil, factory)
+	require.ErrorContains(t, err, "environment provider is required")
+
+	_, err = NewClientFromFactory(t.Context(), cfg, env, nil)
+	require.ErrorContains(t, err, "client factory is required")
 }
 
 func TestCreateChatCompletionStream_ErrorOnEmptyMessages(t *testing.T) {

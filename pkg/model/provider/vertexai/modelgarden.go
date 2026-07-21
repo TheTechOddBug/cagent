@@ -40,7 +40,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
-	"github.com/docker/docker-agent/pkg/model/provider/anthropic"
+	"github.com/docker/docker-agent/pkg/model/provider/anthropic/vertex"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/openai"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
@@ -92,7 +92,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	}
 	rewritten := withModelsDevProvider(cfg)
 	if strings.EqualFold(publisher(cfg), "anthropic") {
-		return anthropic.NewVertexClient(ctx, rewritten, env, project, location, opts...)
+		return vertex.NewClient(ctx, rewritten, env, project, location, opts...)
 	}
 	return newOpenAIClient(ctx, rewritten, env, project, location, opts...)
 }

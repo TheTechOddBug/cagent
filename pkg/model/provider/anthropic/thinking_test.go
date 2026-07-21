@@ -192,19 +192,6 @@ func TestNewClient_RejectsFullThinkingDisplayOnUnsupportedModel(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support thinking_display")
 }
 
-func TestNewVertexClient_RejectsFullThinkingDisplayOnUnsupportedModel(t *testing.T) {
-	t.Parallel()
-	cfg := &latest.ModelConfig{
-		Provider:     "anthropic",
-		Model:        "claude-sonnet-5",
-		ProviderOpts: map[string]any{"thinking_display": "display"},
-	}
-	// Validation runs before GCP credential discovery, so no credentials needed.
-	_, err := NewVertexClient(t.Context(), cfg, environment.NewMapEnvProvider(nil), "project", "location")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support thinking_display")
-}
-
 // defaultTestModel is an Anthropic model that supports adaptive thinking but is
 // NOT in the token-rejecting set (Opus 4.6+), so effort/adaptive budgets use the
 // adaptive-thinking API while token-based budgets are preserved as-is.
