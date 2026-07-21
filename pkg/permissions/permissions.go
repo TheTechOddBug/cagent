@@ -175,19 +175,13 @@ var argCondition = regexp.MustCompile(`:(\w+)=`)
 func parsePattern(pattern string) (toolPattern string, argPatterns map[string]string) {
 	argPatterns = make(map[string]string)
 
-	matches := argCondition.FindAllStringSubmatchIndex(pattern, -1)
-	if len(matches) == 0 {
-		return pattern, argPatterns
+	// Split gives the tool name then one value per condition; the keys come
+	// from the same non-overlapping matches, so they pair up one-to-one.
+	values := argCondition.Split(pattern, -1)
+	for i, m := range argCondition.FindAllStringSubmatch(pattern, -1) {
+		argPatterns[m[1]] = values[i+1]
 	}
-
-	for i, m := range matches {
-		valueEnd := len(pattern)
-		if i+1 < len(matches) {
-			valueEnd = matches[i+1][0]
-		}
-		argPatterns[pattern[m[2]:m[3]]] = pattern[m[1]:valueEnd]
-	}
-	return pattern[:matches[0][0]], argPatterns
+	return values[0], argPatterns
 }
 
 // matchToolPattern checks if a tool name and its arguments match a pattern.
