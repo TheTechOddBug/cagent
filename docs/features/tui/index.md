@@ -195,6 +195,8 @@ While a compaction is running the percentage is replaced by a **"compacting…"*
 
 The thresholds are proportional to the agent's configured `compaction_threshold` (default `0.9`), so a custom value keeps a predictable visual runway. See [Compaction Threshold](../../configuration/models/index.md#delegating-session-compaction) for configuration details.
 
+Clicking the token-usage / cost reading in the sidebar opens the `/cost` dialog directly, so you can see the full cost breakdown without typing the command.
+
 ### Thinking and Tool Details
 
 Reasoning/thinking blocks are collapsed by default and carry a `Thinking` header badge. When collapsed, the TUI shows a short preview and compact tool summaries. Expand a block to see the full thinking content and the real tool renderers, including detailed tool output such as file edit diffs.
