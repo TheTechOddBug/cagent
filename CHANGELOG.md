@@ -3,6 +3,54 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.114.0] - 2026-07-21
+
+This release adds config flavors, Mermaid state diagram direction support, and Anthropic adaptive-thinking validation, along with several bug fixes for security, token refresh, and session handling.
+
+## Breaking Changes
+- Moves the file-backed SQLite session store to `session/sqlitestore` (`refactor(session)!:`)
+
+## What's New
+- Adds config flavors — named YAML patches declared in an agent config and applied at load time via the `--flavor` flag
+- Adds support for Mermaid state diagram directions
+- Adds fast-fail validation when `thinking_display: display` is set on Anthropic adaptive-thinking models (Claude Opus/Sonnet 4.6+), surfacing the error at startup rather than at inference time
+- Makes standalone SSE usage in MCP tools configurable (defaults to false)
+
+## Bug Fixes
+- Fixes path injection risk in `CreateSession` by validating `WorkingDir` against permitted roots before use
+- Fixes incorrect integer conversion in DMR provider by adding bounds check when narrowing int64 context size to int32
+- Fixes token refresh when Docker Desktop returns an expired JWT, and prevents the refresh nudge from starving the token polling budget
+- Fixes Anthropic `thinking_display` validation to also apply against fallback models
+- Fixes decoding of remote MCP prompts instead of type-asserting
+- Fixes session store recovery to not overwrite an existing backup
+- Hardens error paths in the OAuth flow
+
+## Technical Changes
+- Splits model discovery into an OpenAI-free `dmrmodels` package
+- Drops full `go-git` dependency from gitignore matching
+- Decouples `pkg/runtime` and `pkg/agent` from the MCP toolset package
+- Makes the JS command evaluator pluggable to drop the `goja` dependency
+- Removes unreachable helpers left behind by earlier refactors (including `Printer.PrintError`, `NewSourceLoader`, `ToolsetMetadata`, `workingdir.Default`, and `ExtractCoords`)
+- Freezes config schema v13 and opens v14 as the new latest
+- Replaces `context.Background()` with `t.Context()` in tests
+### Pull Requests
+
+- [#3754](https://github.com/docker/docker-agent/pull/3754) - feat(tui): open the /cost dialog when clicking the sidebar cost reading
+- [#3756](https://github.com/docker/docker-agent/pull/3756) - fix(codeql): go/incorrect-integer-conversion in pkg/model/provider/dmr/configure.go:158
+- [#3758](https://github.com/docker/docker-agent/pull/3758) - fix(codeql): go/path-injection in pkg/server/session_manager.go:542
+- [#3761](https://github.com/docker/docker-agent/pull/3761) - Enhance the agents API
+- [#3763](https://github.com/docker/docker-agent/pull/3763) - docs: update CHANGELOG.md for v1.113.0
+- [#3764](https://github.com/docker/docker-agent/pull/3764) - feat: support Mermaid state diagram directions
+- [#3765](https://github.com/docker/docker-agent/pull/3765) - docs: update API and TUI documentation for recent feature additions
+- [#3768](https://github.com/docker/docker-agent/pull/3768) - feat: config flavors — named YAML patches enabled at run time via --flavor
+- [#3769](https://github.com/docker/docker-agent/pull/3769) - chore: remove unreachable helpers
+- [#3770](https://github.com/docker/docker-agent/pull/3770) - Make standalone SSE usage in mcp tools configurable
+- [#3771](https://github.com/docker/docker-agent/pull/3771) - refactor: cut heavy transitive deps (goja, expr, openai-go, go-git, sqlite) from the code-built embedder surface
+- [#3772](https://github.com/docker/docker-agent/pull/3772) - feat(anthropic): fail fast when thinking_display: display is set on adaptive-thinking models
+- [#3773](https://github.com/docker/docker-agent/pull/3773) - fix(desktop): force token refresh when Docker Desktop returns an expired JWT
+- [#3774](https://github.com/docker/docker-agent/pull/3774) - chore: freeze config v13 and start v14 as latest
+
+
 ## [v1.113.0] - 2026-07-20
 
 This release fixes compaction cost attribution by model, exposes agent command names in the API, and includes internal cleanup of unused code.
@@ -4962,3 +5010,5 @@ This release improves the terminal user interface with better error handling and
 [v1.112.0]: https://github.com/docker/docker-agent/releases/tag/v1.112.0
 
 [v1.113.0]: https://github.com/docker/docker-agent/releases/tag/v1.113.0
+
+[v1.114.0]: https://github.com/docker/docker-agent/releases/tag/v1.114.0
