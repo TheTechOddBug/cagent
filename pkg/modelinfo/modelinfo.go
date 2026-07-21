@@ -190,6 +190,17 @@ func SupportsAdaptiveThinking(modelID string) bool {
 	return major >= 5 || (major == 4 && minor >= 6)
 }
 
+// SupportsFullThinkingDisplay reports whether an Anthropic Claude model
+// accepts `thinking.display: "display"` (full thinking blocks).
+//
+// The restriction arrived with the adaptive-thinking generation: models from
+// Claude 4.6 onward (Opus/Sonnet 4.6+, the Claude 5 families, Fable, Mythos)
+// only accept "summarized" and "omitted" and reject "display" with a 400.
+// Older token-thinking models (Sonnet 4.5, Haiku 4.5, ...) still accept it.
+func SupportsFullThinkingDisplay(modelID string) bool {
+	return !SupportsAdaptiveThinking(modelID)
+}
+
 // claudeOpusSonnetVersion extracts the major and minor version of a normalized
 // bare Opus/Sonnet id such as "claude-opus-4-6", "claude-sonnet-4.5", or
 // "claude-sonnet-5". It reports ok=false for other families (Haiku, Claude 3.x

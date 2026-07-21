@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
 	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
@@ -216,12 +217,12 @@ func anthropicThinkingEffort(b *latest.ThinkingBudget) (string, bool) {
 
 // anthropicThinkingDisplay returns the validated `thinking_display` value
 // from provider_opts, if set. Valid values are "summarized", "omitted", and
-// "display".
+// "display" (the latter only on pre-4.6 models, enforced by
+// [validateThinkingDisplay] at client construction).
 //
 // Claude Opus 4.7 hides thinking content by default ("omitted"). Set
-// thinking_display: summarized (or thinking_display: display) in
-// provider_opts to receive thinking blocks, or thinking_display: omitted to
-// explicitly hide them.
+// thinking_display: summarized in provider_opts to receive thinking blocks,
+// or thinking_display: omitted to explicitly hide them.
 //
 // Returns ("", false) when not set or invalid.
 func anthropicThinkingDisplay(opts map[string]any) (string, bool) {
@@ -251,6 +252,30 @@ func anthropicThinkingDisplay(opts map[string]any) (string, bool) {
 			"valid_values", []string{thinkingDisplaySummarized, thinkingDisplayOmitted, thinkingDisplayDisplay})
 		return "", false
 	}
+}
+
+// validateThinkingDisplay rejects a thinking_display mode the target model
+// does not accept. Models from the adaptive-thinking generation onward only
+// accept "summarized" and "omitted"; sending "display" fails with an HTTP
+// 400 (see [modelinfo.SupportsFullThinkingDisplay]). Server-side fallback
+// models receive the exact same request shape, so they are validated too.
+// Called at client construction so a bad config fails fast instead of on the
+// first request.
+func validateThinkingDisplay(cfg *latest.ModelConfig) error {
+	display, ok := anthropicThinkingDisplay(cfg.ProviderOpts)
+	if !ok || display != thinkingDisplayDisplay {
+		return nil
+	}
+	// Read fallbacks directly (not via fallbackModels) to avoid its
+	// "enabling server-side fallbacks" debug log during validation.
+	fallbacks, _ := providerutil.GetProviderOptStringSlice(cfg.ProviderOpts, "fallbacks")
+	for _, model := range append([]string{cfg.Model}, fallbacks...) {
+		if !modelinfo.SupportsFullThinkingDisplay(model) {
+			return fmt.Errorf("anthropic: model %q does not support thinking_display: %q; use %q or %q",
+				model, thinkingDisplayDisplay, thinkingDisplaySummarized, thinkingDisplayOmitted)
+		}
+	}
+	return nil
 }
 
 // defaultAdaptiveDisplay returns the thinking display to request with

@@ -61,7 +61,7 @@ models:
     model: claude-opus-4-6 # <- Opus 4.7 hides thinking by default; use the same flag with any recent Claude model
     thinking_budget: adaptive
     provider_opts:
-      thinking_display: summarized # <- "summarized", "display", or "omitted" (Opus 4.7 defaults to omitted)
+      thinking_display: summarized # <- "summarized" or "omitted" on 4.6+ models; "display" is pre-4.6 only (Opus 4.7 defaults to omitted)
 
   gemini-2-5-flash-dynamic-thinking:
     provider: google

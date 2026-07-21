@@ -225,13 +225,13 @@ models:
     model: claude-opus-4-7
     thinking_budget: adaptive
     provider_opts:
-      thinking_display: omitted # "summarized", "display", or "omitted"
+      thinking_display: omitted # "summarized" or "omitted" ("display" on pre-4.6 models only)
 ```
 
 Valid values:
 
 - `summarized`: thinking blocks are returned with summarized thinking text (Docker Agent's default for adaptive/effort-based budgets).
-- `display`: thinking blocks are returned for display.
+- `display`: thinking blocks are returned for display. Only accepted by pre-4.6 token-thinking models (e.g. Sonnet 4.5, Haiku 4.5); models from the adaptive-thinking generation onward (Opus/Sonnet 4.6+, Sonnet 5, Fable 5) reject it, and Docker Agent fails fast with a configuration error instead of sending a request the API would refuse.
 - `omitted`: thinking blocks are returned with an empty thinking field; the signature is still returned for multi-turn continuity. Useful to reduce time-to-first-text-token when streaming.
 
 Note: `thinking_display` applies to both `thinking_budget` with token counts and adaptive/effort-based budgets. For token-count budgets no default is applied (the API already defaults to `summarized`). Full thinking tokens are billed regardless of the `thinking_display` value.

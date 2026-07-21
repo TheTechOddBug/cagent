@@ -56,6 +56,11 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		return nil, errors.New("environment provider is required")
 	}
 
+	if err := validateThinkingDisplay(cfg); err != nil {
+		slog.ErrorContext(ctx, "Anthropic client creation failed", "error", err)
+		return nil, err
+	}
+
 	globalOptions := options.Apply(opts...)
 
 	anthropicClient := &Client{

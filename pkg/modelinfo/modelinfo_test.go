@@ -403,6 +403,38 @@ func TestSupportsAdaptiveThinkingSupersetOfRejects(t *testing.T) {
 	}
 }
 
+func TestSupportsFullThinkingDisplay(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		// Token-thinking models accept thinking.display: "display".
+		{"claude-sonnet-4-5", true},
+		{"claude-haiku-4-5", true},
+		{"claude-opus-4-5", true},
+		// The adaptive generation (4.6+) only accepts summarized/omitted.
+		{"claude-opus-4-6", false},
+		{"claude-opus-4-7", false},
+		{"claude-opus-4-8", false},
+		{"claude-sonnet-4-6", false},
+		{"claude-sonnet-5", false},
+		{"claude-fable-5", false},
+		{"claude-mythos-5", false},
+		// Bedrock-style and provider-qualified ids.
+		{"global.anthropic.claude-sonnet-5-v1:0", false},
+		{"anthropic/claude-sonnet-5", false},
+		{"global.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, SupportsFullThinkingDisplay(tc.model))
+		})
+	}
+}
+
 func TestUsesThinkingLevel(t *testing.T) {
 	t.Parallel()
 

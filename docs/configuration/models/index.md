@@ -485,8 +485,10 @@ models:
     model: claude-opus-4-7
     thinking_budget: adaptive
     provider_opts:
-      thinking_display: omitted # "summarized", "display", or "omitted"
+      thinking_display: omitted # "summarized" or "omitted" ("display" on pre-4.6 models only)
 ```
+
+`display` (full thinking blocks) is only accepted by pre-4.6 token-thinking models (e.g. Sonnet 4.5, Haiku 4.5); newer models (Opus/Sonnet 4.6+, Sonnet 5, Fable 5) only accept `summarized` and `omitted`, and Docker Agent rejects the configuration at startup.
 
 See the [Anthropic provider page](../../providers/anthropic/index.md#thinking-display) for details.
 

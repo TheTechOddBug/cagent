@@ -43,6 +43,9 @@ func NewVertexClient(ctx context.Context, cfg *latest.ModelConfig, env environme
 	if location == "" {
 		return nil, errors.New("vertex AI requires a GCP location")
 	}
+	if err := validateThinkingDisplay(cfg); err != nil {
+		return nil, err
+	}
 
 	globalOptions := options.Apply(opts...)
 
