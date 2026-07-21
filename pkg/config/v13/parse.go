@@ -1,10 +1,10 @@
-package latest
+package v13
 
 import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/docker/docker-agent/pkg/config/types"
-	previous "github.com/docker/docker-agent/pkg/config/v13"
+	previous "github.com/docker/docker-agent/pkg/config/v12"
 )
 
 func Register(parsers map[string]func([]byte) (any, error), upgraders *[]func(any, []byte) (any, error)) {
