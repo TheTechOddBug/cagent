@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/input"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
@@ -80,6 +81,9 @@ type Config struct {
 // userMessages contains the user messages to send. If a single message is "-",
 // input is read from stdin. If empty, an interactive prompt loop is started.
 func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess *session.Session, userMessages []string) error {
+	// Enable ${...} JavaScript expressions in slash-command instructions.
+	jscommands.Register()
+
 	// Create a cancellable context for this agentic loop and wire Ctrl+C to cancel it
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

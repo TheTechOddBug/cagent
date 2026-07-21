@@ -14,12 +14,20 @@ import (
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
+
+func TestMain(m *testing.M) {
+	// PrepareUserMessage tests exercise ${...} expansion without going
+	// through Run, which normally does this registration.
+	jscommands.Register()
+	os.Exit(m.Run())
+}
 
 // mockRuntime implements runtime.Runtime for testing the CLI runner.
 // It emits pre-configured events from RunStream and records Resume calls.

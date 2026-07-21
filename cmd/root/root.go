@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/feedback"
 	"github.com/docker/docker-agent/pkg/logging"
 	"github.com/docker/docker-agent/pkg/paths"
+	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/selfupdate"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tools/builtin/shell"
@@ -196,6 +197,8 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, arg
 	// Back MCP OAuth with the OS keyring for the CLI. Embedders that don't
 	// import cmd/root keep the default in-memory store.
 	keyringstore.Register()
+	// Enable ${...} JavaScript expressions in slash-command instructions.
+	jscommands.Register()
 
 	selfupdate.Cleanup(ctx)
 

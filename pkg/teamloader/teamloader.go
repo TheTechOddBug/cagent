@@ -29,6 +29,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/remote"
+	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -145,6 +146,10 @@ func Load(ctx context.Context, agentSource config.Source, runConfig *config.Runt
 // LoadWithConfig loads an agent team and returns both the team and config info
 // needed for runtime model switching.
 func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *config.RuntimeConfig, opts ...Opt) (result *LoadResult, err error) {
+	// YAML-loaded teams may use ${...} JavaScript expressions in their
+	// slash-command instructions; code-built teams opt in explicitly.
+	jscommands.Register()
+
 	// Cold-start path: parses config, resolves model aliases, may pull
 	// referenced sub-agents over the network, and starts every toolset.
 	// All synchronous from the caller's perspective. The span makes the
