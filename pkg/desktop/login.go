@@ -117,6 +117,7 @@ func forceTokenRefresh(ctx context.Context) string {
 		token := runTokenRefresh(ctx)
 
 		refreshState.Lock()
+		defer refreshState.Unlock()
 		refreshState.result = token
 		backoff := refreshCooldown
 		if token == "" {
@@ -124,7 +125,6 @@ func forceTokenRefresh(ctx context.Context) string {
 		}
 		refreshState.nextAttempt = time.Now().Add(backoff)
 		refreshState.inflight = nil
-		refreshState.Unlock()
 		close(done)
 	}()
 
@@ -144,7 +144,7 @@ func awaitRefresh(ctx context.Context, done <-chan struct{}) string {
 
 func runTokenRefresh(ctx context.Context) string {
 	slog.DebugContext(ctx, "Docker Desktop returned an expired token, forcing a refresh")
-	if err := ClientBackend.Post(ctx, "/registry/credstore-updated"); err != nil {
+	if err := postRefreshNudge(ctx); err != nil {
 		slog.DebugContext(ctx, "Failed to trigger Docker Desktop token refresh", "error", err)
 		return ""
 	}
@@ -164,4 +164,12 @@ func runTokenRefresh(ctx context.Context) string {
 		case <-ticker.C:
 		}
 	}
+}
+
+// postRefreshNudge caps the POST to a slice of the refresh budget so a slow
+// Desktop can't consume it all and starve the polling loop that follows.
+func postRefreshNudge(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, refreshBudget/3)
+	defer cancel()
+	return ClientBackend.Post(ctx, "/registry/credstore-updated")
 }
