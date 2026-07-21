@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
 // VerifyDockerGatewayAuth fails fast when gateway targets a trusted Docker
@@ -42,8 +43,9 @@ func GatewayAuthToken(ctx context.Context, env environment.Provider, gateway str
 // GatewayHTTPOptions builds the httpclient options shared by all
 // gateway-mode provider clients: the proxied base URL (the provider's public
 // endpoint unless the model overrides base_url), provider/model identity,
-// the gateway's query parameters, and the title-generation marker.
-func GatewayHTTPOptions(gatewayURL *url.URL, defaultBaseURL string, cfg *latest.ModelConfig, generatingTitle bool) []httpclient.Opt {
+// the gateway's query parameters, and the title-generation / compaction
+// markers.
+func GatewayHTTPOptions(gatewayURL *url.URL, defaultBaseURL string, cfg *latest.ModelConfig, modelOpts *options.ModelOptions) []httpclient.Opt {
 	opts := []httpclient.Opt{
 		httpclient.WithProxiedBaseURL(cmp.Or(cfg.BaseURL, defaultBaseURL)),
 		httpclient.WithProvider(cfg.Provider),
@@ -51,8 +53,11 @@ func GatewayHTTPOptions(gatewayURL *url.URL, defaultBaseURL string, cfg *latest.
 		httpclient.WithModelName(cfg.Name),
 		httpclient.WithQuery(gatewayURL.Query()),
 	}
-	if generatingTitle {
+	if modelOpts.GeneratingTitle() {
 		opts = append(opts, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
+	}
+	if modelOpts.Compacting() {
+		opts = append(opts, httpclient.WithHeader("X-Cagent-Compacting", "1"))
 	}
 	return opts
 }

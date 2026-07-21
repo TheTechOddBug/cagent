@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
 type fakeEnv map[string]string
@@ -84,26 +85,38 @@ func TestGatewayHTTPOptions(t *testing.T) {
 	t.Run("default base URL and identity headers", func(t *testing.T) {
 		t.Parallel()
 		cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-4o", Name: "smart"}
-		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, false))
+		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, &options.ModelOptions{}))
 		assert.Equal(t, "https://api.openai.com/v1", o.Header.Get("X-Cagent-Forward"))
 		assert.Equal(t, "openai", o.Header.Get("X-Cagent-Provider"))
 		assert.Equal(t, "gpt-4o", o.Header.Get("X-Cagent-Model"))
 		assert.Equal(t, "smart", o.Header.Get("X-Cagent-Model-Name"))
 		assert.Equal(t, "pro", o.Query.Get("tier"))
 		assert.Empty(t, o.Header.Get("X-Cagent-GeneratingTitle"))
+		assert.Empty(t, o.Header.Get("X-Cagent-Compacting"))
 	})
 
 	t.Run("model base_url overrides the default", func(t *testing.T) {
 		t.Parallel()
 		cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-4o", BaseURL: "https://example.com/v1"}
-		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, false))
+		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, &options.ModelOptions{}))
 		assert.Equal(t, "https://example.com/v1", o.Header.Get("X-Cagent-Forward"))
 	})
 
 	t.Run("title generation marker", func(t *testing.T) {
 		t.Parallel()
 		cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-4o"}
-		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, true))
+		modelOpts := options.Apply(options.WithGeneratingTitle())
+		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, &modelOpts))
 		assert.Equal(t, "1", o.Header.Get("X-Cagent-GeneratingTitle"))
+		assert.Empty(t, o.Header.Get("X-Cagent-Compacting"))
+	})
+
+	t.Run("compaction marker", func(t *testing.T) {
+		t.Parallel()
+		cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-4o"}
+		modelOpts := options.Apply(options.WithCompacting())
+		o := apply(GatewayHTTPOptions(gatewayURL, "https://api.openai.com/v1", cfg, &modelOpts))
+		assert.Equal(t, "1", o.Header.Get("X-Cagent-Compacting"))
+		assert.Empty(t, o.Header.Get("X-Cagent-GeneratingTitle"))
 	})
 }
