@@ -58,16 +58,11 @@ type Config struct {
 	// spend more than "tight" allows. Give agents distinct budget names
 	// when you want independent pots.
 	Budgets map[string]BudgetConfig `json:"budgets,omitempty"`
-	// Flavors are named YAML patches applied on top of the rest of the
-	// document when enabled at run time (e.g. `docker agent run --flavor x`).
-	// Patching happens on the raw YAML before parsing, with JSON Merge Patch
-	// semantics (objects merge recursively, scalars and arrays replace, null
-	// deletes) plus `key+` / `key-` extensions that append to or remove from
-	// an existing array or mapping;
-	// enabled flavors are applied in the order they were requested, and
-	// requested flavors not defined here are ignored with a debug log.
-	// The field itself is only carried so the section round-trips; see
-	// config.applyFlavors for the patching logic.
+	// Flavors are named YAML patches applied to the raw document at load
+	// time when enabled (e.g. `docker agent run --flavor x`), in request
+	// order; names not defined here are ignored with a debug log. The field
+	// only carries the section so it round-trips — see config.applyFlavors
+	// for the merge semantics.
 	Flavors map[string]map[string]any `json:"flavors,omitempty"`
 }
 

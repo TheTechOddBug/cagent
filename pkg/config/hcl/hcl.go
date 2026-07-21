@@ -68,7 +68,7 @@ func LooksLikeHCL(data []byte) bool {
 // topLevelHCLKeywords lists the block names that may legitimately appear at
 // the top level of a docker-agent HCL document.
 var topLevelHCLKeywords = []string{
-	"agent", "model", "provider", "mcp", "rag", "metadata", "permissions", "toolsets",
+	"agent", "model", "provider", "mcp", "rag", "metadata", "permissions", "toolsets", "flavors",
 }
 
 // ToYAML parses an HCL document and returns an equivalent YAML document

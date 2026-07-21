@@ -176,7 +176,7 @@ func newDebugOAuthLoginCmd() *cobra.Command {
 				return err
 			}
 
-			cfg, err := config.Load(ctx, agentSource)
+			cfg, err := config.Load(ctx, agentSource, config.WithFlavors(flags.runConfig.Flavors...))
 			if err != nil {
 				return err
 			}

@@ -42,11 +42,11 @@ import (
 // The agent config (if any) loaded along the way is returned so
 // runInSandbox can reuse it without paying the resolve+load cost a
 // second time. cfg is nil when agentRef is empty or fails to load.
-func resolveSandboxDefault(ctx context.Context, agentRef string, current bool) (bool, *latestcfg.Config) {
+func resolveSandboxDefault(ctx context.Context, agentRef string, current bool, flavors []string) (bool, *latestcfg.Config) {
 	if agentRef == "" {
 		return current, nil
 	}
-	cfg := loadAgentConfig(ctx, agentRef)
+	cfg := loadAgentConfig(ctx, agentRef, flavors)
 	if current {
 		return current, cfg
 	}
@@ -81,7 +81,7 @@ func agentNetworkAllowlist(ctx context.Context, cfg *latestcfg.Config) []string 
 // agentRef and loads the YAML, returning nil on any failure so
 // callers fall through to the normal path that will surface a
 // proper error from the eventual load.
-func loadAgentConfig(ctx context.Context, agentRef string) *latestcfg.Config {
+func loadAgentConfig(ctx context.Context, agentRef string, flavors []string) *latestcfg.Config {
 	if agentRef == "" {
 		return nil
 	}
@@ -89,7 +89,7 @@ func loadAgentConfig(ctx context.Context, agentRef string) *latestcfg.Config {
 	if err != nil {
 		return nil
 	}
-	cfg, err := config.Load(ctx, source)
+	cfg, err := config.Load(ctx, source, config.WithFlavors(flavors...))
 	if err != nil {
 		return nil
 	}
@@ -156,6 +156,7 @@ func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runCon
 			EnvProvider: envProvider,
 			HostCwd:     wd,
 			Workspace:   wd,
+			Flavors:     runConfig.Flavors,
 		})
 		if err != nil {
 			slog.WarnContext(ctx, "docker-agent kit build failed; continuing without kit", "error", err)
@@ -205,7 +206,7 @@ func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runCon
 	// Resolve env vars the agent needs and forward them into the sandbox.
 	// Docker Desktop proxies well-known API keys automatically; this handles
 	// any additional vars (e.g. MCP tool secrets).
-	envFlags, envVars := sandbox.EnvForAgent(ctx, agentRef, envProvider)
+	envFlags, envVars := sandbox.EnvForAgent(ctx, agentRef, envProvider, runConfig.Flavors)
 
 	// Forward the gateway by name so a URL with credentials never
 	// shows up in the slog'd `docker sandbox exec` argv. We do not

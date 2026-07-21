@@ -24,8 +24,10 @@ import (
 // appends its sequence to the existing one instead of replacing it (e.g.
 // `toolsets+:` adds entries to an agent's toolsets), and a key ending in `-`
 // removes entries: from a mapping by key name, from a sequence by scalar
-// equality or mapping subset-match. The `flavors` section itself is left in
-// place; the latest schema carries it so parsing still succeeds.
+// equality or mapping subset-match. The `+`/`-` suffixes are reserved inside
+// flavor patches; keys ending in them cannot be set literally. The `flavors`
+// section itself is left in place; the latest schema carries it so parsing
+// still succeeds.
 func applyFlavors(ctx context.Context, data []byte, enabled []string) ([]byte, error) {
 	if len(enabled) == 0 {
 		return data, nil
@@ -123,7 +125,14 @@ func mergePatch(base, patch any) (any, error) {
 			}
 			out[idx].Value = merged
 		default:
-			out = append(out, yaml.MapItem{Key: item.Key, Value: item.Value})
+			// New keys still get the full patch treatment (RFC 7386 merges
+			// object values against an empty object): a freshly added mapping
+			// may itself contain nulls or `+`/`-` keys to normalize.
+			merged, err := mergePatch(nil, item.Value)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, yaml.MapItem{Key: item.Key, Value: merged})
 		}
 	}
 	return out, nil
@@ -178,6 +187,12 @@ func removePatch(out yaml.MapSlice, key string, value any) (yaml.MapSlice, error
 			})
 		})
 	case yaml.MapSlice:
+		for _, matcher := range items {
+			switch matcher.(type) {
+			case yaml.MapSlice, []any:
+				return nil, fmt.Errorf("remove key %q: entries must be key names when removing from a mapping", key+"-")
+			}
+		}
 		out[idx].Value = slices.DeleteFunc(slices.Clone(base), func(entry yaml.MapItem) bool {
 			return slices.Contains(items, entry.Key)
 		})

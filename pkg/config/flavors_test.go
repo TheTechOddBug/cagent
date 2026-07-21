@@ -40,9 +40,9 @@ flavors:
   empty:
 `
 
-func loadFlavored(t *testing.T, yaml string, flavors ...string) (*latest.Config, error) {
+func loadFlavored(t *testing.T, doc string, flavors ...string) (*latest.Config, error) {
 	t.Helper()
-	return Load(t.Context(), NewBytesSource("config.yaml", []byte(yaml)), WithFlavors(flavors...))
+	return Load(t.Context(), NewBytesSource("config.yaml", []byte(doc)), WithFlavors(flavors...))
 }
 
 func TestFlavorsIgnoredWhenNoneEnabled(t *testing.T) {
@@ -337,4 +337,80 @@ flavors:
 	_, err := loadFlavored(t, config)
 	require.ErrorContains(t, err, "unknown field")
 	require.ErrorContains(t, err, "config version 13")
+}
+
+// A patch adding a brand-new mapping must still get the full merge treatment:
+// nested `+`/`-`/null keys inside it are operators, not literal keys.
+func TestFlavorsOperatorsInsideNewMapping(t *testing.T) {
+	t.Parallel()
+
+	config := `agents:
+  root:
+    model: openai/gpt-5
+    instruction: hello
+flavors:
+  extra-agent:
+    agents:
+      extra:
+        model: openai/gpt-5
+        instruction: extra
+        toolsets+:
+          - type: shell
+        sub_agents-:
+          - nobody
+        description:
+`
+
+	cfg, err := loadFlavored(t, config, "extra-agent")
+	require.NoError(t, err)
+
+	require.Len(t, cfg.Agents, 2)
+	extra := cfg.Agents[1]
+	assert.Equal(t, "extra", extra.Name)
+	require.Len(t, extra.Toolsets, 1)
+	assert.Equal(t, "shell", extra.Toolsets[0].Type)
+	assert.Empty(t, extra.SubAgents)
+	assert.Empty(t, extra.Description)
+}
+
+func TestFlavorsPreserveMultilineStrings(t *testing.T) {
+	t.Parallel()
+
+	config := "agents:\n" +
+		"  root:\n" +
+		"    model: openai/gpt-5\n" +
+		"    instruction: |\n" +
+		"      line one\n" +
+		"      line two: with colon\n" +
+		"flavors:\n" +
+		"  rename:\n" +
+		"    agents:\n" +
+		"      root:\n" +
+		"        description: patched\n"
+
+	cfg, err := loadFlavored(t, config, "rename")
+	require.NoError(t, err)
+	assert.Equal(t, "line one\nline two: with colon\n", cfg.Agents.First().Instruction)
+	assert.Equal(t, "patched", cfg.Agents.First().Description)
+}
+
+func TestFlavorsRemoveMappingEntryMustBeKeyName(t *testing.T) {
+	t.Parallel()
+
+	config := `agents:
+  root:
+    model: claude
+    instruction: hello
+models:
+  claude:
+    provider: anthropic
+    model: claude-sonnet-4-5
+flavors:
+  bad:
+    models-:
+      - provider: anthropic
+`
+
+	_, err := loadFlavored(t, config, "bad")
+	require.ErrorContains(t, err, `remove key "models-": entries must be key names when removing from a mapping`)
 }

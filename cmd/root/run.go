@@ -254,7 +254,7 @@ func (f *runExecFlags) runRunCommand(cmd *cobra.Command, args []string) (command
 		// would otherwise use (--lean, or the user-config default applied in
 		// applyUserSettings) so the checkbox never lies about the run mode.
 		initialLean := f.lean || (!f.leanChanged && userconfig.Get().Lean && !f.tour)
-		chosen, lean, err := selectAgentRef(ctx, refs, f.runConfig.EnvProvider(), initialLean)
+		chosen, lean, err := selectAgentRef(ctx, refs, f.runConfig.EnvProvider(), initialLean, f.runConfig.Flavors)
 		if err != nil {
 			if errors.Is(err, errAgentPickerCancelled) {
 				cli.NewPrinter(cmd.OutOrStdout()).Println("Agent selection cancelled.")
@@ -290,7 +290,7 @@ func (f *runExecFlags) runRunCommand(cmd *cobra.Command, args []string) (command
 		if len(args) > 0 {
 			agentRef = args[0]
 		}
-		f.sandbox, agentCfg = resolveSandboxDefault(ctx, agentRef, f.sandbox)
+		f.sandbox, agentCfg = resolveSandboxDefault(ctx, agentRef, f.sandbox, f.runConfig.Flavors)
 	}
 
 	out := cli.NewPrinter(cmd.OutOrStdout())
