@@ -219,7 +219,7 @@ The TUI renders Mermaid diagram blocks inline rather than displaying raw syntax.
 | ---------------------------------------------- | ------------------------------------------------- |
 | `graph` / `flowchart`                          | ✅ Rendered inline                                 |
 | `sequenceDiagram`                              | ✅ Rendered inline                                 |
-| `stateDiagram` / `stateDiagram-v2`             | ✅ Rendered inline                                 |
+| `stateDiagram` / `stateDiagram-v2`             | ✅ Rendered inline (supports `direction TD/TB/BT/LR/RL`) |
 | Other types (`classDiagram`, `erDiagram`, …) | Falls back to a syntax-highlighted code block     |
 
 Mermaid rendering works in both the full TUI and the lean TUI. Unsupported or syntactically invalid diagram blocks are displayed as ordinary fenced code blocks — no configuration is required and there is no way to disable it.
