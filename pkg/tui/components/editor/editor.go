@@ -206,6 +206,18 @@ func WithPlaceholder(placeholder string) Option {
 	}
 }
 
+// searchInputStyles returns the history-search input's styling, muted
+// relative to the main textarea to distinguish search mode. Shared by New
+// and the ThemeChangedMsg handler so both stay in sync with the active theme.
+func searchInputStyles() textinput.Styles {
+	s := styles.DialogInputStyle
+	s.Focused.Text = styles.MutedStyle
+	s.Focused.Placeholder = styles.MutedStyle
+	s.Blurred.Text = styles.MutedStyle
+	s.Blurred.Placeholder = styles.MutedStyle
+	return s
+}
+
 // New creates a new editor component
 func New(hist *history.History, opts ...Option) Editor {
 	ta := textarea.New()
@@ -221,14 +233,7 @@ func New(hist *history.History, opts ...Option) Editor {
 	si := textinput.New()
 	si.Prompt = ""
 	si.Placeholder = "Type to search..."
-
-	// Customize styles for search input
-	s := styles.DialogInputStyle
-	s.Focused.Text = styles.MutedStyle
-	s.Focused.Placeholder = styles.MutedStyle
-	s.Blurred.Text = styles.MutedStyle
-	s.Blurred.Placeholder = styles.MutedStyle
-	si.SetStyles(s)
+	si.SetStyles(searchInputStyles())
 
 	e := &editor{
 		textarea:                      ta,
@@ -715,6 +720,7 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		return e, nil
 	case messages.ThemeChangedMsg:
 		e.textarea.SetStyles(styles.InputStyle)
+		e.searchInput.SetStyles(searchInputStyles())
 		return e, nil
 	case tea.WindowSizeMsg:
 		e.textarea.SetWidth(msg.Width - 2)
