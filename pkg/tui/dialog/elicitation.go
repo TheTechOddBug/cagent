@@ -851,7 +851,8 @@ func (d *ElicitationDialog) createInput(field ElicitationField, idx int) textinp
 // renderMarkdownMessage renders a message string as markdown for display in dialogs.
 // Falls back to plain text rendering if the markdown renderer fails.
 func renderMarkdownMessage(message string, contentWidth int) string {
-	rendered, err := markdown.NewRenderer(contentWidth).Render(message)
+	// No copy icon: dialogs do not hit-test clicks on code blocks.
+	rendered, err := markdown.NewRendererWithoutCopyIcon(contentWidth).Render(message)
 	if err != nil {
 		return styles.DialogContentStyle.Width(contentWidth).Render(message)
 	}

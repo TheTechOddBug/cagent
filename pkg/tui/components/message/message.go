@@ -434,9 +434,13 @@ func (mv *messageModel) render(width int) string {
 
 		return prefix + messageStyle.Width(width).Render(topRow+"\n"+rendered)
 	case types.MessageTypeShellOutput:
-		if rendered, err := markdown.NewRenderer(width).Render(fmt.Sprintf("```console\n%s\n```", msg.Content)); err == nil {
+		if rendered, blocks, err := markdown.NewFastRenderer(width).RenderWithCodeBlocks(fmt.Sprintf("```console\n%s\n```", msg.Content)); err == nil {
+			// The view has no envelope, so block lines map 1:1 to View() lines,
+			// making the per-block copy affordance clickable.
+			mv.codeBlocks = blocks
 			return rendered
 		}
+		mv.codeBlocks = nil
 		return msg.Content
 	case types.MessageTypeCancelled:
 		return styles.WarningStyle.Render("⚠ stream cancelled ⚠")
@@ -448,9 +452,18 @@ func (mv *messageModel) render(width int) string {
 		// This preserves line breaks from YAML multiline syntax (|) while still
 		// allowing markdown formatting like **bold** and *italic*
 		content := preserveLineBreaks(msg.Content)
-		rendered, err := markdown.NewRenderer(width - messageStyle.GetHorizontalFrameSize()).Render(content)
+		rendered, blocks, err := markdown.NewFastRenderer(width - messageStyle.GetHorizontalFrameSize()).RenderWithCodeBlocks(content)
 		if err != nil {
 			rendered = msg.Content
+			blocks = nil
+		}
+		// Translate block lines into View() coordinates so the per-block copy
+		// affordance is clickable: the style envelope prepends its top border
+		// and padding rows before the rendered markdown.
+		lineOffset := messageStyle.GetBorderTopSize() + messageStyle.GetPaddingTop()
+		mv.codeBlocks = nil
+		for _, cb := range blocks {
+			mv.codeBlocks = append(mv.codeBlocks, markdown.CodeBlock{Content: cb.Content, Line: cb.Line + lineOffset})
 		}
 		return messageStyle.Width(width - 1).Render(strings.TrimRight(rendered, "\n\r\t "))
 	case types.MessageTypeError:

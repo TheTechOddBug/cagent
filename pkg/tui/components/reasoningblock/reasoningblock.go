@@ -527,7 +527,8 @@ func (m *Model) ensureCache() *renderCache {
 	reasoning := m.Reasoning()
 	var lines []string
 	if reasoning != "" {
-		rendered, err := markdown.NewRenderer(contentWidth).Render(reasoning)
+		// No copy icon: reasoning is not hit-tested for code block clicks.
+		rendered, err := markdown.NewRendererWithoutCopyIcon(contentWidth).Render(reasoning)
 		if err != nil {
 			rendered = reasoning
 		}
@@ -703,7 +704,8 @@ func (m *Model) renderHeader(expanded bool) string {
 // renderReasoningChunk renders a single reasoning chunk with styling.
 func (m *Model) renderReasoningChunk(text string) string {
 	contentWidth := m.contentWidth()
-	rendered, err := markdown.NewRenderer(contentWidth).Render(text)
+	// No copy icon: reasoning is not hit-tested for code block clicks.
+	rendered, err := markdown.NewRendererWithoutCopyIcon(contentWidth).Render(text)
 	if err != nil {
 		rendered = text
 	}
