@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
@@ -1980,4 +1982,272 @@ func TestBatchDeleteSessions_ToleratesNilRuntimeCancel(t *testing.T) {
 	assert.Empty(t, failed)
 	_, ok := sm.runtimeSessions.Load(sess.ID)
 	assert.False(t, ok, "the runtime entry must still be deregistered")
+}
+
+type commandFakeRuntime struct {
+	fakeRuntime
+
+	mu              sync.Mutex
+	currentAgent    string
+	commands        types.Commands            // used when commandsByAgent lookup misses
+	commandsByAgent map[string]types.Commands // per-agent tables; real multi-agent runtimes look like this
+	setCalls        []string
+	setErr          error
+	setErrForAgent  map[string]error // per-target-agent failure; falls back to setErr
+}
+
+func (r *commandFakeRuntime) CurrentAgentName(context.Context) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.currentAgent
+}
+
+func (r *commandFakeRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cmds := r.commands
+	if per, ok := r.commandsByAgent[r.currentAgent]; ok {
+		cmds = per
+	}
+	return runtime.CurrentAgentInfo{Name: r.currentAgent, Commands: cmds}
+}
+
+func (r *commandFakeRuntime) SetCurrentAgent(_ context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setCalls = append(r.setCalls, name)
+	if err, ok := r.setErrForAgent[name]; ok {
+		return err
+	}
+	if r.setErr != nil {
+		return r.setErr
+	}
+	r.currentAgent = name
+	return nil
+}
+
+func (r *commandFakeRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) {
+	return nil, nil
+}
+
+func TestApplyAgentSwitchCommands_SwitchesAndStripsPrefix(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commands: types.Commands{
+			"plan": types.Command{Agent: "planner"},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan explain X"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Equal(t, []string{"planner"}, rt.setCalls)
+	assert.Equal(t, "planner", rt.currentAgent)
+	assert.Equal(t, "explain X", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_SkipsSetWhenAlreadyOnTarget: callers rely on
+// this idempotence to re-assert the desired agent every turn instead of
+// tracking applied state themselves.
+func TestApplyAgentSwitchCommands_SkipsSetWhenAlreadyOnTarget(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "planner",
+		commands: types.Commands{
+			"plan": types.Command{Agent: "planner"},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan another step"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Empty(t, rt.setCalls)
+	assert.Equal(t, "planner", rt.currentAgent)
+	assert.Equal(t, "another step", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_LeavesInstructionCommandsAlone: rewriting
+// instruction-expansion commands here would silently reinterpret text that
+// existing HTTP callers may be sending as literal user input.
+func TestApplyAgentSwitchCommands_LeavesInstructionCommandsAlone(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commands: types.Commands{
+			"help": types.Command{Instruction: "Give me help on ${args}"},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/help me"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Empty(t, rt.setCalls, "instruction-expansion commands must not switch agents")
+	assert.Equal(t, "root", rt.currentAgent)
+	assert.Equal(t, "/help me", messages[0].Content, "content must be preserved verbatim")
+}
+
+func TestApplyAgentSwitchCommands_PassesThroughUnknownCommands(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commands:     types.Commands{"plan": types.Command{Agent: "planner"}},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/random-command with args"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Empty(t, rt.setCalls)
+	assert.Equal(t, "/random-command with args", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_IgnoresNonUserRoles: only user-authored
+// input should be able to steer the active agent.
+func TestApplyAgentSwitchCommands_IgnoresNonUserRoles(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commands:     types.Commands{"plan": types.Command{Agent: "planner"}},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleAssistant, Content: "/plan should not switch"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Empty(t, rt.setCalls)
+	assert.Equal(t, "/plan should not switch", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_PropagatesSetCurrentAgentError: a failed
+// switch must surface so RunSession can refuse the turn instead of
+// silently proceeding on the wrong agent with a rewritten message.
+func TestApplyAgentSwitchCommands_PropagatesSetCurrentAgentError(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("no such agent")
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commands:     types.Commands{"plan": types.Command{Agent: "planner"}},
+		setErr:       boom,
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan explain X"},
+	}
+
+	err := sm.applyAgentSwitchCommands(t.Context(), rt, messages)
+	require.ErrorIs(t, err, boom)
+	assert.Equal(t, "/plan explain X", messages[0].Content, "content must be untouched when the switch failed")
+}
+
+// TestApplyAgentSwitchCommands_ResolvesUsingPreSwitchAgent: routing
+// commands live on the source agent (`/plan` on root, targeting planner)
+// and are not re-declared on the destination. Resolving after the switch
+// would leak the prefix into history.
+func TestApplyAgentSwitchCommands_ResolvesUsingPreSwitchAgent(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root":    {"plan": types.Command{Agent: "planner"}},
+			"planner": {},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan explain X"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Equal(t, []string{"planner"}, rt.setCalls)
+	assert.Equal(t, "planner", rt.currentAgent)
+	assert.Equal(t, "explain X", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_MultiBatchLookupUsesPreBatchAgent: each
+// message's command lookup must consult the agent that owned the
+// session at the start of the batch, not whichever agent an earlier
+// switch has left the runtime on. Otherwise a batch like
+// [/plan …, /build …] silently drops the second prefix when the
+// target sub-agent doesn't re-declare `/build` in its own table.
+func TestApplyAgentSwitchCommands_MultiBatchLookupUsesPreBatchAgent(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root": {
+				"plan":  types.Command{Agent: "planner"},
+				"build": types.Command{Agent: "root"},
+			},
+			"planner": {},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan step one"},
+		{Role: chat.MessageRoleUser, Content: "/build step two"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Equal(t, "step one", messages[0].Content)
+	assert.Equal(t, "step two", messages[1].Content, "/build must be recognized against root's table even after /plan already switched the runtime")
+	assert.Equal(t, "root", rt.currentAgent)
+	assert.Equal(t, []string{"planner", "root"}, rt.setCalls)
+}
+
+// TestApplyAgentSwitchCommands_RollsBackOnBatchFailure: a failed switch
+// mid-batch must not leave the runtime pointing at the intermediate
+// agent — the caller aborts the turn, so the next request would arrive
+// on the wrong agent otherwise.
+func TestApplyAgentSwitchCommands_RollsBackOnBatchFailure(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("no such agent")
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root": {
+				"plan": types.Command{Agent: "planner"},
+				"bad":  types.Command{Agent: "nonexistent"},
+			},
+			"planner": {
+				"plan": types.Command{Agent: "planner"},
+				"bad":  types.Command{Agent: "nonexistent"},
+			},
+		},
+		setErrForAgent: map[string]error{"nonexistent": boom},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan step one"},
+		{Role: chat.MessageRoleUser, Content: "/bad step two"},
+	}
+
+	err := sm.applyAgentSwitchCommands(t.Context(), rt, messages)
+	require.ErrorIs(t, err, boom)
+	assert.Equal(t, "root", rt.currentAgent, "runtime must be restored to the pre-batch agent")
+	assert.Equal(t, []string{"planner", "nonexistent", "root"}, rt.setCalls)
 }

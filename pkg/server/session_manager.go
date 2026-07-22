@@ -894,6 +894,13 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		return nil, err
 	}
 
+	if err := sm.applyAgentSwitchCommands(ctx, runtimeSession.runtime, messages); err != nil {
+		undoModelOverride(ctx, prevOverride, hadPrevOverride)
+		runtimeSession.streaming.Unlock()
+		cancel()
+		return nil, err
+	}
+
 	// Now that we hold the streaming lock, it is safe to mutate the session.
 	// Collect user messages for potential title generation
 	var userMessages []string
@@ -1520,6 +1527,54 @@ func (sm *SessionManager) applyRunModelOverride(ctx context.Context, rs *activeR
 		}
 	}
 	return prevOverride, hadPrev, undo, nil
+}
+
+// applyAgentSwitchCommands is the HTTP analogue of
+// pkg/cli/runner.PrepareUserMessage. Scoped to agent-switch commands so
+// expanding an instruction-only command doesn't silently rewrite text
+// existing HTTP callers send as literal user input.
+//
+// Two-pass: resolve every message against the pre-batch agent first,
+// then apply switches. This keeps each message's interpretation
+// consistent regardless of how earlier messages in the same batch might
+// have mutated the runtime.
+func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runtime.Runtime, messages []api.Message) error {
+	originalAgent := rt.CurrentAgentName(ctx)
+
+	type pending struct {
+		idx     int
+		target  string
+		content string
+	}
+	var switches []pending
+	for i := range messages {
+		if messages[i].Role != chat.MessageRoleUser {
+			continue
+		}
+		cmd, _, ok := runtime.LookupCommand(ctx, rt, messages[i].Content)
+		if !ok || cmd.Agent == "" {
+			continue
+		}
+		switches = append(switches, pending{
+			idx:     i,
+			target:  cmd.Agent,
+			content: runtime.ResolveCommand(ctx, rt, messages[i].Content),
+		})
+	}
+
+	for _, s := range switches {
+		if s.target != rt.CurrentAgentName(ctx) {
+			if err := rt.SetCurrentAgent(ctx, s.target); err != nil {
+				if rbErr := rt.SetCurrentAgent(ctx, originalAgent); rbErr != nil {
+					slog.WarnContext(ctx, "failed to restore agent after switch error; session may be on wrong agent",
+						"original_agent", originalAgent, "stuck_on", s.target, "err", rbErr)
+				}
+				return fmt.Errorf("switch agent to %q: %w", s.target, err)
+			}
+		}
+		messages[s.idx].Content = s.content
+	}
+	return nil
 }
 
 // applyStoredOverrides applies the persisted per-agent model overrides on
