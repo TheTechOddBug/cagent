@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/environment"
@@ -115,8 +114,12 @@ func (b *Backend) allForWorkspace(ctx context.Context, wd string) []Existing {
 // host directories to mount read-only (kit dir, agent yaml dir, ...).
 // Each entry is made absolute and cleaned; duplicates and entries that
 // resolve to wd are filtered out. When template is non-empty it is
-// passed to `docker sandbox create -t`. Returns the sandbox name.
-func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, template, configDir string) (string, error) {
+// passed to `docker sandbox create -t`. loginKit, when non-empty, is a
+// directory containing an sbx mixin kit (see [LoginKit]) passed to
+// `create --kit` and also mounted read-only so that sandboxes created
+// without it (or for a different gateway host) are not reused.
+// Returns the sandbox name.
+func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, template, configDir, loginKit string) (string, error) {
 	wd, err := absClean(wd)
 	if err != nil {
 		return "", fmt.Errorf("resolving workspace path: %w", err)
@@ -127,6 +130,9 @@ func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, templa
 	}
 	configDir = absConfigDir
 
+	if loginKit != "" {
+		extras = append(extras, loginKit)
+	}
 	extras, err = cleanExtras(extras, wd)
 	if err != nil {
 		return "", err
@@ -165,12 +171,15 @@ func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, templa
 	if template != "" {
 		createExtra = append(createExtra, "-t", template)
 	}
+	if loginKit != "" {
+		createExtra = append(createExtra, "--kit="+loginKit)
+	}
 	createExtra = append(createExtra, "cagent", wd)
 	for _, e := range extras {
 		createExtra = append(createExtra, e+":ro")
 	}
 	// Mount config directory read-only so the sandbox can
-	// read the token file and access user config.
+	// access user config.
 	createExtra = append(createExtra, configDir+":ro")
 
 	createArgs := b.args("create", createExtra...)
@@ -271,29 +280,11 @@ func (b *Backend) BuildExecCmd(ctx context.Context, name, wd string, cagentArgs,
 	return cmd
 }
 
-// StartTokenWriterIfNeeded starts a background goroutine that refreshes
-// DOCKER_TOKEN into a shared file when a models gateway is configured.
-// Returns a stop function that is safe to call multiple times (and is a
-// no-op when no writer was started).
-func StartTokenWriterIfNeeded(ctx context.Context, dir, modelsGateway string) func() {
-	if modelsGateway == "" {
-		return func() {}
-	}
-
-	tokenPath := environment.SandboxTokensFilePath(dir)
-	w := environment.NewSandboxTokenWriter(
-		tokenPath,
-		environment.NewDockerDesktopProvider(),
-		time.Minute,
-	)
-	w.Start(ctx)
-
-	return w.Stop
-}
-
 // proxyManagedEnvVars lists env vars we never forward to the sandbox.
-// Docker Desktop proxies the API keys automatically; DOCKER_TOKEN must
-// come from sandbox-tokens.json, not a one-shot env var.
+// Docker Desktop proxies the API keys automatically; DOCKER_TOKEN is
+// exported inside the sandbox as a proxy-managed sentinel by the login
+// kit (see [LoginKit]) — the proxy swaps it for a fresh login JWT on
+// gateway requests, so a one-shot host value must never shadow it.
 var proxyManagedEnvVars = []string{
 	"OPENAI_API_KEY",
 	"ANTHROPIC_API_KEY",
