@@ -92,9 +92,35 @@ func gatherEnvVarsForModels(ctx context.Context, cfg *latest.Config, env environ
 			modelName = strings.TrimSpace(modelName)
 			gatherEnvVarsForModel(ctx, cfg, modelName, requiredEnv, env, bypassOnly)
 		}
+		gatherEnvVarsForCompactionModel(ctx, cfg, &agent, requiredEnv, env, bypassOnly)
 	}
 
 	return sortedKeys(requiredEnv)
+}
+
+// gatherEnvVarsForCompactionModel collects the env vars required by the
+// agent's effective compaction model (agent > model > provider precedence,
+// see [EffectiveCompactionModelRef]), so its credentials surface in the same
+// consolidated preflight error as the primary model's. A named reference goes
+// through the regular per-model path (which also covers routing rules); an
+// inline "provider/model" spec is parsed directly. Invalid references are
+// ignored here — they fail with a dedicated error when the model is built.
+func gatherEnvVarsForCompactionModel(ctx context.Context, cfg *latest.Config, agent *latest.AgentConfig, requiredEnv map[string]bool, env environment.Provider, bypassOnly bool) {
+	ref := EffectiveCompactionModelRef(cfg, agent)
+	if ref == "" {
+		return
+	}
+	if _, exists := cfg.Models[ref]; exists {
+		gatherEnvVarsForModel(ctx, cfg, ref, requiredEnv, env, bypassOnly)
+		return
+	}
+	inline, err := latest.ParseModelRef(ref)
+	if err != nil {
+		return
+	}
+	if !bypassOnly || hasCustomBaseURL(&inline, cfg.Providers) {
+		addEnvVarsForModelConfig(ctx, &inline, cfg.Providers, requiredEnv, env)
+	}
 }
 
 // gatherEnvVarsForModel collects required environment variables for a single model,

@@ -13,8 +13,10 @@
 # summary call only. Everything else still runs on the primary model. When
 # `compaction_model` is omitted, compaction reuses the agent's own model.
 #
-# The field can also be set directly on an agent. A `compaction_model` set on
-# the agent's model takes precedence over the agent-level value.
+# The field can also be set directly on an agent, or on a provider definition
+# as a default for every agent whose model uses that provider. Resolution
+# priority: the agent-level `compaction_model` wins, then the model-level one,
+# then the provider-level default.
 #
 # Note: if the compaction model has a SMALLER context window than the primary,
 # docker-agent triggers compaction against the smaller window so the summary
@@ -31,6 +33,16 @@ models:
   fast:
     provider: anthropic
     model: claude-haiku-4-5
+  budget:
+    provider: my_anthropic
+    model: claude-sonnet-4-5
+
+providers:
+  my_anthropic:
+    provider: anthropic
+    # Provider-level default: agents whose model uses this provider compact
+    # with Haiku unless the model or the agent overrides it.
+    compaction_model: anthropic/claude-haiku-4-5
 
 agents:
   root:
@@ -41,5 +53,9 @@ agents:
     model: anthropic/claude-sonnet-4-5
     description: An assistant configuring its compaction model at the agent level.
     instruction: You are a helpful code reviewer.
-    # Agent-level alternative: same effect as setting it on the primary model.
+    # Agent-level value: wins over any model- or provider-level setting.
     compaction_model: fast
+  frugal:
+    model: budget
+    description: An assistant inheriting its compaction model from the provider.
+    instruction: You are a helpful assistant.

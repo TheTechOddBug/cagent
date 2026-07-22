@@ -105,6 +105,9 @@ func reachableFirstAvailableModels(cfg *latest.Config, selectors map[string]bool
 			for _, ref := range agent.GetFallbackModels() {
 				visit(ref)
 			}
+			// The effective compaction model (agent > model > provider
+			// precedence) may name a selector too.
+			visit(EffectiveCompactionModelRef(cfg, &agent))
 		}
 
 		for _, toolset := range agent.Toolsets {

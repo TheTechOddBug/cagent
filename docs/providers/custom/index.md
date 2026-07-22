@@ -108,6 +108,7 @@ agents:
 | `track_usage`         | boolean    | Whether to track token usage by default.                                              | —                        |
 | `thinking_budget`     | string/int | Default reasoning effort/budget.                                                      | —                        |
 | `task_budget`         | int/object | Default total token budget for an agentic task (forwarded to Anthropic; honored by Claude Opus 4.7 today). Integer shorthand or `{type: tokens, total: N}`. | —                        |
+| `compaction_model`    | string     | Default model used for session compaction (summary generation) by agents whose model uses this provider. Named model or inline `provider/model` string. Agent-level and model-level `compaction_model` take precedence. | —                        |
 | `provider_opts`       | object     | Provider-specific options passed through to the client.                               | —                        |
 
 ## Default Inheritance
@@ -136,6 +137,10 @@ models:
     temperature: 0.2
     thinking_budget: low
 ```
+
+`compaction_model` works slightly differently: it is not merged into the model
+but resolved per agent, with the agent-level `compaction_model` winning over
+the model-level one, which wins over the provider-level default.
 
 ## Shorthand Syntax
 

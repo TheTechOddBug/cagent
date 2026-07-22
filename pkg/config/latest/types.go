@@ -393,6 +393,13 @@ type ProviderConfig struct {
 	// (currently: Anthropic Workload Identity Federation). When set, the
 	// provider's regular API-key path is bypassed.
 	Auth *AuthConfig `json:"auth,omitempty"`
+	// CompactionModel is the default compaction (summary generation) model for
+	// agents whose model uses this provider. The value can be a model name from
+	// the models section or an inline "provider/model" spec. It is the lowest
+	// priority in the resolution chain: an agent-level `compaction_model` wins,
+	// then a model-level one, then this provider-level default. When all are
+	// unset, compaction reuses the agent's own model.
+	CompactionModel string `json:"compaction_model,omitempty"`
 }
 
 // FallbackConfig represents fallback model configuration for an agent.
@@ -660,9 +667,10 @@ type AgentConfig struct {
 	CompactionThreshold *float64 `json:"compaction_threshold,omitempty"`
 	// CompactionModel names the model used to summarize the conversation when
 	// this agent's session is compacted. The value can be a model name from
-	// the models section or an inline "provider/model" spec. A
-	// `compaction_model` set on the agent's model takes precedence; when both
-	// are unset, compaction reuses the agent's own model.
+	// the models section or an inline "provider/model" spec. It has the
+	// highest priority: it wins over a `compaction_model` set on the agent's
+	// model or provider; when all are unset, compaction reuses the agent's
+	// own model.
 	CompactionModel  string            `json:"compaction_model,omitempty"`
 	AddPromptFiles   []string          `json:"add_prompt_files,omitempty" yaml:"add_prompt_files,omitempty"`
 	Commands         types.Commands    `json:"commands,omitempty"`
@@ -1115,8 +1123,9 @@ type ModelConfig struct {
 	// session; pointing this at a smaller/faster model makes compaction cheaper
 	// and more reliable without changing the model that runs the conversation.
 	// The value can be a model name from the models section or an inline
-	// "provider/model" spec. It takes precedence over the agent-level
-	// `compaction_model`; when both are empty, compaction reuses the agent's
+	// "provider/model" spec. The agent-level `compaction_model` takes
+	// precedence over this one, which in turn takes precedence over a
+	// provider-level default; when all are empty, compaction reuses the agent's
 	// own model. If the compaction model has a smaller context window than the
 	// primary, compaction is triggered against the smaller window so the
 	// summary call can always ingest the conversation it must compact.
