@@ -894,6 +894,13 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		return nil, err
 	}
 
+	if err := sm.applyAgentSwitchCommands(ctx, runtimeSession.runtime, messages); err != nil {
+		undoModelOverride(ctx, prevOverride, hadPrevOverride)
+		runtimeSession.streaming.Unlock()
+		cancel()
+		return nil, err
+	}
+
 	// Now that we hold the streaming lock, it is safe to mutate the session.
 	// Collect user messages for potential title generation
 	var userMessages []string
@@ -1520,6 +1527,29 @@ func (sm *SessionManager) applyRunModelOverride(ctx context.Context, rs *activeR
 		}
 	}
 	return prevOverride, hadPrev, undo, nil
+}
+
+// applyAgentSwitchCommands is the HTTP analogue of
+// pkg/cli/runner.PrepareUserMessage. Scoped to agent-switch commands so
+// expanding an instruction-only command doesn't silently rewrite text
+// existing HTTP callers send as literal user input.
+func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runtime.Runtime, messages []api.Message) error {
+	for i := range messages {
+		if messages[i].Role != chat.MessageRoleUser {
+			continue
+		}
+		cmd, _, ok := runtime.LookupCommand(ctx, rt, messages[i].Content)
+		if !ok || cmd.Agent == "" {
+			continue
+		}
+		if cmd.Agent != rt.CurrentAgentName(ctx) {
+			if err := rt.SetCurrentAgent(ctx, cmd.Agent); err != nil {
+				return fmt.Errorf("switch agent to %q: %w", cmd.Agent, err)
+			}
+		}
+		messages[i].Content = runtime.ResolveCommand(ctx, rt, messages[i].Content)
+	}
+	return nil
 }
 
 // applyStoredOverrides applies the persisted per-agent model overrides on
