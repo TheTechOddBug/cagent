@@ -3,6 +3,57 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.115.0] - 2026-07-22
+
+This release fixes permission pattern parsing for colon-containing values, adds provider-level compaction model defaults, resolves agent-switch slash commands over HTTP, and includes several bug fixes and refactors.
+
+## What's New
+
+- Adds `X-Cagent-Compacting: 1` HTTP header on session-compaction LLM calls to allow gateway-side policies to distinguish compaction calls from regular chat completions
+- Adds support for provider-level `compaction_model` default, so agents sharing a provider no longer need to repeat the setting individually
+- Adds an optional `description` field to model config entries for human-readable annotations
+- Resolves agent-switch slash commands in `RunSession` for HTTP/REST clients, enabling mid-session agent switches without requiring the two-segment route
+
+## Bug Fixes
+
+- Fixes permission pattern parsing where colons in argument values (e.g. URLs or Windows drive paths) caused patterns to be silently truncated, resulting in `deny` rules never firing
+- Fixes A2A tool silently succeeding when a sub-agent stream returns empty; also resolves cross-platform test instability on Windows
+- Fixes `compaction_model` references not being resolved during `first_available` reachability checks and environment preflight
+- Fixes model description not being preserved across `first_available` resolution and shorthand marshalling
+- Fixes agent-switch pre-switch command resolution and rolls back partial switches on failure
+- Fixes TUI history-search input not being restyled when a live theme change occurs, leaving stale styling after switching themes
+- Fixes `GatewayHTTPOptions` panicking when model options are nil
+- Reverts a `WorkingDir` containment check that broke callers running docker-agent as a long-lived daemon pointing sessions at arbitrary paths
+
+## Technical Changes
+
+- Fixes log-injection (CodeQL `go/log-injection`) in `pkg/telemetry/client.go` by replacing string concatenation with structured key-value logging
+- Sanitizes string arguments to close remaining log-injection taint paths and closes unbarriered passthrough in `sanitizeLogArgs`
+- Refactors permission pattern parsing to use `strings.Cut` and then a regexp-based approach replacing the hand-rolled colon scanner
+- Moves Desktop proxy HTTP transport to a new leaf package `pkg/desktop/transport`
+- Moves Vertex AI support to `anthropic/vertex` subpackage to reduce transitive dependencies for library consumers
+### Pull Requests
+
+- [#94](https://github.com/docker/docker-agent/pull/94) - fix(codeql): sanitize string args to break remaining go/log-injection taint paths
+- [#3745](https://github.com/docker/docker-agent/pull/3745) - fix: A2A response error handling and cross-platform test stability
+- [#3755](https://github.com/docker/docker-agent/pull/3755) - fix(codeql): go/log-injection in pkg/telemetry/client.go:24
+- [#3758](https://github.com/docker/docker-agent/pull/3758) - fix(codeql): go/path-injection in pkg/server/session_manager.go:542
+- [#3764](https://github.com/docker/docker-agent/pull/3764) - feat: support Mermaid state diagram directions
+- [#3767](https://github.com/docker/docker-agent/pull/3767) - fix(permissions): keep colons in argument values from truncating patterns
+- [#3774](https://github.com/docker/docker-agent/pull/3774) - chore: freeze config v13 and start v14 as latest
+- [#3775](https://github.com/docker/docker-agent/pull/3775) - docs: update CHANGELOG.md for v1.114.0
+- [#3776](https://github.com/docker/docker-agent/pull/3776) - chore: bump direct Go dependencies
+- [#3777](https://github.com/docker/docker-agent/pull/3777) - feat: add X-Cagent-Compacting header for session-compaction LLM calls
+- [#3778](https://github.com/docker/docker-agent/pull/3778) - refactor: trim transitive dependencies for library consumers
+- [#3779](https://github.com/docker/docker-agent/pull/3779) - docs: update docs for config v14 and Mermaid state diagram directions
+- [#3781](https://github.com/docker/docker-agent/pull/3781) - chore: bump github.com/anthropics/anthropic-sdk-go from v1.58.0 to v1.58.1
+- [#3782](https://github.com/docker/docker-agent/pull/3782) - feat(server): resolve agent-switch slash commands in RunSession
+- [#3783](https://github.com/docker/docker-agent/pull/3783) - feat(config): add description attribute to models
+- [#3785](https://github.com/docker/docker-agent/pull/3785) - feat: support provider-level compaction_model default
+- [#3786](https://github.com/docker/docker-agent/pull/3786) - fix(tui): restyle history-search input on live theme change
+- [#3788](https://github.com/docker/docker-agent/pull/3788) - Revert "fix(codeql): go/path-injection in pkg/server/session_manager.go:542" (#3758)
+
+
 ## [v1.114.0] - 2026-07-21
 
 This release adds config flavors, Mermaid state diagram direction support, and Anthropic adaptive-thinking validation, along with several bug fixes for security, token refresh, and session handling.
@@ -5012,3 +5063,5 @@ This release improves the terminal user interface with better error handling and
 [v1.113.0]: https://github.com/docker/docker-agent/releases/tag/v1.113.0
 
 [v1.114.0]: https://github.com/docker/docker-agent/releases/tag/v1.114.0
+
+[v1.115.0]: https://github.com/docker/docker-agent/releases/tag/v1.115.0
