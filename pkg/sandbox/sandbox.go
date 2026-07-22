@@ -122,12 +122,14 @@ func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, templa
 	// previous failed runs there may be more than one (the original
 	// foo, plus foo-1, foo-2 left behind by name-conflict suffixing
 	// when an earlier rm couldn't finish). We pick the first one that
-	// already has the mounts we need; the rest are stale and get
-	// removed before we create a fresh sandbox.
+	// already has the mounts we need — and no login kit we no longer
+	// want, which would keep authenticating gateway requests with the
+	// user's Docker login; the rest are stale and get removed before
+	// we create a fresh sandbox.
 	matches := b.allForWorkspace(ctx, wd)
 
 	for _, candidate := range matches {
-		if hasAllWorkspaces(&candidate, extras) && candidate.HasWorkspace(configDir) {
+		if hasAllWorkspaces(&candidate, extras) && candidate.HasWorkspace(configDir) && !staleLoginKit(&candidate, loginKit) {
 			slog.DebugContext(ctx, "Reusing existing sandbox", "name", candidate.Name)
 			return candidate.Name, nil
 		}
@@ -260,11 +262,11 @@ func (b *Backend) BuildExecCmd(ctx context.Context, name, wd string, cagentArgs,
 	return cmd
 }
 
-// proxyManagedEnvVars lists env vars we never forward to the sandbox.
-// Docker Desktop proxies the API keys automatically; DOCKER_TOKEN is
-// exported inside the sandbox as a proxy-managed sentinel by the login
-// kit (see [LoginKit]) — the proxy swaps it for a fresh login JWT on
-// gateway requests, so a one-shot host value must never shadow it.
+// proxyManagedEnvVars lists env vars EnvForAgent never forwards to
+// the sandbox. Docker Desktop proxies the API keys automatically;
+// DOCKER_TOKEN is handled by the caller — it is either the login
+// kit's proxy-managed sentinel (see [LoginKit]) or an explicit
+// one-shot forward for localhost gateways.
 var proxyManagedEnvVars = []string{
 	"OPENAI_API_KEY",
 	"ANTHROPIC_API_KEY",
