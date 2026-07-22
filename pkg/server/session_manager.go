@@ -539,18 +539,14 @@ func (sm *SessionManager) CreateSession(ctx context.Context, sessionTemplate *se
 		if err != nil {
 			return nil, err
 		}
-		resolvedWd, err := sm.resolveWithinRoot(absWd)
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(resolvedWd)
+		info, err := os.Stat(absWd)
 		if err != nil {
 			return nil, err
 		}
 		if !info.IsDir() {
 			return nil, errors.New("working directory must be a directory")
 		}
-		opts = append(opts, session.WithWorkingDir(resolvedWd))
+		opts = append(opts, session.WithWorkingDir(absWd))
 	}
 
 	if sessionTemplate.Permissions != nil {
@@ -572,50 +568,6 @@ func (sm *SessionManager) CreateSession(ctx context.Context, sessionTemplate *se
 	}
 
 	return sess, sm.sessionStore.AddSession(ctx, sess)
-}
-
-// workingDirRoot returns the absolute directory that user-supplied session
-// working directories must stay within. It uses the server's configured
-// working directory, falling back to the process working directory.
-func (sm *SessionManager) workingDirRoot() (string, error) {
-	root := ""
-	if sm.runConfig != nil {
-		root = strings.TrimSpace(sm.runConfig.WorkingDir)
-	}
-	if root == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		root = wd
-	}
-	return filepath.Abs(root)
-}
-
-// resolveWithinRoot canonicalises absPath via filepath.EvalSymlinks and
-// verifies the result lies inside the server root directory. This prevents a
-// user-supplied working directory from escaping to arbitrary filesystem
-// locations (go/path-injection, CodeQL alert #57).
-func (sm *SessionManager) resolveWithinRoot(absPath string) (string, error) {
-	// Resolve symlinks on the target; it must exist because the caller
-	// will stat it immediately after.
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		return "", err
-	}
-	root, err := sm.workingDirRoot()
-	if err != nil {
-		return "", err
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("working directory %q is outside the permitted root %q", absPath, root)
-	}
-	return resolvedPath, nil
 }
 
 // Sentinel errors returned by ForkSession. Matched via errors.Is by
