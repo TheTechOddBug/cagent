@@ -138,6 +138,10 @@ models:
     thinking_budget: low
 ```
 
+`compaction_model` works slightly differently: it is not merged into the model
+but resolved per agent, with the agent-level `compaction_model` winning over
+the model-level one, which wins over the provider-level default.
+
 ## Shorthand Syntax
 
 Once a provider is defined, you can use the shorthand `provider_name/model` syntax:

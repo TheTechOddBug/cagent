@@ -207,7 +207,9 @@ models:
 The value can be a named entry from the `models` stanza or an inline
 `provider/model` string. Resolution priority: an agent-level `compaction_model`
 wins, then the model-level value, then a provider-level default set in the
-`providers` section; when none is set, the primary model compacts.
+`providers` section; when none is set, the primary model compacts. For an
+agent listing several models (`model: a,b`), the first listed model that sets
+a value (or whose provider sets a default) wins at that level.
 
 ```yaml
 providers:

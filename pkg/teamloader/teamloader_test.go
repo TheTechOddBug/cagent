@@ -456,6 +456,34 @@ agents:
 		assert.Equal(t, "openai/gpt-4o-mini", root.CompactionModel().ID().String())
 	})
 
+	t.Run("provider-level compaction model referencing a named model", func(t *testing.T) {
+		data := []byte(`providers:
+  myanthropic:
+    provider: anthropic
+    compaction_model: fast
+models:
+  primary:
+    provider: myanthropic
+    model: claude-sonnet-4-5
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+agents:
+  root:
+    model: primary
+    instruction: test
+`)
+
+		team, err := Load(t.Context(), config.NewBytesSource("compaction.yaml", data), &config.RuntimeConfig{}, withTestProviderRegistry()...)
+		require.NoError(t, err)
+
+		root, err := team.Agent("root")
+		require.NoError(t, err)
+
+		require.NotNil(t, root.CompactionModel())
+		assert.Equal(t, "openai/gpt-4o-mini", root.CompactionModel().ID().String())
+	})
+
 	t.Run("model-level compaction model overrides provider-level", func(t *testing.T) {
 		data := []byte(`providers:
   myanthropic:
