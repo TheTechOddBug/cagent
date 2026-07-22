@@ -1350,7 +1350,8 @@ func (f FlexibleModelConfig) MarshalYAML() (any, error) {
 
 // isShorthandOnly returns true if only provider and model are set
 func (f *FlexibleModelConfig) isShorthandOnly() bool {
-	return f.Temperature == nil &&
+	return f.Description == "" &&
+		f.Temperature == nil &&
 		f.MaxTokens == nil &&
 		f.TopP == nil &&
 		f.FrequencyPenalty == nil &&

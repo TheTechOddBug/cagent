@@ -37,6 +37,32 @@ func TestResolveFirstAvailableModels_SelectsFirstWithCredentials(t *testing.T) {
 	assert.Empty(t, got.FirstAvailable)
 }
 
+func TestResolveFirstAvailableModels_PreservesSelectorDescription(t *testing.T) {
+	t.Parallel()
+
+	cfg := &latest.Config{
+		Models: map[string]latest.ModelConfig{
+			"smart": {
+				Description: "Best available reasoning model.",
+				FirstAvailable: []string{
+					"openai/gpt-5",
+					"dmr/ai/qwen3",
+				},
+			},
+		},
+	}
+
+	env := environment.NewMapEnvProvider(map[string]string{
+		"OPENAI_API_KEY": "test-key",
+	})
+
+	require.NoError(t, ResolveFirstAvailableModels(t.Context(), cfg, "", env))
+
+	got := cfg.Models["smart"]
+	assert.Equal(t, "openai", got.Provider)
+	assert.Equal(t, "Best available reasoning model.", got.Description)
+}
+
 func TestResolveFirstAvailableModels_FallsBackToLocalProvider(t *testing.T) {
 	t.Parallel()
 
