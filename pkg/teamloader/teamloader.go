@@ -685,21 +685,33 @@ func getTitleModelForAgent(ctx context.Context, cfg *latest.Config, a *latest.Ag
 }
 
 // getCompactionModelForAgent resolves the dedicated compaction (summary
-// generation) model for an agent, if any. The `compaction_model` field of the
-// first of the agent's configured models that sets it wins (mirroring
-// compactionThresholdForAgent); the agent-level value is the fallback. It
-// returns nil when neither sets one. The value may be a named model from the
-// models section or an inline "provider/model" spec.
+// generation) model for an agent, if any. Resolution priority: the
+// agent-level `compaction_model` wins, then the `compaction_model` of the
+// first of the agent's configured models that sets it, then the
+// provider-level default of the first of those models whose provider sets
+// one. It returns nil when none set one. The value may be a named model from
+// the models section or an inline "provider/model" spec.
 func getCompactionModelForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentConfig, runConfig *config.RuntimeConfig, providerRegistry *provider.Registry, modelOpts []options.Opt) (provider.Provider, error) {
-	var compactionRef string
-	for name := range strings.SplitSeq(a.Model, ",") {
-		if modelCfg, ok := cfg.Models[name]; ok && modelCfg.CompactionModel != "" {
-			compactionRef = modelCfg.CompactionModel
-			break
+	compactionRef := a.CompactionModel
+	if compactionRef == "" {
+		for name := range strings.SplitSeq(a.Model, ",") {
+			if modelCfg, ok := cfg.Models[name]; ok && modelCfg.CompactionModel != "" {
+				compactionRef = modelCfg.CompactionModel
+				break
+			}
 		}
 	}
 	if compactionRef == "" {
-		compactionRef = a.CompactionModel
+		for name := range strings.SplitSeq(a.Model, ",") {
+			modelCfg, ok := cfg.Models[name]
+			if !ok {
+				continue
+			}
+			if providerCfg, ok := cfg.Providers[modelCfg.Provider]; ok && providerCfg.CompactionModel != "" {
+				compactionRef = providerCfg.CompactionModel
+				break
+			}
+		}
 	}
 	if compactionRef == "" {
 		return nil, nil
@@ -750,8 +762,8 @@ func getCompactionModelForAgent(ctx context.Context, cfg *latest.Config, a *late
 // compactionThresholdForAgent resolves the proactive-compaction threshold for
 // an agent, or nil when neither the agent nor its models set one (the
 // compaction package default then applies). The `compaction_threshold` of the
-// first of the agent's configured models that sets it wins (mirroring
-// getCompactionModelForAgent); the agent-level value is the fallback.
+// first of the agent's configured models that sets it wins; the agent-level
+// value is the fallback.
 func compactionThresholdForAgent(cfg *latest.Config, a *latest.AgentConfig) *float64 {
 	for name := range strings.SplitSeq(a.Model, ",") {
 		if modelCfg, ok := cfg.Models[name]; ok && modelCfg.CompactionThreshold != nil {

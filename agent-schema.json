@@ -352,6 +352,14 @@
         "auth": {
           "$ref": "#/definitions/AuthConfig",
           "description": "Non-API-key authentication scheme. When set, the provider's regular API-key path is bypassed."
+        },
+        "compaction_model": {
+          "type": "string",
+          "description": "Default model used to summarize the conversation when the session of an agent whose model uses this provider is compacted. Value can be a model name from the models section or an inline 'provider/model' spec. Lowest priority in the resolution chain: an agent-level compaction_model wins, then a model-level one, then this provider-level default; when all are omitted, compaction reuses the agent's own model.",
+          "examples": [
+            "openai/gpt-4o-mini",
+            "fast"
+          ]
         }
       },
       "additionalProperties": false
@@ -713,7 +721,7 @@
         },
         "compaction_model": {
           "type": "string",
-          "description": "Model used to summarize the conversation when this agent's session is compacted (manual /compact, the proactive threshold trigger, or post-overflow recovery). Value can be a model name from the models section or an inline 'provider/model' spec. A compaction_model set on the agent's model takes precedence over this value; when both are omitted, compaction reuses the agent's own model.",
+          "description": "Model used to summarize the conversation when this agent's session is compacted (manual /compact, the proactive threshold trigger, or post-overflow recovery). Value can be a model name from the models section or an inline 'provider/model' spec. Highest priority: takes precedence over a compaction_model set on the agent's model or provider; when all are omitted, compaction reuses the agent's own model.",
           "examples": [
             "fast",
             "openai/gpt-4o-mini"
@@ -1686,7 +1694,7 @@
         },
         "compaction_model": {
           "type": "string",
-          "description": "Model used to summarize the conversation when this model's session is compacted (manual /compact, the proactive threshold trigger, or post-overflow recovery). The summary call ingests the whole conversation and is the slowest, most expensive call in a session; pointing this at a smaller/faster model makes compaction cheaper and more reliable without changing the model that runs the conversation. Value can be a model name from the models section or an inline 'provider/model' spec. Takes precedence over the agent-level compaction_model; when both are omitted, compaction reuses the agent's own model. If the compaction model has a smaller context window than the primary, compaction is triggered against the smaller window so the summary call can always ingest the conversation it must compact.",
+          "description": "Model used to summarize the conversation when this model's session is compacted (manual /compact, the proactive threshold trigger, or post-overflow recovery). The summary call ingests the whole conversation and is the slowest, most expensive call in a session; pointing this at a smaller/faster model makes compaction cheaper and more reliable without changing the model that runs the conversation. Value can be a model name from the models section or an inline 'provider/model' spec. The agent-level compaction_model takes precedence over this value, which in turn takes precedence over a provider-level default; when all are omitted, compaction reuses the agent's own model. If the compaction model has a smaller context window than the primary, compaction is triggered against the smaller window so the summary call can always ingest the conversation it must compact.",
           "examples": [
             "openai/gpt-4o-mini",
             "fast"

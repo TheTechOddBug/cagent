@@ -73,7 +73,7 @@ models:
 | `cost`                | object     | ✗        | Explicit token pricing in USD per 1M tokens, overriding the built-in catalogue. See [Custom Token Pricing](#custom-token-pricing). |
 | `provider_opts`       | object     | ✗        | Provider-specific options (see provider pages)                                        |
 | `title_model`         | string     | ✗        | Model used for session-title generation. Can be a named model from the `models:` section or an inline `provider/model` string. When omitted, the agent's primary model generates titles. Cannot be combined with `first_available`. |
-| `compaction_model`    | string     | ✗        | Model used for session compaction (summary generation). Can be a named model or an inline `provider/model` string. Takes precedence over the agent-level `compaction_model`. When both are omitted, the primary model compacts. Cannot be combined with `first_available`. See the [Context & Compaction guide](../../guides/compaction/index.md). |
+| `compaction_model`    | string     | ✗        | Model used for session compaction (summary generation). Can be a named model or an inline `provider/model` string. The agent-level `compaction_model` takes precedence over this value, which in turn takes precedence over a provider-level default. When none is set, the primary model compacts. Cannot be combined with `first_available`. See the [Context & Compaction guide](../../guides/compaction/index.md). |
 | `compaction_threshold` | float     | ✗        | Fraction of the context window at which proactive auto-compaction triggers for agents running this model. Must be greater than `0` and at most `1`. Takes precedence over the agent-level `compaction_threshold`. Cannot be combined with `first_available`. Default: `0.9`. See the [Context & Compaction guide](../../guides/compaction/index.md). |
 | `bypass_models_gateway` | boolean  | ✗        | When `true`, this model connects directly to its provider even when a models gateway (`--models-gateway` / `CAGENT_MODELS_GATEWAY`) is configured. Implied by a custom `base_url`. See [Gateway Bypass](#gateway-bypass). |
 
@@ -205,8 +205,17 @@ models:
 ```
 
 The value can be a named entry from the `models` stanza or an inline
-`provider/model` string. When omitted, the agent-level `compaction_model` is
-used; when neither is set, the primary model compacts.
+`provider/model` string. Resolution priority: an agent-level `compaction_model`
+wins, then the model-level value, then a provider-level default set in the
+`providers` section; when none is set, the primary model compacts.
+
+```yaml
+providers:
+  my_anthropic:
+    provider: anthropic
+    # Default for every agent whose model uses this provider.
+    compaction_model: anthropic/claude-haiku-4-5
+```
 
 If the compaction model has a **smaller context window** than the primary,
 Docker Agent triggers compaction against the smaller window so the summary
