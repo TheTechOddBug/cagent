@@ -272,11 +272,23 @@ func getGlobalStyles() *cachedStyles {
 // It directly parses and renders markdown without building an intermediate AST.
 type FastRenderer struct {
 	width int
+
+	// hideCopyIcon suppresses the per-code-block copy affordance. Use it for
+	// contexts that render markdown but do not hit-test clicks on the icon
+	// (reasoning blocks, dialogs), so no dead copy button is ever shown.
+	hideCopyIcon bool
 }
 
 // NewFastRenderer creates a new fast markdown renderer with the given width.
 func NewFastRenderer(width int) *FastRenderer {
 	return &FastRenderer{width: width}
+}
+
+// HideCopyIcon disables the per-code-block copy affordance and returns the
+// renderer for chaining.
+func (r *FastRenderer) HideCopyIcon() *FastRenderer {
+	r.hideCopyIcon = true
+	return r
 }
 
 var parserPool = sync.Pool{
@@ -306,6 +318,7 @@ func (r *FastRenderer) RenderWithCodeBlocks(input string) (string, []CodeBlock, 
 
 	p := parserPool.Get().(*parser)
 	p.reset(input, r.width)
+	p.hideCopyIcon = r.hideCopyIcon
 	result := p.parse()
 	var blocks []CodeBlock
 	if len(p.codeBlocks) > 0 {
@@ -318,13 +331,14 @@ func (r *FastRenderer) RenderWithCodeBlocks(input string) (string, []CodeBlock, 
 
 // parser holds the state for parsing markdown.
 type parser struct {
-	input      string
-	width      int
-	styles     *cachedStyles
-	out        strings.Builder
-	lines      []string
-	lineIdx    int
-	codeBlocks []CodeBlock
+	input        string
+	width        int
+	styles       *cachedStyles
+	out          strings.Builder
+	lines        []string
+	lineIdx      int
+	codeBlocks   []CodeBlock
+	hideCopyIcon bool
 }
 
 func (p *parser) reset(input string, width int) {
@@ -338,6 +352,7 @@ func (p *parser) reset(input string, width int) {
 	}
 	p.lineIdx = 0
 	p.codeBlocks = p.codeBlocks[:0]
+	p.hideCopyIcon = false
 	p.out.Reset()
 	p.out.Grow(len(input) * 2) // Pre-allocate for styled output
 }
@@ -1954,23 +1969,25 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 
 	// Render empty line at the top with a copy affordance pushed to the right
 	// edge. Record the rendered line index so click handlers can map a click
-	// back to this block's raw content.
+	// back to this block's raw content. When the copy icon is hidden the row
+	// stays as plain top padding and no block is recorded: CodeBlock entries
+	// exist solely to hit-test clicks on the icon.
 	topLine := strings.Count(p.out.String(), "\n")
 	p.out.WriteString(indent)
 	iconWidth := runewidth.StringWidth(CodeBlockCopyIcon)
 	leftFill := max(availableWidth-paddingRight-iconWidth, 0)
-	if availableWidth >= iconWidth+paddingRight {
+	if !p.hideCopyIcon && availableWidth >= iconWidth+paddingRight {
 		bgStyle.renderTo(&p.out, spaces(leftFill))
 		p.styles.ansiCodeBlockCopyIcon.renderTo(&p.out, CodeBlockCopyIcon)
 		if paddingRight > 0 {
 			bgStyle.renderTo(&p.out, spaces(paddingRight))
 		}
+		p.codeBlocks = append(p.codeBlocks, CodeBlock{Content: code, Line: topLine})
 	} else {
-		// Too narrow for the icon; fall back to a plain top padding row.
+		// Too narrow for the icon (or icon hidden); plain top padding row.
 		bgStyle.renderTo(&p.out, fullWidthPad)
 	}
 	p.out.WriteByte('\n')
-	p.codeBlocks = append(p.codeBlocks, CodeBlock{Content: code, Line: topLine})
 
 	// Process tokens line by line for better performance
 	var lineBuilder strings.Builder

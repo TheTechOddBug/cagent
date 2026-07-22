@@ -56,7 +56,8 @@ func RenderAssistantLines(text string, width int) []string {
 		return nil
 	}
 
-	rendered, err := markdown.NewRenderer(width).Render(text)
+	// No copy icon: leantui does not hit-test clicks on code blocks.
+	rendered, err := markdown.NewRendererWithoutCopyIcon(width).Render(text)
 	if err != nil {
 		return WrapANSI(text, width)
 	}

@@ -9,3 +9,10 @@ type Renderer interface {
 func NewRenderer(width int) Renderer {
 	return NewFastRenderer(width)
 }
+
+// NewRendererWithoutCopyIcon creates a markdown renderer that does not draw
+// the per-code-block copy affordance. Use it for surfaces that never
+// hit-test clicks on the icon, so no dead copy button is shown.
+func NewRendererWithoutCopyIcon(width int) Renderer {
+	return NewFastRenderer(width).HideCopyIcon()
+}
