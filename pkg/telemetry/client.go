@@ -2,8 +2,10 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/desktop"
@@ -19,24 +21,68 @@ func NewTelemetryLogger(logger *slog.Logger) *telemetryLogger {
 	return &telemetryLogger{logger: logger}
 }
 
+// sanitizeLogValue replaces newline and carriage-return characters in s to
+// prevent log-injection when the value is forwarded to a text-format sink.
+func sanitizeLogValue(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
+// sanitizeLogArgs sanitizes every element of the args slice so that no
+// user-controlled string value can reach a slog sink without passing
+// through a strings.ReplaceAll barrier (the only transformation that
+// CodeQL's go/log-injection query recognises as a sanitizer).
+//
+// Strategy — invert the passthrough logic so the catch-all sanitizes
+// rather than forwards:
+//   - plain string       → sanitizeLogValue directly
+//   - numeric / bool     → pass through as-is (provably not a string;
+//     preserves structured-log typing for non-sensitive fields)
+//   - everything else    → render via fmt.Sprintf and sanitize; this
+//     catches named string types (e.g. EventType), error, fmt.Stringer,
+//     and any future string-like type without an explicit case.
+func sanitizeLogArgs(args []any) []any {
+	if len(args) == 0 {
+		return args
+	}
+	result := make([]any, len(args))
+	for i, v := range args {
+		switch val := v.(type) {
+		case string:
+			result[i] = sanitizeLogValue(val)
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64, bool:
+			result[i] = val
+		default:
+			// Named string types, errors, Stringers, and anything else:
+			// render then sanitize so every string-like path crosses the
+			// strings.ReplaceAll barrier.
+			result[i] = sanitizeLogValue(fmt.Sprintf("%v", val))
+		}
+	}
+	return result
+}
+
 // Debug logs a debug message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Debug(msg string, args ...any) {
-	tl.logger.Debug("[Telemetry] "+msg, args...)
+	tl.logger.Debug("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Info logs an info message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Info(msg string, args ...any) {
-	tl.logger.Info("[Telemetry] "+msg, args...)
+	tl.logger.Info("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Warn logs a warning message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Warn(msg string, args ...any) {
-	tl.logger.Warn("[Telemetry] "+msg, args...)
+	tl.logger.Warn("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Error logs an error message with "[Telemetry]" prefix
 func (tl *telemetryLogger) Error(msg string, args ...any) {
-	tl.logger.Error("[Telemetry] "+msg, args...)
+	tl.logger.Error("[Telemetry]", append([]any{"telemetry_msg", sanitizeLogValue(msg)}, sanitizeLogArgs(args)...)...)
 }
 
 // Enabled returns whether the logger is enabled for the given level
