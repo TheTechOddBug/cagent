@@ -19,7 +19,7 @@ A Docker Agent config has these main sections:
 
 ```bash
 # 1. Version — configuration schema version (optional but recommended)
-version: 12
+version: 14
 
 # 2. Metadata — optional agent metadata for distribution
 metadata:
@@ -295,10 +295,10 @@ For YAML editor autocompletion and validation, use the [Docker Agent JSON Schema
 
 ## Config Versioning
 
-Docker Agent configs are versioned. The current version is `13`. Add the version at the top of your config:
+Docker Agent configs are versioned. The current version is `14`. Add the version at the top of your config:
 
 ```yaml
-version: 13
+version: 14
 
 agents:
   root:
