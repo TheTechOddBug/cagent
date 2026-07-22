@@ -1510,6 +1510,10 @@
           "type": "string",
           "description": "Model name"
         },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable summary of the model's purpose or strengths (e.g. 'fast and cheap, good for summaries')"
+        },
         "temperature": {
           "type": "number",
           "description": "Sampling temperature",
