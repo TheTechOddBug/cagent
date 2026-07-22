@@ -13,6 +13,7 @@ type ModelOptions struct {
 	gateway          string
 	structuredOutput *latest.StructuredOutput
 	generatingTitle  bool
+	compacting       bool
 	noThinking       bool
 	maxTokens        int64
 	providers        map[string]latest.ProviderConfig
@@ -31,6 +32,10 @@ func (c *ModelOptions) StructuredOutput() *latest.StructuredOutput {
 
 func (c *ModelOptions) GeneratingTitle() bool {
 	return c.generatingTitle
+}
+
+func (c *ModelOptions) Compacting() bool {
+	return c.compacting
 }
 
 func (c *ModelOptions) MaxTokens() int64 {
@@ -117,6 +122,12 @@ func WithGeneratingTitle() Opt {
 	}
 }
 
+func WithCompacting() Opt {
+	return func(cfg *ModelOptions) {
+		cfg.compacting = true
+	}
+}
+
 func WithMaxTokens(maxTokens int64) Opt {
 	return func(cfg *ModelOptions) {
 		cfg.maxTokens = maxTokens
@@ -198,6 +209,9 @@ func FromModelOptions(m ModelOptions) []Opt {
 	}
 	if m.generatingTitle {
 		out = append(out, WithGeneratingTitle())
+	}
+	if m.compacting {
+		out = append(out, WithCompacting())
 	}
 	if m.noThinking {
 		out = append(out, WithNoThinking())

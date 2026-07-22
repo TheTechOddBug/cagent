@@ -115,7 +115,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			baseURL := fmt.Sprintf("%s://%s%s/", url.Scheme, url.Host, url.Path)
 
 			// Configure a custom HTTP client to inject headers and query params used by the Gateway.
-			httpOptions := base.GatewayHTTPOptions(url, "https://api.anthropic.com/", cfg, globalOptions.GeneratingTitle())
+			httpOptions := base.GatewayHTTPOptions(url, "https://api.anthropic.com/", cfg, &globalOptions)
 
 			gatewayHTTPClient := httpclient.NewHTTPClient(ctx, httpOptions...)
 			globalOptions.WrapTransport(ctx, gatewayHTTPClient)

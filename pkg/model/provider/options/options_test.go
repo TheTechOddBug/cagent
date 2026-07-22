@@ -68,6 +68,20 @@ func TestFromModelOptions_RoundTripsTransportWrapper(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
+func TestFromModelOptions_RoundTripsCompacting(t *testing.T) {
+	t.Parallel()
+	var src ModelOptions
+	WithCompacting()(&src)
+	require.True(t, src.Compacting())
+
+	var dst ModelOptions
+	for _, o := range FromModelOptions(src) {
+		o(&dst)
+	}
+	assert.True(t, dst.Compacting())
+	assert.False(t, dst.GeneratingTitle())
+}
+
 func TestFromModelOptions_NilWrapperNotIncluded(t *testing.T) {
 	t.Parallel()
 	// A ModelOptions with no transport wrapper should not add a

@@ -135,9 +135,10 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 		"llamacpp", parsed.llamaCpp,
 		"vllm", parsed.vllm,
 	)
-	// Skip model configuration when generating titles to avoid reconfiguring the model
-	// with different settings (e.g., smaller max_tokens) that would affect the main agent.
-	if !globalOptions.GeneratingTitle() {
+	// Skip model configuration for title-generation and compaction clones to
+	// avoid reconfiguring the model with different settings (e.g., smaller
+	// max_tokens) that would affect the main agent.
+	if !globalOptions.GeneratingTitle() && !globalOptions.Compacting() {
 		if err := configureModel(ctx, httpClient, baseURL, cfg.Model, backendCfg, parsed.mode, parsed.rawRuntimeFlags); err != nil {
 			slog.DebugContext(ctx, "model configure via API skipped or failed", "error", err)
 		}

@@ -202,6 +202,7 @@ func RunLLM(ctx context.Context, args LLMArgs) (result *Result, err error) {
 	summaryModel := provider.CloneWithOptions(ctx, baseModel,
 		options.WithStructuredOutput(nil),
 		options.WithMaxTokens(summaryTokenBudget(args.ContextLimit)),
+		options.WithCompacting(),
 	)
 	compactionAgent := agent.New("root", "", agent.WithModel(summaryModel))
 
