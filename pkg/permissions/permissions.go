@@ -162,34 +162,26 @@ func (c *Checker) DenyPatterns() []string {
 	return c.denyPatterns
 }
 
+// argCondition matches the ":key=" boundary that starts an argument condition.
+// Tool names may contain colons ("mcp:github:create_issue") and so may values
+// (URLs, Windows drive paths), so a bare ":" is not a separator: only a ":"
+// immediately followed by "key=" is.
+var argCondition = regexp.MustCompile(`:(\w+)=`)
+
 // parsePattern parses a permission pattern into tool name pattern and argument conditions.
 // Pattern format: "toolname" or "toolname:arg1=val1:arg2=val2"
-// Returns the tool pattern and a map of argument patterns.
-//
-// The parser looks for the first `:key=value` segment to split tool name from arguments.
-// This allows tool names with colons (like "mcp:github:create_issue") to work correctly.
+// The tool name runs up to the first ":key=" boundary and each value up to the
+// next one, so colons inside tool names and values are preserved.
 func parsePattern(pattern string) (toolPattern string, argPatterns map[string]string) {
 	argPatterns = make(map[string]string)
 
-	// Find the first occurrence of :key=value pattern
-	// We look for ":" followed by an identifier and "="
-	parts := strings.Split(pattern, ":")
-	toolParts := []string{parts[0]} // First part is always part of the tool name
-
-	for _, part := range parts[1:] {
-		// Check if this part looks like an argument pattern (contains =)
-		if key, value, found := strings.Cut(part, "="); found && key != "" {
-			// This is an argument pattern - this and all remaining parts are args
-			argPatterns[key] = value
-		} else if len(argPatterns) == 0 {
-			// No = found and we haven't started args yet, so it's part of tool name
-			toolParts = append(toolParts, part)
-		}
-		// If we've started collecting args but this part has no =, skip it
+	// Split gives the tool name then one value per condition; the keys come
+	// from the same non-overlapping matches, so they pair up one-to-one.
+	values := argCondition.Split(pattern, -1)
+	for i, m := range argCondition.FindAllStringSubmatch(pattern, -1) {
+		argPatterns[m[1]] = values[i+1]
 	}
-
-	toolPattern = strings.Join(toolParts, ":")
-	return toolPattern, argPatterns
+	return values[0], argPatterns
 }
 
 // matchToolPattern checks if a tool name and its arguments match a pattern.
