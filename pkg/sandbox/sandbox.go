@@ -154,7 +154,7 @@ func (b *Backend) Ensure(ctx context.Context, wd string, extras []string, templa
 	if loginKit != "" {
 		createExtra = append(createExtra, "--kit="+loginKit)
 	}
-	createExtra = append(createExtra, "cagent", wd)
+	createExtra = append(createExtra, "docker-agent", wd)
 	for _, e := range extras {
 		createExtra = append(createExtra, e+":ro")
 	}
