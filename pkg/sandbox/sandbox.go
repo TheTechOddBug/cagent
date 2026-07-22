@@ -73,35 +73,15 @@ func (b *Backend) allForWorkspace(ctx context.Context, wd string) []Existing {
 		return nil
 	}
 
-	var raw map[string]json.RawMessage
+	var raw struct {
+		Sandboxes []Existing `json:"sandboxes"`
+	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil
 	}
 
-	// Both supported backends now return {"sandboxes": [...]}. Older
-	// docker sandbox versions wrapped the list under "vms" instead;
-	// fall back to that and warn so a user on an outdated CLI still
-	// gets sandbox reuse instead of accumulating duplicates while
-	// silently being told to upgrade.
-	listJSON, ok := raw[b.vmListKey]
-	if !ok {
-		if legacy, hasLegacy := raw["vms"]; hasLegacy && b.vmListKey != "vms" {
-			slog.WarnContext(ctx,
-				`sandbox ls --json returned the legacy "vms" key; please upgrade Docker Desktop / sbx for full feature support`,
-				"backend", b.program)
-			listJSON = legacy
-		} else {
-			return nil
-		}
-	}
-
-	var entries []Existing
-	if err := json.Unmarshal(listJSON, &entries); err != nil {
-		return nil
-	}
-
 	var matches []Existing
-	for _, entry := range entries {
+	for _, entry := range raw.Sandboxes {
 		if len(entry.Workspaces) > 0 && entry.Workspaces[0] == wd {
 			matches = append(matches, entry)
 		}

@@ -87,16 +87,6 @@ func TestForWorkspace(t *testing.T) {
 			wd:       "/b",
 			wantName: "b",
 		},
-		{
-			name: "legacy vms key still resolves a match",
-			// Older docker sandbox versions wrap the list under "vms".
-			// The lookup falls back to that key (with a warning logged
-			// at runtime) so users on outdated CLIs keep getting
-			// sandbox reuse instead of accumulating duplicates.
-			json:     `{"vms":[{"name":"my-sandbox","workspaces":["/my/project"]}]}`,
-			wd:       "/my/project",
-			wantName: "my-sandbox",
-		},
 	}
 
 	// Write the fake "docker" executable once and have it cat a data
@@ -253,7 +243,7 @@ func TestAllowHosts_RejectsCommaOrWhitespaceEntries(t *testing.T) {
 
 	// Smuggling additional rules through a single argument by
 	// embedding a comma (or whitespace) in a hostname must fail
-	// loudly: the sbx backend joins the list with commas before
+	// loudly: the backend joins the list with commas before
 	// forwarding it to the policy engine, and the inner CLI
 	// otherwise has no way to distinguish a typo from an attack.
 	backend := sandbox.NewBackend(false) // docker backend; sbx behaves the same
@@ -267,6 +257,48 @@ func TestAllowHosts_RejectsCommaOrWhitespaceEntries(t *testing.T) {
 			err := backend.AllowHosts(t.Context(), "sandbox-x", []string{host})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "comma or whitespace")
+		})
+	}
+}
+
+// Both backends share the modern CLI surface: per-sandbox network
+// rules are spelled `[docker sandbox|sbx] policy allow network
+// --sandbox NAME host1,host2` (the old positional-sandbox and
+// `network proxy --allow-host` forms were removed from recent CLIs).
+func TestAllowHosts_ArgvSpelling(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("argv-capture script is POSIX-only")
+	}
+
+	fakeDir := t.TempDir()
+	argsFile := filepath.Join(fakeDir, "args.txt")
+	writeMockScript(t, fakeDir, "docker", fmt.Sprintf("echo \"$@\" > %q", argsFile))
+	writeMockScript(t, fakeDir, "sbx", fmt.Sprintf("echo \"$@\" > %q", argsFile))
+	t.Setenv("PATH", fakeDir)
+
+	tests := []struct {
+		name     string
+		backend  *sandbox.Backend
+		wantArgs string
+	}{
+		{
+			name:     "docker",
+			backend:  sandbox.NewBackend(false),
+			wantArgs: "sandbox policy allow network --sandbox my-sbx a.example.com,b.example.com",
+		},
+		{
+			name:     "sbx",
+			backend:  sandbox.NewBackend(true),
+			wantArgs: "policy allow network --sandbox my-sbx a.example.com,b.example.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.backend.AllowHosts(t.Context(), "my-sbx", []string{"a.example.com", "b.example.com"}))
+
+			got, err := os.ReadFile(argsFile)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantArgs, strings.TrimSpace(string(got)))
 		})
 	}
 }
