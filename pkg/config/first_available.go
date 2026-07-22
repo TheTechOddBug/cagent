@@ -60,6 +60,11 @@ func resolveFirstAvailableModel(ctx context.Context, cfg *latest.Config, name st
 
 	slog.DebugContext(ctx, "Resolved first_available model",
 		"model_name", name, "selected", ref, "provider", chosen.Provider, "model", chosen.Model)
+	// The selector's description documents the selection itself; keep it over
+	// the chosen candidate's own description.
+	if m.Description != "" {
+		chosen.Description = m.Description
+	}
 	cfg.Models[name] = chosen
 	return nil
 }

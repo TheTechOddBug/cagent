@@ -109,6 +109,7 @@ See the [Model Providers](../../providers/overview/index.md) section for detaile
 | ------------------- | ---------- | ------------------------------------------------- |
 | `provider`          | string     | Provider identifier (required)                    |
 | `model`             | string     | Model name (required)                             |
+| `description`       | string     | Human-readable summary of the model's purpose     |
 | `temperature`       | float      | Randomness: 0.0 (deterministic) to 1.0 (creative) |
 | `max_tokens`        | int        | Maximum response length                           |
 | `top_p`             | float      | Nucleus sampling: 0.0 to 1.0                      |

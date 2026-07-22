@@ -1040,6 +1040,9 @@ type ModelConfig struct {
 	Name     string `json:"-"`
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// Description is an optional human-readable summary of the model's
+	// purpose or strengths (e.g. "fast and cheap, good for summaries").
+	Description string `json:"description,omitempty"`
 	// DisplayModel holds the original model name from the YAML config, before alias resolution.
 	// When set, provider.ID() returns Provider + "/" + DisplayModel instead of the resolved name.
 	// This ensures the UI shows the user-configured name (e.g., "claude-haiku-4-5")
@@ -1347,7 +1350,8 @@ func (f FlexibleModelConfig) MarshalYAML() (any, error) {
 
 // isShorthandOnly returns true if only provider and model are set
 func (f *FlexibleModelConfig) isShorthandOnly() bool {
-	return f.Temperature == nil &&
+	return f.Description == "" &&
+		f.Temperature == nil &&
 		f.MaxTokens == nil &&
 		f.TopP == nil &&
 		f.FrequencyPenalty == nil &&
