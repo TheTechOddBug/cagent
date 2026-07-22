@@ -2185,6 +2185,39 @@ func TestApplyAgentSwitchCommands_ResolvesUsingPreSwitchAgent(t *testing.T) {
 	assert.Equal(t, "explain X", messages[0].Content)
 }
 
+// TestApplyAgentSwitchCommands_MultiBatchLookupUsesPreBatchAgent: each
+// message's command lookup must consult the agent that owned the
+// session at the start of the batch, not whichever agent an earlier
+// switch has left the runtime on. Otherwise a batch like
+// [/plan …, /build …] silently drops the second prefix when the
+// target sub-agent doesn't re-declare `/build` in its own table.
+func TestApplyAgentSwitchCommands_MultiBatchLookupUsesPreBatchAgent(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root": {
+				"plan":  types.Command{Agent: "planner"},
+				"build": types.Command{Agent: "root"},
+			},
+			"planner": {},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan step one"},
+		{Role: chat.MessageRoleUser, Content: "/build step two"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Equal(t, "step one", messages[0].Content)
+	assert.Equal(t, "step two", messages[1].Content, "/build must be recognized against root's table even after /plan already switched the runtime")
+	assert.Equal(t, "root", rt.currentAgent)
+	assert.Equal(t, []string{"planner", "root"}, rt.setCalls)
+}
+
 // TestApplyAgentSwitchCommands_RollsBackOnBatchFailure: a failed switch
 // mid-batch must not leave the runtime pointing at the intermediate
 // agent — the caller aborts the turn, so the next request would arrive
