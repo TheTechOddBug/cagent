@@ -1534,6 +1534,7 @@ func (sm *SessionManager) applyRunModelOverride(ctx context.Context, rs *activeR
 // expanding an instruction-only command doesn't silently rewrite text
 // existing HTTP callers send as literal user input.
 func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runtime.Runtime, messages []api.Message) error {
+	originalAgent := rt.CurrentAgentName(ctx)
 	for i := range messages {
 		if messages[i].Role != chat.MessageRoleUser {
 			continue
@@ -1542,12 +1543,20 @@ func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runti
 		if !ok || cmd.Agent == "" {
 			continue
 		}
+		// Resolve against the agent that owns the command definition:
+		// the target sub-agent typically doesn't re-declare the routing
+		// command in its own table.
+		resolved := runtime.ResolveCommand(ctx, rt, messages[i].Content)
 		if cmd.Agent != rt.CurrentAgentName(ctx) {
 			if err := rt.SetCurrentAgent(ctx, cmd.Agent); err != nil {
+				// Undo any earlier successful switch in this batch so
+				// the session isn't stuck on a mid-batch agent after
+				// the caller aborts the turn.
+				_ = rt.SetCurrentAgent(ctx, originalAgent)
 				return fmt.Errorf("switch agent to %q: %w", cmd.Agent, err)
 			}
 		}
-		messages[i].Content = runtime.ResolveCommand(ctx, rt, messages[i].Content)
+		messages[i].Content = resolved
 	}
 	return nil
 }

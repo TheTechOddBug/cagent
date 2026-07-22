@@ -1987,11 +1987,13 @@ func TestBatchDeleteSessions_ToleratesNilRuntimeCancel(t *testing.T) {
 type commandFakeRuntime struct {
 	fakeRuntime
 
-	mu           sync.Mutex
-	currentAgent string
-	commands     types.Commands
-	setCalls     []string
-	setErr       error
+	mu              sync.Mutex
+	currentAgent    string
+	commands        types.Commands            // used when commandsByAgent lookup misses
+	commandsByAgent map[string]types.Commands // per-agent tables; real multi-agent runtimes look like this
+	setCalls        []string
+	setErr          error
+	setErrForAgent  map[string]error // per-target-agent failure; falls back to setErr
 }
 
 func (r *commandFakeRuntime) CurrentAgentName(context.Context) string {
@@ -2003,13 +2005,20 @@ func (r *commandFakeRuntime) CurrentAgentName(context.Context) string {
 func (r *commandFakeRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return runtime.CurrentAgentInfo{Name: r.currentAgent, Commands: r.commands}
+	cmds := r.commands
+	if per, ok := r.commandsByAgent[r.currentAgent]; ok {
+		cmds = per
+	}
+	return runtime.CurrentAgentInfo{Name: r.currentAgent, Commands: cmds}
 }
 
 func (r *commandFakeRuntime) SetCurrentAgent(_ context.Context, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.setCalls = append(r.setCalls, name)
+	if err, ok := r.setErrForAgent[name]; ok {
+		return err
+	}
 	if r.setErr != nil {
 		return r.setErr
 	}
@@ -2148,4 +2157,64 @@ func TestApplyAgentSwitchCommands_PropagatesSetCurrentAgentError(t *testing.T) {
 	err := sm.applyAgentSwitchCommands(t.Context(), rt, messages)
 	require.ErrorIs(t, err, boom)
 	assert.Equal(t, "/plan explain X", messages[0].Content, "content must be untouched when the switch failed")
+}
+
+// TestApplyAgentSwitchCommands_ResolvesUsingPreSwitchAgent: routing
+// commands live on the source agent (`/plan` on root, targeting planner)
+// and are not re-declared on the destination. Resolving after the switch
+// would leak the prefix into history.
+func TestApplyAgentSwitchCommands_ResolvesUsingPreSwitchAgent(t *testing.T) {
+	t.Parallel()
+
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root":    {"plan": types.Command{Agent: "planner"}},
+			"planner": {},
+		},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan explain X"},
+	}
+
+	require.NoError(t, sm.applyAgentSwitchCommands(t.Context(), rt, messages))
+
+	assert.Equal(t, []string{"planner"}, rt.setCalls)
+	assert.Equal(t, "planner", rt.currentAgent)
+	assert.Equal(t, "explain X", messages[0].Content)
+}
+
+// TestApplyAgentSwitchCommands_RollsBackOnBatchFailure: a failed switch
+// mid-batch must not leave the runtime pointing at the intermediate
+// agent — the caller aborts the turn, so the next request would arrive
+// on the wrong agent otherwise.
+func TestApplyAgentSwitchCommands_RollsBackOnBatchFailure(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("no such agent")
+	rt := &commandFakeRuntime{
+		currentAgent: "root",
+		commandsByAgent: map[string]types.Commands{
+			"root": {
+				"plan": types.Command{Agent: "planner"},
+				"bad":  types.Command{Agent: "nonexistent"},
+			},
+			"planner": {
+				"plan": types.Command{Agent: "planner"},
+				"bad":  types.Command{Agent: "nonexistent"},
+			},
+		},
+		setErrForAgent: map[string]error{"nonexistent": boom},
+	}
+	sm := &SessionManager{}
+	messages := []api.Message{
+		{Role: chat.MessageRoleUser, Content: "/plan step one"},
+		{Role: chat.MessageRoleUser, Content: "/bad step two"},
+	}
+
+	err := sm.applyAgentSwitchCommands(t.Context(), rt, messages)
+	require.ErrorIs(t, err, boom)
+	assert.Equal(t, "root", rt.currentAgent, "runtime must be restored to the pre-batch agent")
+	assert.Equal(t, []string{"planner", "nonexistent", "root"}, rt.setCalls)
 }
