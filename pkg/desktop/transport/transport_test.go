@@ -1,4 +1,4 @@
-package remote
+package transport
 
 import (
 	"errors"
@@ -14,27 +14,27 @@ import (
 	"github.com/docker/docker-agent/pkg/desktop"
 )
 
-func TestNewTransport_UsesDesktopProxyWhenAvailable(t *testing.T) {
+func TestNew_UsesDesktopProxyWhenAvailable(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
 
 	// Create a transport
-	transport := NewTransport(ctx)
-	require.NotNil(t, transport)
+	rt := New(ctx)
+	require.NotNil(t, rt)
 
 	// If Docker Desktop is running, verify fallback transport is used
 	if desktop.IsDockerDesktopRunning(ctx) {
-		_, ok := transport.(*fallbackTransport)
+		_, ok := rt.(*fallbackTransport)
 		assert.True(t, ok, "transport should be *fallbackTransport when Docker Desktop is running")
 	} else {
 		// Otherwise, it should be a plain *http.Transport
-		_, ok := transport.(*http.Transport)
+		_, ok := rt.(*http.Transport)
 		assert.True(t, ok, "transport should be *http.Transport when Docker Desktop is not running")
 	}
 }
 
-func TestNewTransport_WorksWithoutDesktopProxy(t *testing.T) {
+func TestNew_WorksWithoutDesktopProxy(t *testing.T) {
 	t.Parallel()
 
 	// Create a test server to simulate a registry
@@ -46,11 +46,11 @@ func TestNewTransport_WorksWithoutDesktopProxy(t *testing.T) {
 	ctx := t.Context()
 
 	// Create a transport (should work whether Desktop is running or not)
-	transport := NewTransport(ctx)
-	require.NotNil(t, transport)
+	rt := New(ctx)
+	require.NotNil(t, rt)
 
 	// Make a simple HTTP request to verify the transport works
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: rt}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, http.NoBody)
 	require.NoError(t, err)
 	resp, err := client.Do(req)

@@ -136,6 +136,48 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	return anthropicClient, nil
 }
 
+// NewClientFromFactory creates a Client backed by the SDK client returned by
+// factory. Config validation runs before factory is invoked, so configuration
+// errors surface without requiring provider credentials. The factory is
+// called once during construction and the returned client is cached for the
+// lifetime of the Client. It is the wiring point for subpackages that target
+// alternative endpoints, such as
+// [github.com/docker/docker-agent/pkg/model/provider/anthropic/vertex].
+func NewClientFromFactory(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, factory func(context.Context) (anthropic.Client, error), opts ...options.Opt) (*Client, error) {
+	if cfg == nil {
+		return nil, errors.New("model configuration is required")
+	}
+	if env == nil {
+		return nil, errors.New("environment provider is required")
+	}
+	if factory == nil {
+		return nil, errors.New("client factory is required")
+	}
+	if err := validateThinkingDisplay(cfg); err != nil {
+		return nil, err
+	}
+
+	// Apply options before invoking the factory so option side effects keep
+	// their pre-refactor ordering relative to credential discovery.
+	globalOptions := options.Apply(opts...)
+
+	client, err := factory(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		Config: base.Config{
+			ModelConfig:  *cfg,
+			ModelOptions: globalOptions,
+			Env:          env,
+		},
+		clientFn: func(context.Context) (anthropic.Client, error) {
+			return client, nil
+		},
+	}, nil
+}
+
 // buildDirectAuthOptions returns the SDK request options that authenticate
 // a direct (non-gateway) Anthropic client. It picks between Workload
 // Identity Federation and the legacy ANTHROPIC_API_KEY path based on cfg.

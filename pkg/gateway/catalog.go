@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/atomicfile"
+	"github.com/docker/docker-agent/pkg/desktop/transport"
 	"github.com/docker/docker-agent/pkg/paths"
-	"github.com/docker/docker-agent/pkg/remote"
 )
 
 const (
@@ -239,7 +239,7 @@ func fetchFromNetwork(ctx context.Context, etag string) (Catalog, string, error)
 		req.Header.Set("If-None-Match", etag)
 	}
 
-	catalogClient := &http.Client{Transport: remote.NewTransport(ctx)}
+	catalogClient := &http.Client{Transport: transport.New(ctx)}
 	resp, err := catalogClient.Do(req)
 	if err != nil {
 		return nil, "", err
