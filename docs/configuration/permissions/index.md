@@ -130,6 +130,12 @@ permissions:
     - "write_file:path=/usr/*"
 ```
 
+> [!NOTE]
+> **Colons inside argument values are preserved.** Only the `:key=` token boundaries between
+> argument conditions split a pattern — colons that appear inside a value are treated as
+> ordinary characters and do not start a new condition. Check a tool’s actual argument names
+> (and whether they accept a string or a list) before writing an argument-matching pattern.
+
 ### Multiple Argument Conditions
 
 Chain multiple argument conditions with colons. All conditions must match:
