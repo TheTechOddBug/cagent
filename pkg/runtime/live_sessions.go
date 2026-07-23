@@ -29,10 +29,12 @@ type LiveSession struct {
 
 	// CompactionModel is the identity ("provider/model") of the row's agent
 	// dedicated compaction model, set only when it actually caps ContextLimit
-	// below the primary model's own window.
+	// below the primary model's own window. Render-unused in the /context
+	// dialog (the header's single cap statement is authoritative there); kept
+	// on the struct as part of the JSON/API surface for other consumers.
 	CompactionModel string `json:"compaction_model,omitempty"`
 	// PrimaryContextLimit is the primary model's own context window, set
-	// only alongside CompactionModel.
+	// only alongside CompactionModel. Render-unused today (see CompactionModel).
 	PrimaryContextLimit int64 `json:"primary_context_limit,omitempty"`
 }
 

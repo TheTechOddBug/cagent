@@ -90,7 +90,7 @@ func TestSetAgentInfo_UpdatesProviderAndModel(t *testing.T) {
 			}
 
 			// Call SetAgentInfo with the new model ID
-			m.SetAgentInfo(tt.agentName, tt.modelID, "Updated description")
+			m.SetAgentInfo(tt.agentName, tt.modelID, "Updated description", 0, "", 0)
 
 			// Find the agent and verify
 			require.Len(t, m.availableAgents, 1, "should have one agent")
@@ -117,7 +117,7 @@ func TestSetAgentInfo_OnlyUpdatesMatchingAgent(t *testing.T) {
 	}
 
 	// Update only agent2
-	m.SetAgentInfo("agent2", "openai/gpt-5", "New description")
+	m.SetAgentInfo("agent2", "openai/gpt-5", "New description", 0, "", 0)
 
 	// Verify only agent2 was updated
 	assert.Equal(t, "openai", m.availableAgents[0].Provider, "agent1 provider should be unchanged")
@@ -143,7 +143,7 @@ func TestSetAgentInfo_EmptyModelIDNoUpdate(t *testing.T) {
 	}
 
 	// Call with empty model ID
-	m.SetAgentInfo("root", "", "description")
+	m.SetAgentInfo("root", "", "description", 0, "", 0)
 
 	// Verify no change to provider/model
 	assert.Equal(t, "openai", m.availableAgents[0].Provider, "provider should be unchanged")
@@ -163,9 +163,35 @@ func TestSetAgentInfo_NonexistentAgent(t *testing.T) {
 	}
 
 	// Call with non-existent agent name - should not panic
-	m.SetAgentInfo("nonexistent", "anthropic/claude-sonnet-4-0", "description")
+	m.SetAgentInfo("nonexistent", "anthropic/claude-sonnet-4-0", "description", 0, "", 0)
 
 	// Verify original agent unchanged
 	assert.Equal(t, "openai", m.availableAgents[0].Provider)
 	assert.Equal(t, "gpt-4o", m.availableAgents[0].Model)
+}
+
+// TestSetAgentInfo_CompactionAttribution verifies the compaction-model cap
+// attribution round-trips through SetAgentInfo and that reapplying identical
+// values (including the attribution) is a no-op that skips the cache
+// invalidation triggered by any actual change.
+func TestSetAgentInfo_CompactionAttribution(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	sessionState := service.NewSessionState(sess)
+	m := New(t.Context(), sessionState).(*model)
+
+	m.SetAgentInfo("root", "anthropic/claude", "desc", 16_000, "local/small", 128_000)
+	assert.Equal(t, "local/small", m.agentCompactionModel)
+	assert.Equal(t, int64(128_000), m.agentPrimaryLimit)
+
+	// Reapplying identical values, attribution included, is a no-op.
+	m.cacheDirty = false
+	m.SetAgentInfo("root", "anthropic/claude", "desc", 16_000, "local/small", 128_000)
+	assert.False(t, m.cacheDirty, "reapplying identical attribution must not invalidate the cache")
+
+	// The compaction model stopping capping clears the attribution.
+	m.SetAgentInfo("root", "anthropic/claude", "desc", 128_000, "", 0)
+	assert.Empty(t, m.agentCompactionModel)
+	assert.Zero(t, m.agentPrimaryLimit)
 }

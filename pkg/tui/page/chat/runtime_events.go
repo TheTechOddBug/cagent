@@ -69,7 +69,7 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 
 	case *runtime.ModelFallbackEvent:
 		// Update sidebar with the fallback model immediately so it reflects the switch
-		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.FallbackModel, "")
+		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.FallbackModel, "", 0, "", 0)
 		// Notify user when switching to a fallback model, include the reason
 		fallbackMsg := fmt.Sprintf("Model %s failed (%s), switching to %s", msg.FailedModel, msg.Reason, msg.FallbackModel)
 		return true, tea.Batch(sidebarCmd, notification.WarningCmd(fallbackMsg))
@@ -116,7 +116,7 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 
 	case *runtime.AgentInfoEvent:
-		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.Model, msg.Description)
+		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.Model, msg.Description, msg.ContextLimit, msg.CompactionModel, msg.PrimaryContextLimit)
 		p.messages.AddWelcomeMessage(msg.WelcomeMessage)
 		return true, sidebarCmd
 
