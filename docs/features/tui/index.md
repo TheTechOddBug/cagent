@@ -195,7 +195,7 @@ While a compaction is running the percentage is replaced by a **"compacting…"*
 
 The thresholds are proportional to the agent's configured `compaction_threshold` (default `0.9`), so a custom value keeps a predictable visual runway. See [Compaction Threshold](../../configuration/models/index.md#delegating-session-compaction) for configuration details.
 
-Clicking the token-usage / cost reading in the sidebar opens the `/cost` dialog directly, so you can see the full cost breakdown without typing the command.
+Clicking the token/context part of the sidebar's usage reading (the glyph, token count, and context percentage — or the "compacting…" marker) opens the `/context` dialog with the full breakdown. Clicking the cost part (the `$` figure, the `⚠ capped` marker, and the sub-session count) opens the `/cost` dialog instead. The "Token Usage" section title itself is not clickable.
 
 ### Thinking and Tool Details
 
