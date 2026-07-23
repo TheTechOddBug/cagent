@@ -62,6 +62,8 @@ models:
 > **Context window mismatch**
 >
 > If `compaction_model` has a **smaller** context window than the primary model, Docker Agent triggers compaction against the smaller window so the summary call can always ingest the full conversation. Pair the primary model with a compaction model whose window is at least as large to keep the proactive trigger aligned with the primary model's window.
+>
+> The `/context` header and the sidebar's context gauge surface this cap when it applies: the `/context` header shows a second line reading "compaction cap: `<model>` • `<N>` tokens", and the sidebar shows a short "⚠ capped" marker. Live-sessions rows do not carry cap wording; the sidebar marker deliberately doesn't repeat the model name or figure — the `/context` header is the sole authority on why the reported limit is smaller than the primary model's own window.
 
 Disable compaction only when you specifically want a session to keep full, unabridged history and are willing to risk hitting the context limit:
 
