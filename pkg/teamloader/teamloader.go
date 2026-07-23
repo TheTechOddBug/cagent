@@ -986,7 +986,7 @@ func configNameFromSource(sourceName string) string {
 // References that are external (OCI or URL) are loaded on-demand and cached
 // in externalAgents so the same reference isn't loaded twice.
 // External references may include an explicit name prefix ("name:ref") or
-// derive a short name from the reference (e.g. "agentcatalog/review-pr" → "review-pr").
+// derive a short name from the reference (e.g. "myorg/review-pr" → "review-pr").
 func resolveAgentRefs(
 	ctx context.Context,
 	refs []string,

@@ -98,7 +98,7 @@ $ docker agent run agent.yaml --disable-commands="/cost,/eval,/model"
 
 # Browse and pick an agent interactively
 $ docker agent run --agent-picker
-$ docker agent run --agent-picker=agentcatalog/coder,agentcatalog/researcher
+$ docker agent run --agent-picker=myorg/coder,myorg/researcher
 ```
 
 > [!TIP]
@@ -317,7 +317,7 @@ All [runtime configuration flags](#runtime-configuration-flags) are also accepte
 $ docker agent serve mcp agent.yaml                                # stdio transport
 $ docker agent serve mcp agent.yaml --http --listen 127.0.0.1:9090 # streaming HTTP
 $ docker agent serve mcp agent.yaml --working-dir /path/to/project
-$ docker agent serve mcp agentcatalog/coder
+$ docker agent serve mcp myorg/coder
 ```
 
 See [MCP Mode](../mcp-mode/index.md) for detailed setup.
@@ -342,7 +342,7 @@ All [runtime configuration flags](#runtime-configuration-flags) are also accepte
 # Examples
 $ docker agent serve a2a agent.yaml
 $ docker agent serve a2a agent.yaml --listen 127.0.0.1:9000
-$ docker agent serve a2a agentcatalog/pirate
+$ docker agent serve a2a myorg/agent:tag
 ```
 
 ### `docker agent serve acp`
@@ -363,7 +363,7 @@ All [runtime configuration flags](#runtime-configuration-flags) are also accepte
 # Examples
 $ docker agent serve acp agent.yaml
 $ docker agent serve acp ./team.yaml
-$ docker agent serve acp agentcatalog/pirate
+$ docker agent serve acp myorg/agent:tag
 ```
 
 See [ACP](../acp/index.md) for details on the Agent Client Protocol.
@@ -393,7 +393,7 @@ $ docker agent serve chat <config> [flags]
 # Examples
 $ docker agent serve chat agent.yaml
 $ docker agent serve chat ./team.yaml --agent reviewer
-$ docker agent serve chat agentcatalog/pirate --listen 127.0.0.1:9090
+$ docker agent serve chat myorg/agent:tag --listen 127.0.0.1:9090
 $ docker agent serve chat agent.yaml --api-key-env CHAT_BEARER_TOKEN
 
 # Drive it from any OpenAI-compatible client
@@ -496,10 +496,10 @@ $ docker agent alias add pirate /path/to/pirate.yaml
 $ docker agent alias add other ociReference
 
 # Add an alias with runtime options
-$ docker agent alias add yolo-coder agentcatalog/coder --yolo
-$ docker agent alias add fast-coder agentcatalog/coder --model openai/gpt-4o-mini
-$ docker agent alias add safe-coder agentcatalog/coder --sandbox
-$ docker agent alias add turbo agentcatalog/coder --yolo --model anthropic/claude-sonnet-4-5
+$ docker agent alias add yolo-coder myorg/coder --yolo
+$ docker agent alias add fast-coder myorg/coder --model openai/gpt-4o-mini
+$ docker agent alias add safe-coder myorg/coder --sandbox
+$ docker agent alias add turbo myorg/coder --yolo --model anthropic/claude-sonnet-4-5
 
 # Use an alias
 $ docker agent run pirate
@@ -519,9 +519,9 @@ When listing aliases, options are shown in brackets:
 $ docker agent alias ls
 Registered aliases (3):
 
-  fast-coder  → agentcatalog/coder [model=openai/gpt-4o-mini]
-  turbo       → agentcatalog/coder [yolo, model=anthropic/claude-sonnet-4-5]
-  yolo-coder  → agentcatalog/coder [yolo]
+  fast-coder  → myorg/coder [model=openai/gpt-4o-mini]
+  turbo       → myorg/coder [yolo, model=anthropic/claude-sonnet-4-5]
+  yolo-coder  → myorg/coder [yolo]
 
 Run an alias with: docker agent run <alias>
 ```
@@ -533,18 +533,18 @@ $ docker agent alias list --json
 [
   {
     "name": "fast-coder",
-    "path": "agentcatalog/coder",
+    "path": "myorg/coder",
     "model": "openai/gpt-4o-mini"
   },
   {
     "name": "turbo",
-    "path": "agentcatalog/coder",
+    "path": "myorg/coder",
     "yolo": true,
     "model": "anthropic/claude-sonnet-4-5"
   },
   {
     "name": "yolo-coder",
-    "path": "agentcatalog/coder",
+    "path": "myorg/coder",
     "yolo": true
   }
 ]
@@ -704,7 +704,7 @@ Commands that accept a config support multiple reference types:
 | ------------- | ------------------------------------------- |
 | Local file    | `./agent.yaml`                              |
 | OCI registry  | `docker.io/username/agent:latest`           |
-| Agent catalog | `agentcatalog/pirate`                       |
+| Hub shorthand | `myorg/agent:tag`                           |
 | Alias         | `pirate` (after `docker agent alias add`)   |
 | Default       | (no argument) — uses project config or built-in default agent |
 

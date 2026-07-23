@@ -139,8 +139,8 @@ $ docker agent version
 # Run the default agent
 $ docker agent run
 
-# Or try a built-in example
-$ docker agent run agentcatalog/pirate
+# Or run an agent from an OCI registry
+$ docker agent run myorg/agent:tag
 ```
 
 ## What's Next?

@@ -47,12 +47,12 @@ func TestConfig_SetGetAlias(t *testing.T) {
 
 	config := &Config{Aliases: make(map[string]*Alias)}
 
-	err := config.SetAlias("test", &Alias{Path: "agentcatalog/test-agent"})
+	err := config.SetAlias("test", &Alias{Path: "myorg/test-agent"})
 	require.NoError(t, err)
 
 	alias, ok := config.GetAlias("test")
 	assert.True(t, ok)
-	assert.Equal(t, "agentcatalog/test-agent", alias.Path)
+	assert.Equal(t, "myorg/test-agent", alias.Path)
 
 	_, ok = config.GetAlias("nonexistent")
 	assert.False(t, ok)
@@ -190,7 +190,7 @@ func TestConfig_DeleteAlias(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"code":    {Path: "agentcatalog/notion-expert"},
+			"code":    {Path: "myorg/notion-expert"},
 			"myagent": {Path: "/path/to/myagent.yaml"},
 		},
 	}
@@ -209,7 +209,7 @@ func TestConfig_SaveAndLoad(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"code":    {Path: "agentcatalog/notion-expert"},
+			"code":    {Path: "myorg/notion-expert"},
 			"myagent": {Path: "/path/to/myagent.yaml"},
 		},
 	}
@@ -280,7 +280,7 @@ func TestConfig_MigrateFromLegacy(t *testing.T) {
 	legacyFile := filepath.Join(tmpDir, "aliases.yaml")
 
 	// Create legacy aliases file
-	legacyContent := `code: agentcatalog/notion-expert
+	legacyContent := `code: myorg/notion-expert
 myagent: /path/to/myagent.yaml
 `
 	require.NoError(t, os.WriteFile(legacyFile, []byte(legacyContent), 0o644))
@@ -290,7 +290,7 @@ myagent: /path/to/myagent.yaml
 	require.NoError(t, err)
 
 	assert.Len(t, config.Aliases, 2)
-	assert.Equal(t, "agentcatalog/notion-expert", config.Aliases["code"].Path)
+	assert.Equal(t, "myorg/notion-expert", config.Aliases["code"].Path)
 
 	// Verify migration was persisted
 	assert.FileExists(t, configFile)
@@ -352,13 +352,13 @@ func TestConfig_MigrateWhenConfigEmpty(t *testing.T) {
 	require.NoError(t, os.WriteFile(configFile, []byte("aliases: {}\n"), 0o644))
 
 	// Create legacy file
-	require.NoError(t, os.WriteFile(legacyFile, []byte("code: agentcatalog/notion-expert\n"), 0o644))
+	require.NoError(t, os.WriteFile(legacyFile, []byte("code: myorg/notion-expert\n"), 0o644))
 
 	config, err := loadFrom(configFile, legacyFile)
 	require.NoError(t, err)
 
 	assert.Len(t, config.Aliases, 1)
-	assert.Equal(t, "agentcatalog/notion-expert", config.Aliases["code"].Path)
+	assert.Equal(t, "myorg/notion-expert", config.Aliases["code"].Path)
 }
 
 func TestConfig_NoLegacyFile(t *testing.T) {
@@ -384,7 +384,7 @@ func TestConfig_AtomicWrite(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"test": {Path: "agentcatalog/test-agent"},
+			"test": {Path: "myorg/test-agent"},
 		},
 	}
 
@@ -394,7 +394,7 @@ func TestConfig_AtomicWrite(t *testing.T) {
 	// Verify file exists and has correct content
 	loaded, err := loadFrom(configFile, "")
 	require.NoError(t, err)
-	assert.Equal(t, "agentcatalog/test-agent", loaded.Aliases["test"].Path)
+	assert.Equal(t, "myorg/test-agent", loaded.Aliases["test"].Path)
 
 	// Verify no temp files left behind
 	entries, err := os.ReadDir(tmpDir)
@@ -411,7 +411,7 @@ func TestConfig_AtomicWrite_Permissions(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"test": {Path: "agentcatalog/test-agent"},
+			"test": {Path: "myorg/test-agent"},
 		},
 	}
 
@@ -431,9 +431,9 @@ func TestConfig_AliasWithOptions(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"yolo-agent":  {Path: "agentcatalog/coder", Yolo: true},
-			"model-agent": {Path: "agentcatalog/coder", Model: "openai/gpt-4o-mini"},
-			"both":        {Path: "agentcatalog/coder", Yolo: true, Model: "anthropic/claude-sonnet-4-0"},
+			"yolo-agent":  {Path: "myorg/coder", Yolo: true},
+			"model-agent": {Path: "myorg/coder", Model: "openai/gpt-4o-mini"},
+			"both":        {Path: "myorg/coder", Yolo: true, Model: "anthropic/claude-sonnet-4-0"},
 		},
 	}
 
@@ -445,21 +445,21 @@ func TestConfig_AliasWithOptions(t *testing.T) {
 	// Verify yolo option
 	yoloAlias, ok := loaded.GetAlias("yolo-agent")
 	require.True(t, ok)
-	assert.Equal(t, "agentcatalog/coder", yoloAlias.Path)
+	assert.Equal(t, "myorg/coder", yoloAlias.Path)
 	assert.True(t, yoloAlias.Yolo)
 	assert.Empty(t, yoloAlias.Model)
 
 	// Verify model option
 	modelAlias, ok := loaded.GetAlias("model-agent")
 	require.True(t, ok)
-	assert.Equal(t, "agentcatalog/coder", modelAlias.Path)
+	assert.Equal(t, "myorg/coder", modelAlias.Path)
 	assert.False(t, modelAlias.Yolo)
 	assert.Equal(t, "openai/gpt-4o-mini", modelAlias.Model)
 
 	// Verify both options
 	bothAlias, ok := loaded.GetAlias("both")
 	require.True(t, ok)
-	assert.Equal(t, "agentcatalog/coder", bothAlias.Path)
+	assert.Equal(t, "myorg/coder", bothAlias.Path)
 	assert.True(t, bothAlias.Yolo)
 	assert.Equal(t, "anthropic/claude-sonnet-4-0", bothAlias.Model)
 }
@@ -471,7 +471,7 @@ func TestConfig_SetAliasWithOptions(t *testing.T) {
 
 	// Set alias with yolo option
 	err := config.SetAlias("yolo-test", &Alias{
-		Path: "agentcatalog/test",
+		Path: "myorg/test",
 		Yolo: true,
 	})
 	require.NoError(t, err)
@@ -482,7 +482,7 @@ func TestConfig_SetAliasWithOptions(t *testing.T) {
 
 	// Set alias with model option
 	err = config.SetAlias("model-test", &Alias{
-		Path:  "agentcatalog/test",
+		Path:  "myorg/test",
 		Model: "openai/gpt-4o",
 	})
 	require.NoError(t, err)
@@ -501,7 +501,7 @@ func TestConfig_ModelsGateway(t *testing.T) {
 	config := &Config{
 		ModelsGateway: "https://models.example.com",
 		Aliases: map[string]*Alias{
-			"test": {Path: "agentcatalog/test-agent"},
+			"test": {Path: "myorg/test-agent"},
 		},
 	}
 
@@ -511,7 +511,7 @@ func TestConfig_ModelsGateway(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://models.example.com", loaded.ModelsGateway)
-	assert.Equal(t, "agentcatalog/test-agent", loaded.Aliases["test"].Path)
+	assert.Equal(t, "myorg/test-agent", loaded.Aliases["test"].Path)
 }
 
 func TestConfig_ModelsGateway_Empty(t *testing.T) {
@@ -551,7 +551,7 @@ func TestConfig_Version(t *testing.T) {
 	// Create config without version
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"test": {Path: "agentcatalog/test-agent"},
+			"test": {Path: "myorg/test-agent"},
 		},
 	}
 
@@ -577,13 +577,13 @@ func TestConfig_Version_LoadLegacyWithoutVersion(t *testing.T) {
 	configFile := filepath.Join(tmpDir, "config.yaml")
 
 	// Create config file without version field (simulates old config)
-	require.NoError(t, os.WriteFile(configFile, []byte("aliases:\n  test:\n    path: agentcatalog/test\n"), 0o644))
+	require.NoError(t, os.WriteFile(configFile, []byte("aliases:\n  test:\n    path: myorg/test\n"), 0o644))
 
 	// Load should work and version should be empty (not automatically upgraded on read)
 	config, err := loadFrom(configFile, "")
 	require.NoError(t, err)
 	assert.Empty(t, config.Version)
-	assert.Equal(t, "agentcatalog/test", config.Aliases["test"].Path)
+	assert.Equal(t, "myorg/test", config.Aliases["test"].Path)
 
 	// Saving should add the version
 	require.NoError(t, config.saveTo(configFile))
@@ -706,8 +706,8 @@ func TestConfig_AliasWithHideToolResults(t *testing.T) {
 
 	config := &Config{
 		Aliases: map[string]*Alias{
-			"hidden": {Path: "agentcatalog/coder", HideToolResults: true},
-			"full":   {Path: "agentcatalog/coder", Yolo: true, Model: "openai/gpt-4o", HideToolResults: true},
+			"hidden": {Path: "myorg/coder", HideToolResults: true},
+			"full":   {Path: "myorg/coder", Yolo: true, Model: "openai/gpt-4o", HideToolResults: true},
 		},
 	}
 
@@ -719,7 +719,7 @@ func TestConfig_AliasWithHideToolResults(t *testing.T) {
 	// Verify hide_tool_results option
 	hiddenAlias, ok := loaded.GetAlias("hidden")
 	require.True(t, ok)
-	assert.Equal(t, "agentcatalog/coder", hiddenAlias.Path)
+	assert.Equal(t, "myorg/coder", hiddenAlias.Path)
 	assert.True(t, hiddenAlias.HideToolResults)
 	assert.False(t, hiddenAlias.Yolo)
 	assert.Empty(t, hiddenAlias.Model)

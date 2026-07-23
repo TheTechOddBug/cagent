@@ -934,7 +934,7 @@ $ docker agent run agent.yaml \
   --hook-post-tool-use "./scripts/log.sh"
 
 # Add hooks to an agent from a registry
-$ docker agent run agentcatalog/coder \
+$ docker agent run myorg/coder \
   --hook-pre-tool-use "./audit.sh"
 ```
 

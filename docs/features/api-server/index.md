@@ -23,7 +23,7 @@ $ docker agent serve api agent.yaml --listen 0.0.0.0:8080
 $ docker agent serve api agent.yaml --session-db ./sessions.db
 
 # Auto-refresh from OCI registry every 10 minutes
-$ docker agent serve api agentcatalog/coder --pull-interval 10
+$ docker agent serve api myorg/coder --pull-interval 10
 ```
 
 ## Endpoints

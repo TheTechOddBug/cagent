@@ -546,7 +546,7 @@ When an agent calls a tool, Docker Agent shows a confirmation dialog by default.
 > [!TIP]
 > **YOLO mode**
 >
-> Use `--yolo` or the `/yolo` command to auto-approve all tool calls. You can also toggle this mid-session. For aliases, set `--yolo` when creating the alias: `docker agent alias add fast agentcatalog/coder --yolo`.
+> Use `--yolo` or the `/yolo` command to auto-approve all tool calls. You can also toggle this mid-session. For aliases, set `--yolo` when creating the alias: `docker agent alias add fast myorg/coder --yolo`.
 
 ## Notifications
 

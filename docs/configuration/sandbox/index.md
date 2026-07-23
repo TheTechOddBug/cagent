@@ -55,7 +55,7 @@ Add `--sandbox` to an [alias](../../features/cli/index.md#docker-agent-alias) so
 sandbox path is taken automatically whenever that alias is invoked:
 
 ```bash
-docker agent alias add safe-coder agentcatalog/coder --sandbox
+docker agent alias add safe-coder myorg/coder --sandbox
 docker agent run safe-coder
 ```
 

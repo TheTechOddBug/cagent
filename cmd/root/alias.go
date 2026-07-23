@@ -22,9 +22,9 @@ func newAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
 		Short: "Manage aliases",
-		Long:  "Create and manage aliases for agent configurations or catalog references.",
-		Example: `  # Create an alias for a catalog agent
-  docker-agent alias add code agentcatalog/notion-expert
+		Long:  "Create and manage aliases for agent configurations or OCI registry references.",
+		Example: `  # Create an alias for a registry agent
+  docker-agent alias add code myorg/notion-expert
 
   # Create an alias for a local agent file
   docker-agent alias add myagent ~/myagent.yaml
@@ -60,7 +60,7 @@ func newAliasAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <alias-name> <agent-path>",
 		Short: "Add a new alias",
-		Long: `Add a new alias for an agent configuration or catalog reference.
+		Long: `Add a new alias for an agent configuration or OCI registry reference.
 
 You can optionally specify runtime options that will be applied whenever
 the alias is used:
@@ -70,22 +70,22 @@ the alias is used:
   --hide-tool-results  Hide tool call results in the TUI
   --sandbox            Always run the agent inside a Docker sandbox`,
 		Example: `  # Create a simple alias
-  docker-agent alias add code agentcatalog/notion-expert
+  docker-agent alias add code myorg/notion-expert
 
   # Create an alias that always runs in yolo mode
-  docker-agent alias add yolo-coder agentcatalog/coder --yolo
+  docker-agent alias add yolo-coder myorg/coder --yolo
 
   # Create an alias with a specific model
-  docker-agent alias add fast-coder agentcatalog/coder --model openai/gpt-4o-mini
+  docker-agent alias add fast-coder myorg/coder --model openai/gpt-4o-mini
 
   # Create an alias with hidden tool results
-  docker-agent alias add quiet agentcatalog/coder --hide-tool-results
+  docker-agent alias add quiet myorg/coder --hide-tool-results
 
   # Create an alias that always runs in a sandbox
-  docker-agent alias add safe-coder agentcatalog/coder --sandbox
+  docker-agent alias add safe-coder myorg/coder --sandbox
 
   # Create an alias with multiple options
-  docker-agent alias add turbo agentcatalog/coder --yolo --model anthropic/claude-sonnet-4-0`,
+  docker-agent alias add turbo myorg/coder --yolo --model anthropic/claude-sonnet-4-0`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAliasAddCommand(cmd, args, &flags)
