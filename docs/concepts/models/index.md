@@ -97,7 +97,7 @@ for details.
 | Requesty            | `requesty`       | Multi-provider gateway               | `REQUESTY_API_KEY`                  |
 | OpenRouter          | `openrouter`     | Multi-provider gateway               | `OPENROUTER_API_KEY`                |
 | Azure OpenAI        | `azure`          | gpt-4o, gpt-5 on Azure               | `AZURE_API_KEY` + `base_url`        |
-| Ollama              | `ollama`         | Any local Ollama model               | None (local; optional `base_url`)   |
+| [Ollama](../../providers/local/index.md) | `ollama` | Any local Ollama model | None (local; optional `base_url`) |
 | GitHub Copilot      | `github-copilot` | Copilot-hosted OpenAI/Anthropic      | `GITHUB_TOKEN` (PAT with `copilot`) |
 | ChatGPT (OpenAI account) | `chatgpt`   | gpt-5 family via ChatGPT subscription | None (sign in via `docker agent setup`) |
 
