@@ -104,6 +104,9 @@ func backgroundAt(line string, col int) color.Color {
 	var state byte
 	for w := 0; line != "" && w <= col; {
 		seq, width, n, newState := ansi.DecodeSequence(line, state, p)
+		if n == 0 {
+			break // invalid input that cannot be decoded; avoid spinning forever
+		}
 		if ansi.HasCsiPrefix(seq) && p.Command() == 'm' {
 			bg = applySGRBackground(bg, p.Params())
 		}
