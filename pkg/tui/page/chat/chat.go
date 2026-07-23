@@ -239,6 +239,12 @@ type chatPage struct {
 	sidebarDragStartX     int  // X position when drag started
 	sidebarDragStartWidth int  // Sidebar preferred width when drag started
 	sidebarDragMoved      bool // True if mouse moved beyond threshold during drag
+
+	// appliedLayout is the layout geometry last pushed to child components by
+	// SetSize. Update compares it against the live layout to catch silent
+	// shifts (e.g. the collapsed sidebar band growing when async startup info
+	// arrives) that would otherwise leave mouse hit-testing offset.
+	appliedLayout sidebarLayout
 }
 
 // sidebarHidden reports whether the sidebar should be omitted entirely from
@@ -448,6 +454,31 @@ func (p *chatPage) Init() tea.Cmd {
 
 // Update handles messages and updates the page state
 func (p *chatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+	model, cmd := p.update(msg)
+	// State changes (async sidebar updates, streaming indicators) can move
+	// child components without any resize. Child positions are only applied
+	// in SetSize, so reapply the geometry when the live layout drifted from
+	// the last applied one; otherwise mouse hit-testing stays offset until
+	// the next window resize.
+	if relayout := p.relayoutIfNeeded(); relayout != nil {
+		cmd = tea.Batch(cmd, relayout)
+	}
+	return model, cmd
+}
+
+// relayoutIfNeeded reapplies the current geometry when the computed layout no
+// longer matches the one last pushed to child components.
+func (p *chatPage) relayoutIfNeeded() tea.Cmd {
+	if p.width <= 0 || p.height <= 0 {
+		return nil
+	}
+	if p.computeSidebarLayout() == p.appliedLayout {
+		return nil
+	}
+	return p.SetSize(p.width, p.height)
+}
+
+func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	// Timers armed by a previous Update were dispatched by its caller (either
 	// through the returned command or via TakeRoutedTimers); only this
 	// update's timers may be collected after it.
@@ -739,6 +770,7 @@ func (p *chatPage) SetSize(width, height int) tea.Cmd {
 
 	// Compute layout once and use it for all sizing
 	sl := p.computeSidebarLayout()
+	p.appliedLayout = sl
 
 	switch sl.mode {
 	case sidebarVertical:
