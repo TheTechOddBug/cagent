@@ -63,7 +63,7 @@ agents:
     description: Coordinator
     instruction: Delegate tasks to the right sub-agent.
     sub_agents:
-      - myorg/agent:tag         # auto-named "agent"
+      - myorg/agent:tag             # auto-named "agent"
       - my_reviewer:myorg/reviewer  # explicitly named "my_reviewer"
 ```
 

@@ -286,7 +286,7 @@ $ docker agent run
 Run agents straight from any OCI-compatible registry — just like pulling a Docker image:
 
 ```bash
-$ docker agent run myorg/my-agent
+$ docker agent run myorg/agent:tag
 ```
 
 ### Multi-Agent Teams

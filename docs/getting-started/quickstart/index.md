@@ -29,7 +29,7 @@ This starts a general-purpose assistant with sensible defaults. Just start chatt
 Run an agent shared through any OCI-compatible registry — no local YAML needed:
 
 ```bash
-$ docker agent run myorg/my-agent
+$ docker agent run myorg/agent:tag
 ```
 
 ## Option C: Generate a Config Interactively

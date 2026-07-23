@@ -139,7 +139,7 @@ $ docker agent version
 # Run the default agent
 $ docker agent run
 
-# Or try a built-in example
+# Or run an agent from an OCI registry
 $ docker agent run myorg/agent:tag
 ```
 
