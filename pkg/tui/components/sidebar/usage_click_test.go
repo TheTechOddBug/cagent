@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -12,9 +13,19 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
 
+// dollarOffset returns the index of "$" within a rendered (ANSI-stripped)
+// usage reading line, i.e. the start of the cost segment.
+func dollarOffset(t *testing.T, renderedLine string) int {
+	t.Helper()
+	idx := strings.Index(ansi.Strip(renderedLine), "$")
+	require.GreaterOrEqual(t, idx, 0, "usage reading line must contain a cost figure")
+	return idx
+}
+
 // TestSidebar_HandleClickType_Usage_Vertical verifies that the vertical Token
-// Usage reading line (glyph, tokens, context %, cost) reports ClickUsage,
-// while the section's title line is no longer a click target.
+// Usage reading line splits between ClickUsageContext (glyph, tokens,
+// context %) and ClickUsage (cost, sub-sessions), while the section's title
+// line is no longer a click target.
 func TestSidebar_HandleClickType_Usage_Vertical(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +55,39 @@ func TestSidebar_HandleClickType_Usage_Vertical(t *testing.T) {
 	assert.Equal(t, ClickNone, result, "the Token Usage title line must not be a click target")
 
 	result, _ = sb.HandleClickType(paddingLeft+2, m.usageReadingLine)
-	assert.Equal(t, ClickUsage, result, "the reading line should report ClickUsage")
+	assert.Equal(t, ClickUsageContext, result, "a click on the token/context segment should report ClickUsageContext")
+
+	dollarX := dollarOffset(t, m.cachedLines[m.usageReadingLine])
+	result, _ = sb.HandleClickType(paddingLeft+dollarX, m.usageReadingLine)
+	assert.Equal(t, ClickUsage, result, "a click on the cost segment should report ClickUsage")
+}
+
+// TestSidebar_HandleClickType_Usage_Vertical_Compacting verifies that a click
+// on the "(compacting\u2026)" marker reports ClickUsageContext: compaction is
+// context-related, so it belongs on the context side, not the cost side.
+func TestSidebar_HandleClickType_Usage_Vertical_Compacting(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	sessionState := service.NewSessionState(sess)
+	sb := New(t.Context(), sessionState)
+
+	m := sb.(*model)
+	m.sessionHasContent = true
+	m.titleGenerated = true
+	m.sessionTitle = "Test"
+	m.width = 40
+	m.height = 50
+	m.compacting = true
+
+	_ = sb.View()
+
+	require.GreaterOrEqual(t, m.usageReadingLine, 0)
+	assert.Contains(t, ansi.Strip(m.cachedLines[m.usageReadingLine]), "compacting")
+
+	paddingLeft := m.layoutCfg.PaddingLeft
+	result, _ := sb.HandleClickType(paddingLeft+2, m.usageReadingLine)
+	assert.Equal(t, ClickUsageContext, result, "a click on the compacting marker should report ClickUsageContext")
 }
 
 // TestSidebar_HandleClickType_Usage_Vertical_Hidden verifies a hidden usage
@@ -101,8 +144,9 @@ func TestSidebar_HandleClickType_Usage_Vertical_ScrollbarNotUsage(t *testing.T) 
 }
 
 // TestSidebar_HandleClickType_Usage_Collapsed_SharedLine verifies the
-// right-aligned usage reading on the shared path/usage row reports
-// ClickUsage while the path part keeps reporting ClickWorkingDir.
+// right-aligned usage reading on the shared path/usage row splits between
+// ClickUsageContext and ClickUsage the same way the vertical reading does,
+// while the path part keeps reporting ClickWorkingDir.
 func TestSidebar_HandleClickType_Usage_Collapsed_SharedLine(t *testing.T) {
 	t.Parallel()
 
@@ -127,14 +171,19 @@ func TestSidebar_HandleClickType_Usage_Collapsed_SharedLine(t *testing.T) {
 	usageX := vm.ContentWidth - lipgloss.Width(vm.UsageSummary)
 
 	result, _ := sb.HandleClickType(paddingLeft+usageX+1, rowY)
-	assert.Equal(t, ClickUsage, result, "click on the usage reading should report ClickUsage")
+	assert.Equal(t, ClickUsageContext, result, "click on the token/context segment should report ClickUsageContext")
+
+	dollarX := dollarOffset(t, vm.UsageSummary)
+	result, _ = sb.HandleClickType(paddingLeft+usageX+dollarX, rowY)
+	assert.Equal(t, ClickUsage, result, "click on the cost segment should report ClickUsage")
 
 	result, _ = sb.HandleClickType(paddingLeft+3, rowY)
 	assert.Equal(t, ClickWorkingDir, result, "the path part of the row stays a working dir target")
 }
 
 // TestSidebar_HandleClickType_Usage_Collapsed_OwnLine verifies the usage
-// reading is clickable when it takes its own row (no session path).
+// reading splits between ClickUsageContext and ClickUsage when it takes its
+// own row (no session path).
 func TestSidebar_HandleClickType_Usage_Collapsed_OwnLine(t *testing.T) {
 	t.Parallel()
 
@@ -154,8 +203,14 @@ func TestSidebar_HandleClickType_Usage_Collapsed_OwnLine(t *testing.T) {
 	require.NotEmpty(t, vm.UsageSummary)
 
 	paddingLeft := m.layoutCfg.PaddingLeft
-	result, _ := sb.HandleClickType(paddingLeft+1, vm.titleSectionLines())
-	assert.Equal(t, ClickUsage, result, "click on the usage row should report ClickUsage")
+	rowY := vm.titleSectionLines()
+
+	result, _ := sb.HandleClickType(paddingLeft+1, rowY)
+	assert.Equal(t, ClickUsageContext, result, "click on the token/context segment should report ClickUsageContext")
+
+	dollarX := dollarOffset(t, vm.UsageSummary)
+	result, _ = sb.HandleClickType(paddingLeft+dollarX, rowY)
+	assert.Equal(t, ClickUsage, result, "click on the cost segment should report ClickUsage")
 }
 
 // TestSidebar_HandleClickType_Usage_Collapsed_Hidden verifies a hidden usage

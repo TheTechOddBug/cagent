@@ -783,10 +783,11 @@ type ClickResult int
 const (
 	ClickNone ClickResult = iota
 	ClickStar
-	ClickTitle      // Click on the title area (use double-click to edit)
-	ClickWorkingDir // Click on the working directory line
-	ClickAgent      // Click on an agent name in the sidebar
-	ClickUsage      // Click on the token usage / cost reading, or a budget line
+	ClickTitle        // Click on the title area (use double-click to edit)
+	ClickWorkingDir   // Click on the working directory line
+	ClickAgent        // Click on an agent name in the sidebar
+	ClickUsageContext // Click on the token/context part of the usage reading (glyph, tokens, context %/compacting)
+	ClickUsage        // Click on the cost part of the usage reading, or a budget line
 )
 
 // HandleClick checks if click is on the star or title and returns true if it was
@@ -804,6 +805,17 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	adjustedX := x - m.layoutCfg.PaddingLeft
 	if adjustedX < 0 {
 		return ClickNone, ""
+	}
+
+	// segmentClickResult splits a click at flat offset into the usage reading
+	// line between the context segment (glyph, tokens, context %/compacting —
+	// offset < usageContextSegWidth) and the cost segment (⚠ capped, cost,
+	// sub-sessions — everything from there on).
+	segmentClickResult := func(offset int) ClickResult {
+		if offset < m.usageContextSegWidth {
+			return ClickUsageContext
+		}
+		return ClickUsage
 	}
 
 	if m.mode == ModeCollapsed {
@@ -834,7 +846,7 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 			usageWidth := lipgloss.Width(vm.UsageSummary)
 			if vm.WorkingDir != "" && vm.WdAndUsageOnOneLine {
 				if y == wdStartY && adjustedX >= vm.ContentWidth-usageWidth {
-					return ClickUsage, ""
+					return segmentClickResult(adjustedX - (vm.ContentWidth - usageWidth)), ""
 				}
 			} else {
 				usageStartY := wdStartY
@@ -842,7 +854,8 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 					usageStartY += wdLines
 				}
 				if y >= usageStartY && y < usageStartY+linesNeeded(usageWidth, vm.ContentWidth) {
-					return ClickUsage, ""
+					offset := (y-usageStartY)*vm.ContentWidth + adjustedX
+					return segmentClickResult(offset), ""
 				}
 			}
 		}
@@ -885,7 +898,10 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 
 	// Check if click is on the Token Usage reading line or a budget line
 	// below it. The section title line is not a click target.
-	if contentY == m.usageReadingLine || (m.usageReadingLine >= 0 && contentY > m.usageReadingLine && contentY < m.usageSectionEnd) {
+	if contentY == m.usageReadingLine {
+		return segmentClickResult(adjustedX), ""
+	}
+	if m.usageReadingLine >= 0 && contentY > m.usageReadingLine && contentY < m.usageSectionEnd {
 		return ClickUsage, ""
 	}
 
