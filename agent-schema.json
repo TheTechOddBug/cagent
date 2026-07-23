@@ -3089,11 +3089,11 @@
     },
     "RemoteOAuthConfig": {
       "type": "object",
-      "description": "OAuth configuration for remote MCP servers that do not support Dynamic Client Registration (RFC 7591)",
+      "description": "OAuth configuration for remote MCP servers. Set clientId for servers that do not support Dynamic Client Registration (RFC 7591); other fields tune the flow and also apply when the client is registered dynamically",
       "properties": {
         "clientId": {
           "type": "string",
-          "description": "OAuth client ID"
+          "description": "OAuth client ID. When omitted, docker-agent uses Dynamic Client Registration or prompts interactively"
         },
         "clientSecret": {
           "type": "string",
@@ -3116,10 +3116,7 @@
           "type": "string",
           "description": "Optional OAuth redirect URI used in place of http://127.0.0.1:{callbackPort}/callback. The literal placeholder ${callbackPort} is replaced with the actual local callback port at runtime. The external URL is expected to redirect the browser back to the local callback server."
         }
-      },
-      "required": [
-        "clientId"
-      ]
+      }
     }
   }
 }

@@ -267,7 +267,9 @@ func TestToolsetValidateOAuth(t *testing.T) {
 	}{
 		{name: "minimal oauth", toolset: remote(&RemoteOAuthConfig{ClientID: "client"})},
 		{name: "oauth without remote url", toolset: Toolset{Type: "mcp", Command: "server", Remote: Remote{OAuth: &RemoteOAuthConfig{ClientID: "client"}}}, wantErr: "oauth requires remote url to be set"},
-		{name: "missing clientId", toolset: remote(&RemoteOAuthConfig{}), wantErr: "oauth requires clientId to be set"},
+		{name: "missing clientId falls back to dynamic registration", toolset: remote(&RemoteOAuthConfig{})},
+		{name: "clientSecret without clientId", toolset: remote(&RemoteOAuthConfig{ClientSecret: "secret"}), wantErr: "oauth clientSecret requires clientId to be set"},
+		{name: "callback settings without clientId", toolset: remote(&RemoteOAuthConfig{CallbackPort: 8765, CallbackRedirectURL: "https://redirect.example.com/cb"})},
 		{name: "callback port unset", toolset: remote(&RemoteOAuthConfig{ClientID: "client", CallbackPort: 0})},
 		{name: "callback port lower bound", toolset: remote(&RemoteOAuthConfig{ClientID: "client", CallbackPort: 1})},
 		{name: "callback port upper bound", toolset: remote(&RemoteOAuthConfig{ClientID: "client", CallbackPort: 65535})},

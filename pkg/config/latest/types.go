@@ -1664,8 +1664,11 @@ type Remote struct {
 	OAuth         *RemoteOAuthConfig `json:"oauth,omitempty"`
 }
 
-// RemoteOAuthConfig holds explicit OAuth credentials for remote MCP servers
-// that do not support Dynamic Client Registration (RFC 7591).
+// RemoteOAuthConfig tunes the OAuth flow for remote MCP servers. ClientID
+// (and optional ClientSecret) supply explicit credentials for servers that
+// do not support Dynamic Client Registration (RFC 7591); when ClientID is
+// omitted, docker-agent falls back to DCR or an interactive prompt while
+// still honoring CallbackPort, Scopes and CallbackRedirectURL.
 type RemoteOAuthConfig struct {
 	ClientID     string   `json:"clientId"`
 	ClientSecret string   `json:"clientSecret,omitempty"`

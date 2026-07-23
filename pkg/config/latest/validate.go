@@ -396,8 +396,8 @@ func (t *Toolset) validate() error {
 			if t.Remote.URL == "" {
 				return errors.New("oauth requires remote url to be set")
 			}
-			if t.Remote.OAuth.ClientID == "" {
-				return errors.New("oauth requires clientId to be set")
+			if t.Remote.OAuth.ClientID == "" && t.Remote.OAuth.ClientSecret != "" {
+				return errors.New("oauth clientSecret requires clientId to be set")
 			}
 			if t.Remote.OAuth.CallbackPort != 0 && (t.Remote.OAuth.CallbackPort < 1 || t.Remote.OAuth.CallbackPort > 65535) {
 				return errors.New("oauth callbackPort must be between 1 and 65535")
