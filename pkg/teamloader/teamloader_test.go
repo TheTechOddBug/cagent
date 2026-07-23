@@ -31,7 +31,8 @@ import (
 // skipExamples contains example files that require cloud-specific configurations
 // (e.g., AWS profiles, GCP credentials) that can't be mocked with dummy env vars.
 var skipExamples = map[string]string{
-	"pr-reviewer-bedrock.yaml": "requires AWS profile configuration",
+	"pr-reviewer-bedrock.yaml":      "requires AWS profile configuration",
+	"sub-agents-from-registry.yaml": "pulls a sub-agent from a remote OCI registry",
 }
 
 func withTestProviderRegistry(opts ...Opt) []Opt {

@@ -121,7 +121,7 @@ See [Telemetry](../../community/telemetry/index.md) for exactly what is (and isn
 
 ## Example: GitHub Actions
 
-A bare OCI registry reference (`agentcatalog/coder`) has no local config you control, so a security-sensitive CI job should check in a small agent config instead. This example runs a checked-in review agent non-interactively against the repository being built:
+A bare OCI registry reference (`myorg/coder`) has no local config you control, so a security-sensitive CI job should check in a small agent config instead. This example runs a checked-in review agent non-interactively against the repository being built:
 
 ```yaml
 # .github/agents/review-agent.yaml

@@ -176,7 +176,7 @@ remote MCP endpoints.
 
 | File | What it shows |
 |------|---------------|
-| [`sub-agents-from-catalog.yaml`](sub-agents-from-catalog.yaml) | Mixes locally-defined sub-agents with ones pulled from an OCI catalog (e.g. `agentcatalog/pirate`). |
+| [`sub-agents-from-registry.yaml`](sub-agents-from-registry.yaml) | Mixes locally-defined sub-agents with ones pulled from an OCI registry (e.g. `myorg/agent:tag`). |
 
 ### Inter-agent protocols (A2A & MCP)
 

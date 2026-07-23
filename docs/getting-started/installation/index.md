@@ -140,7 +140,7 @@ $ docker agent version
 $ docker agent run
 
 # Or try a built-in example
-$ docker agent run agentcatalog/pirate
+$ docker agent run myorg/agent:tag
 ```
 
 ## What's Next?

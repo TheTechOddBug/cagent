@@ -261,7 +261,7 @@ func TestAgentBaseName(t *testing.T) {
 	assert.Equal(t, "agent.yaml", agentBaseName(""))
 	// Built-in, alias, or registry refs are not files.
 	assert.Equal(t, "coder.yaml", agentBaseName("coder"))
-	assert.Equal(t, "pirate.yaml", agentBaseName("agentcatalog/pirate"))
+	assert.Equal(t, "agent.yaml", agentBaseName("myorg/agent"))
 }
 
 func TestCommentSafe(t *testing.T) {

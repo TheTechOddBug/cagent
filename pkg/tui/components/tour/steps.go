@@ -47,7 +47,7 @@ func buildSteps() []step {
 			title: "Agents are just YAML",
 			body: "The agent you're talking to is one YAML file: a model, instructions, and tools.\n\n" +
 				"Build your own:\n  docker agent new\n\n" +
-				"Or run one from the catalog:\n  docker agent run agentcatalog/pirate",
+				"Or run one from an OCI registry:\n  docker agent run myorg/agent:tag",
 		},
 		{
 			title: "🎉 You're all set",

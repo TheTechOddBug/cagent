@@ -481,7 +481,7 @@ func TestResolveAlias_WithYoloOption(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("yolo-agent", &userconfig.Alias{
-		Path: "agentcatalog/coder",
+		Path: "myorg/coder",
 		Yolo: true,
 	}))
 	require.NoError(t, cfg.Save())
@@ -501,7 +501,7 @@ func TestResolveAlias_WithModelOption(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("model-agent", &userconfig.Alias{
-		Path:  "agentcatalog/coder",
+		Path:  "myorg/coder",
 		Model: "openai/gpt-4o-mini",
 	}))
 	require.NoError(t, cfg.Save())
@@ -521,7 +521,7 @@ func TestResolveAlias_WithBothOptions(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("turbo", &userconfig.Alias{
-		Path:  "agentcatalog/coder",
+		Path:  "myorg/coder",
 		Yolo:  true,
 		Model: "anthropic/claude-sonnet-4-0",
 	}))
@@ -541,7 +541,7 @@ func TestResolveAlias_WithSandboxOption(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("safe-coder", &userconfig.Alias{
-		Path:    "agentcatalog/coder",
+		Path:    "myorg/coder",
 		Sandbox: true,
 	}))
 	require.NoError(t, cfg.Save())
@@ -560,7 +560,7 @@ func TestResolveAlias_NoOptions(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("plain", &userconfig.Alias{
-		Path: "agentcatalog/coder",
+		Path: "myorg/coder",
 	}))
 	require.NoError(t, cfg.Save())
 
@@ -586,7 +586,7 @@ func TestResolveAlias_EmptyUsesDefault(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("default", &userconfig.Alias{
-		Path: "agentcatalog/coder",
+		Path: "myorg/coder",
 		Yolo: true,
 	}))
 	require.NoError(t, cfg.Save())
@@ -605,7 +605,7 @@ func TestResolveAlias_WithHideToolResultsOption(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("hidden-tools", &userconfig.Alias{
-		Path:            "agentcatalog/coder",
+		Path:            "myorg/coder",
 		HideToolResults: true,
 	}))
 	require.NoError(t, cfg.Save())
@@ -626,7 +626,7 @@ func TestResolveAlias_WithAllOptions(t *testing.T) {
 	cfg, err := userconfig.Load()
 	require.NoError(t, err)
 	require.NoError(t, cfg.SetAlias("full", &userconfig.Alias{
-		Path:            "agentcatalog/coder",
+		Path:            "myorg/coder",
 		Yolo:            true,
 		Model:           "anthropic/claude-sonnet-4-0",
 		HideToolResults: true,
@@ -651,7 +651,7 @@ func TestIsExternalReference(t *testing.T) {
 	}{
 		{
 			name:     "OCI reference with namespace",
-			input:    "agentcatalog/pirate",
+			input:    "myorg/agent:tag",
 			expected: true,
 		},
 		{
@@ -686,7 +686,7 @@ func TestIsExternalReference(t *testing.T) {
 		},
 		{
 			name:     "named OCI reference is external",
-			input:    "reviewer:agentcatalog/review-pr",
+			input:    "reviewer:myorg/review-pr",
 			expected: true,
 		},
 		{
@@ -717,9 +717,9 @@ func TestParseExternalAgentRef(t *testing.T) {
 	}{
 		{
 			name:         "simple OCI reference derives base name",
-			input:        "agentcatalog/pirate",
-			expectedName: "pirate",
-			expectedRef:  "agentcatalog/pirate",
+			input:        "myorg/agent:tag",
+			expectedName: "agent",
+			expectedRef:  "myorg/agent:tag",
 		},
 		{
 			name:         "OCI reference with tag derives base name without tag",
@@ -735,9 +735,9 @@ func TestParseExternalAgentRef(t *testing.T) {
 		},
 		{
 			name:         "explicit name prefix",
-			input:        "reviewer:agentcatalog/review-pr",
+			input:        "reviewer:myorg/review-pr",
 			expectedName: "reviewer",
-			expectedRef:  "agentcatalog/review-pr",
+			expectedRef:  "myorg/review-pr",
 		},
 		{
 			name:         "explicit name with tagged OCI ref",
