@@ -201,6 +201,26 @@ func TestSetupWizard_ChatGPTPathRunsBrowserSignIn(t *testing.T) {
 	assert.Contains(t, output, "--model chatgpt/"+config.DefaultModels["chatgpt"])
 }
 
+func TestSetupWizard_CloudPathOffersGitHubCopilot(t *testing.T) {
+	t.Parallel()
+
+	providers := config.CloudProviderEnvVars()
+	idx := slices.IndexFunc(providers, func(p config.ProviderEnvVars) bool { return p.Provider == "github-copilot" })
+	require.GreaterOrEqual(t, idx, 0, "github-copilot must be offered by the wizard")
+
+	store := &fakeSecretStore{name: "config-env-file"}
+	wizard, out, _ := newTestWizard(fmt.Sprintf("1\n%d\n", idx+1), []string{"ghp-token"}, []environment.SecretStore{store}, nil, nil)
+
+	result, err := wizard.run(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, "GITHUB_TOKEN", result.EnvVar)
+	assert.Equal(t, "ghp-token", store.stored["GITHUB_TOKEN"])
+	assert.Equal(t, "github-copilot/"+config.DefaultModels["github-copilot"], result.Model)
+	assert.Contains(t, out.String(), "github-copilot")
+	assert.Contains(t, out.String(), "GITHUB_TOKEN")
+}
+
 func TestSetupWizard_LocalPathWithPulledModels(t *testing.T) {
 	t.Parallel()
 
