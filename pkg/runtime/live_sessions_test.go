@@ -197,6 +197,75 @@ func TestLiveSessions_UnknownContextLimit(t *testing.T) {
 	assert.Zero(t, rows[0].ContextLimit, "unresolvable model window reports an unknown limit")
 }
 
+// mapModelStore returns a distinct context limit per model id, letting a
+// test give the worker's primary model and its dedicated compaction model
+// different windows (see compaction_model_integration_test.go).
+
+// TestLiveSessions_CompactionModelAttribution covers the row-level attribution
+// of a capped effective context limit to the dedicated compaction model that
+// imposes it (see [LocalRuntime.liveSessionRow]): a strictly smaller compaction
+// window is attributed, while an equal/larger one, no dedicated model, or an
+// unresolvable compaction window all leave the row unattributed.
+func TestLiveSessions_CompactionModelAttribution(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                string
+		store               ModelStore
+		workerOpts          []agent.Opt
+		wantContextLimit    int64
+		wantCompactionModel string
+		wantPrimaryLimit    int64
+	}{
+		{
+			name:                "dedicated compaction model smaller caps and attributes",
+			store:               mapModelStore{limits: map[string]int{"worker/primary": 200_000, "worker/compaction": 16_000}},
+			workerOpts:          []agent.Opt{agent.WithCompactionModel(&mockProvider{id: "worker/compaction"})},
+			wantContextLimit:    16_000,
+			wantCompactionModel: "worker/compaction",
+			wantPrimaryLimit:    200_000,
+		},
+		{
+			name:             "equal or larger compaction model leaves attribution zero",
+			store:            mapModelStore{limits: map[string]int{"worker/primary": 200_000, "worker/compaction": 200_000}},
+			workerOpts:       []agent.Opt{agent.WithCompactionModel(&mockProvider{id: "worker/compaction"})},
+			wantContextLimit: 200_000,
+		},
+		{
+			name:             "no dedicated compaction model leaves attribution zero",
+			store:            mapModelStore{limits: map[string]int{"worker/primary": 200_000}},
+			wantContextLimit: 200_000,
+		},
+		{
+			name:             "unresolvable compaction window leaves attribution zero",
+			store:            mapModelStore{limits: map[string]int{"worker/primary": 200_000}},
+			workerOpts:       []agent.Opt{agent.WithCompactionModel(&mockProvider{id: "worker/unresolvable"})},
+			wantContextLimit: 200_000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			prov := &stepProvider{id: "worker/primary"}
+			rt := newLiveSessionsRuntime(t, prov, tt.store, tt.workerOpts...)
+
+			rootSess := session.New(session.WithID("root-session"), session.WithUserMessage("hi"))
+			child := newWorkerSession("child-1")
+			rt.registerLiveSession(child)
+
+			rows := rt.LiveSessions(t.Context(), rootSess)
+			require.Len(t, rows, 2)
+			row := rows[1]
+
+			assert.Equal(t, tt.wantContextLimit, row.ContextLimit)
+			assert.Equal(t, tt.wantCompactionModel, row.CompactionModel)
+			assert.Equal(t, tt.wantPrimaryLimit, row.PrimaryContextLimit)
+		})
+	}
+}
+
 // TestLiveSessions_ExcludesSessionsOutsideCurrentRootTree pins the team
 // scoping contract: only descendants of the current root are listed. A stale
 // root stream (the session App.NewSession/ReplaceSession swapped away from

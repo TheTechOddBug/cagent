@@ -841,6 +841,13 @@ type AgentInfoEvent struct {
 	Description    string `json:"description"`
 	WelcomeMessage string `json:"welcome_message,omitempty"`
 	ContextLimit   int64  `json:"context_limit,omitempty"`
+	// CompactionModel is the identity ("provider/model") of the agent's
+	// dedicated compaction model, set only when it actually caps ContextLimit
+	// below the primary model's own window.
+	CompactionModel string `json:"compaction_model,omitempty"`
+	// PrimaryContextLimit is the primary model's own context window, set
+	// only alongside CompactionModel.
+	PrimaryContextLimit int64 `json:"primary_context_limit,omitempty"`
 }
 
 func AgentInfo(agentName, model, description, welcomeMessage string, contextLimit ...int64) Event {
