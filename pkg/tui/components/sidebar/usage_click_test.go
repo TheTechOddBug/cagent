@@ -12,8 +12,9 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
 
-// TestSidebar_HandleClickType_Usage_Vertical verifies that a click anywhere
-// on the vertical Token Usage section (title included) reports ClickUsage.
+// TestSidebar_HandleClickType_Usage_Vertical verifies that the vertical Token
+// Usage reading line (glyph, tokens, context %, cost) reports ClickUsage,
+// while the section's title line is no longer a click target.
 func TestSidebar_HandleClickType_Usage_Vertical(t *testing.T) {
 	t.Parallel()
 
@@ -31,14 +32,19 @@ func TestSidebar_HandleClickType_Usage_Vertical(t *testing.T) {
 	// Force a render to record the usage click zone
 	_ = sb.View()
 
-	require.Less(t, m.usageZoneStart, m.usageZoneEnd, "the usage zone must be recorded")
-	assert.Contains(t, ansi.Strip(m.cachedLines[m.usageZoneStart]), "Token Usage")
+	require.GreaterOrEqual(t, m.usageReadingLine, 0, "the usage reading line must be recorded")
+	require.Less(t, m.usageReadingLine, m.usageSectionEnd)
+
+	titleLine := m.usageReadingLine - 2 // tab title line + TabStyle top padding line
+	assert.Contains(t, ansi.Strip(m.cachedLines[titleLine]), "Token Usage")
 
 	paddingLeft := m.layoutCfg.PaddingLeft
-	for y := m.usageZoneStart; y < m.usageZoneEnd; y++ {
-		result, _ := sb.HandleClickType(paddingLeft+2, y)
-		assert.Equalf(t, ClickUsage, result, "line %d of the usage section should report ClickUsage", y)
-	}
+
+	result, _ := sb.HandleClickType(paddingLeft+2, titleLine)
+	assert.Equal(t, ClickNone, result, "the Token Usage title line must not be a click target")
+
+	result, _ = sb.HandleClickType(paddingLeft+2, m.usageReadingLine)
+	assert.Equal(t, ClickUsage, result, "the reading line should report ClickUsage")
 }
 
 // TestSidebar_HandleClickType_Usage_Vertical_Hidden verifies a hidden usage
@@ -84,11 +90,11 @@ func TestSidebar_HandleClickType_Usage_Vertical_ScrollbarNotUsage(t *testing.T) 
 	_ = sb.View()
 
 	require.True(t, m.cachedNeedsScrollbar, "the sidebar must overflow for this test")
-	require.Less(t, m.usageZoneStart, m.usageZoneEnd)
+	require.GreaterOrEqual(t, m.usageReadingLine, 0)
 
 	paddingLeft := m.layoutCfg.PaddingLeft
 	scrollbarX := paddingLeft + m.contentWidth(true) // first non-content column
-	for y := m.usageZoneStart; y < m.usageZoneEnd; y++ {
+	for y := m.usageReadingLine; y < m.usageSectionEnd; y++ {
 		result, _ := sb.HandleClickType(scrollbarX, y)
 		assert.Equalf(t, ClickNone, result, "scrollbar column beside usage line %d must not be clickable content", y)
 	}
@@ -148,7 +154,7 @@ func TestSidebar_HandleClickType_Usage_Collapsed_OwnLine(t *testing.T) {
 	require.NotEmpty(t, vm.UsageSummary)
 
 	paddingLeft := m.layoutCfg.PaddingLeft
-	result, _ := sb.HandleClickType(paddingLeft+3, vm.titleSectionLines())
+	result, _ := sb.HandleClickType(paddingLeft+1, vm.titleSectionLines())
 	assert.Equal(t, ClickUsage, result, "click on the usage row should report ClickUsage")
 }
 
