@@ -14,7 +14,7 @@ require (
 	github.com/a2aproject/a2a-go v0.3.15
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/alpkeskin/gotoon v0.1.1
-	github.com/anthropics/anthropic-sdk-go v1.59.0
+	github.com/anthropics/anthropic-sdk-go v1.60.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.31
@@ -33,7 +33,7 @@ require (
 	github.com/docker/cli v29.6.2+incompatible
 	github.com/docker/go-units v0.5.0
 	github.com/docker/portcullis v1.0.0
-	github.com/dop251/goja v0.0.0-20260722130236-0768e0998ac0
+	github.com/dop251/goja v0.0.0-20260723142020-b4aef50fa347
 	github.com/expr-lang/expr v1.17.8
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
@@ -48,11 +48,11 @@ require (
 	github.com/junegunn/fzf v0.74.1
 	github.com/k3a/html2text v1.4.0
 	github.com/labstack/echo/v4 v4.15.4
-	github.com/mattn/go-isatty v0.0.23
-	github.com/mattn/go-runewidth v0.0.24
+	github.com/mattn/go-isatty v0.0.24
+	github.com/mattn/go-runewidth v0.0.27
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/natefinch/atomic v1.0.1
-	github.com/openai/openai-go/v3 v3.45.0
+	github.com/openai/openai-go/v3 v3.46.0
 	github.com/pb33f/libopenapi v0.38.7
 	github.com/rivo/uniseg v0.4.7
 	github.com/rumpl/harness v0.0.0-20260612213434-3f63cb8efc05
