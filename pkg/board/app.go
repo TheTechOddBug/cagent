@@ -88,6 +88,12 @@ func NewApp(ctx context.Context, onChanged func()) (*App, error) {
 	return app, nil
 }
 
+// columnIndexLocked returns the position of the column with the given id,
+// or -1. Callers must hold a.mu.
+func (a *App) columnIndexLocked(id string) int {
+	return slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+}
+
 // Columns returns the board's pipeline.
 func (a *App) Columns() []Column {
 	a.mu.Lock()
@@ -100,7 +106,7 @@ func (a *App) Columns() []Column {
 func (a *App) SetColumnPrompt(colID, prompt string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	i := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == colID })
+	i := a.columnIndexLocked(colID)
 	if i < 0 {
 		return fmt.Errorf("unknown column %q", colID)
 	}
@@ -140,7 +146,7 @@ func (a *App) UpdateColumn(id string, col Column) (Column, error) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	idx := a.columnIndexLocked(id)
 	if idx < 0 {
 		return Column{}, fmt.Errorf("unknown column %q", id)
 	}
@@ -158,7 +164,7 @@ func (a *App) UpdateColumn(id string, col Column) (Column, error) {
 func (a *App) MoveColumn(id string, delta int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	idx := a.columnIndexLocked(id)
 	if idx < 0 {
 		return fmt.Errorf("unknown column %q", id)
 	}
@@ -179,7 +185,7 @@ func (a *App) MoveColumn(id string, delta int) error {
 func (a *App) RemoveColumn(id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	idx := slices.IndexFunc(a.columns, func(c Column) bool { return c.ID == id })
+	idx := a.columnIndexLocked(id)
 	if idx < 0 {
 		return fmt.Errorf("unknown column %q", id)
 	}
