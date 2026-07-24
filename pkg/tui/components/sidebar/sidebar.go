@@ -345,11 +345,18 @@ type model struct {
 
 	// Agent click zones: maps content line index to agent name for click detection
 	agentClickZones map[int]string // content line -> agent name
-	// Token Usage click zone: half-open content-line range [start, end) of the
-	// vertical Token Usage section, recorded while rendering. Empty when the
-	// section is hidden.
-	usageZoneStart int
-	usageZoneEnd   int
+	// Token Usage click zone: the content-line index of the reading line
+	// (glyph/tokens/context/cost/sub-sessions), and the half-open range of any
+	// budget lines below it, recorded while rendering. usageReadingLine is -1
+	// when the section is hidden. The section's "Token Usage" title line is
+	// deliberately excluded — it is not a click target.
+	usageReadingLine int
+	usageSectionEnd  int
+	// usageContextSegWidth is the lipgloss.Width of the reading line's context
+	// segment (glyph + token count + context %/compacting marker), recorded by
+	// tokenUsageLine while rendering. HandleClickType uses it to split a click
+	// on the reading line between the context dialog and the cost dialog.
+	usageContextSegWidth int
 	// agentLineOwners records, per rendered agent-section body line, which agent
 	// emitted it (empty for blank separators). It is produced during agentInfo
 	// rendering so click zones can be registered explicitly rather than inferred
@@ -388,6 +395,7 @@ func New(ctx context.Context, sessionState *service.SessionState) Model {
 		titleInput:       ti,
 		cacheDirty:       true, // Initial render needed
 		layoutDirty:      true, // First render must probe scrollbar visibility
+		usageReadingLine: -1,   // No usage zone recorded until the first render
 	}
 	return m
 }
@@ -775,10 +783,11 @@ type ClickResult int
 const (
 	ClickNone ClickResult = iota
 	ClickStar
-	ClickTitle      // Click on the title area (use double-click to edit)
-	ClickWorkingDir // Click on the working directory line
-	ClickAgent      // Click on an agent name in the sidebar
-	ClickUsage      // Click on the token usage / cost reading
+	ClickTitle        // Click on the title area (use double-click to edit)
+	ClickWorkingDir   // Click on the working directory line
+	ClickAgent        // Click on an agent name in the sidebar
+	ClickUsageContext // Click on the token/context part of the usage reading (glyph, tokens, context %/compacting)
+	ClickUsage        // Click on the cost part of the usage reading, or a budget line
 )
 
 // HandleClick checks if click is on the star or title and returns true if it was
@@ -796,6 +805,17 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	adjustedX := x - m.layoutCfg.PaddingLeft
 	if adjustedX < 0 {
 		return ClickNone, ""
+	}
+
+	// segmentClickResult splits a click at flat offset into the usage reading
+	// line between the context segment (glyph, tokens, context %/compacting —
+	// offset < usageContextSegWidth) and the cost segment (⚠ capped, cost,
+	// sub-sessions — everything from there on).
+	segmentClickResult := func(offset int) ClickResult {
+		if offset < m.usageContextSegWidth {
+			return ClickUsageContext
+		}
+		return ClickUsage
 	}
 
 	if m.mode == ModeCollapsed {
@@ -826,7 +846,7 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 			usageWidth := lipgloss.Width(vm.UsageSummary)
 			if vm.WorkingDir != "" && vm.WdAndUsageOnOneLine {
 				if y == wdStartY && adjustedX >= vm.ContentWidth-usageWidth {
-					return ClickUsage, ""
+					return segmentClickResult(adjustedX - (vm.ContentWidth - usageWidth)), ""
 				}
 			} else {
 				usageStartY := wdStartY
@@ -834,7 +854,8 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 					usageStartY += wdLines
 				}
 				if y >= usageStartY && y < usageStartY+linesNeeded(usageWidth, vm.ContentWidth) {
-					return ClickUsage, ""
+					offset := (y-usageStartY)*vm.ContentWidth + adjustedX
+					return segmentClickResult(offset), ""
 				}
 			}
 		}
@@ -875,8 +896,12 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 		return ClickWorkingDir, ""
 	}
 
-	// Check if click is on the Token Usage section
-	if contentY >= m.usageZoneStart && contentY < m.usageZoneEnd {
+	// Check if click is on the Token Usage reading line or a budget line
+	// below it. The section title line is not a click target.
+	if contentY == m.usageReadingLine {
+		return segmentClickResult(adjustedX), ""
+	}
+	if m.usageReadingLine >= 0 && contentY > m.usageReadingLine && contentY < m.usageSectionEnd {
 		return ClickUsage, ""
 	}
 
@@ -1642,6 +1667,10 @@ func (m *model) renderFromCache() string {
 // returns the index of the section's first line so click zones can be anchored.
 func (m *model) renderSections(contentWidth int) []string {
 	var lines []string
+	// tabHeaderLines is the fixed number of lines a renderTab wrapper adds
+	// before a section's body: the tab title line plus the TabStyle top
+	// padding line (mirrored in buildAgentClickZones).
+	const tabHeaderLines = 2
 
 	appendSection := func(section string) int {
 		if section == "" {
@@ -1658,12 +1687,14 @@ func (m *model) renderSections(contentWidth int) []string {
 	}
 
 	appendSection(m.sessionInfo(contentWidth))
-	// Track the Token Usage section's line range (title included) so a click
-	// on it can open the cost dialog.
-	m.usageZoneStart, m.usageZoneEnd = 0, 0
+	// Track the Token Usage reading line (glyph/tokens/context/cost) and the
+	// end of the section (covering any budget lines below it) so a click can
+	// be routed to the context or cost dialog. The title line is excluded.
+	m.usageReadingLine, m.usageSectionEnd = -1, -1
 	if !m.sectionVisibility.HideUsage {
-		m.usageZoneStart = appendSection(m.tokenUsage(contentWidth))
-		m.usageZoneEnd = len(lines)
+		sectionStart := appendSection(m.tokenUsage(contentWidth))
+		m.usageReadingLine = sectionStart + tabHeaderLines
+		m.usageSectionEnd = len(lines)
 	}
 	appendSection(m.queueSection(contentWidth))
 
@@ -1814,7 +1845,10 @@ func (m *model) tokenUsage(contentWidth int) string {
 // tab and the collapsed band: token glyph, count, context %, cost, and the
 // sub-session count, all with the same styling. The context reading warns as
 // it nears the compaction threshold and reads "compacting…" while a
-// compaction runs.
+// compaction runs. It also records usageContextSegWidth, the rendered width
+// of the context segment (glyph through the %/compacting marker), so
+// HandleClickType can split a click on the reading line between the context
+// and cost dialogs.
 func (m *model) tokenUsageLine() string {
 	s := m.computeUsageStats()
 
@@ -1825,6 +1859,8 @@ func (m *model) tokenUsageLine() string {
 	case s.contextPct != "":
 		line += " " + contextGaugeStyle(s.contextLevel, styles.NoStyle).Render("("+s.contextPct+")")
 	}
+	m.usageContextSegWidth = lipgloss.Width(line)
+
 	if m.agentCompactionModel != "" {
 		line += " " + styles.WarningStyle.Render("⚠ capped")
 	}
