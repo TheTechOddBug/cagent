@@ -167,6 +167,86 @@ func TestContextBreakdown_ReportedUsageWins(t *testing.T) {
 	assert.Equal(t, 2, b.Messages.Items)
 }
 
+func TestContextBreakdown_CompactionModelCapsLimit(t *testing.T) {
+	t.Parallel()
+
+	store := mapModelStore{limits: map[string]int{"primary/big": 200_000, "compaction/small": 16_000}}
+	primary := &mockProvider{id: "primary/big"}
+	compactionModel := &mockProvider{id: "compaction/small"}
+	root := agent.New("root", "test", agent.WithModel(primary), agent.WithCompactionModel(compactionModel))
+	tm := team.New(team.WithAgents(root))
+	rt, err := NewLocalRuntime(t.Context(), tm, WithSessionCompaction(false), WithModelStore(store))
+	require.NoError(t, err)
+
+	b, err := rt.ContextBreakdown(t.Context(), session.New(session.WithUserMessage("hi")))
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(16_000), b.ContextLimit, "the effective limit is capped by the smaller compaction model")
+	assert.Equal(t, "compaction/small", b.CompactionModel)
+	assert.Equal(t, int64(16_000), b.CompactionContextLimit)
+	assert.Equal(t, int64(200_000), b.PrimaryContextLimit)
+}
+
+func TestContextBreakdown_CompactionModelEqualOrLargerFieldsPresentButNotCapping(t *testing.T) {
+	t.Parallel()
+
+	store := mapModelStore{limits: map[string]int{"primary/big": 200_000, "compaction/big": 200_000}}
+	primary := &mockProvider{id: "primary/big"}
+	compactionModel := &mockProvider{id: "compaction/big"}
+	root := agent.New("root", "test", agent.WithModel(primary), agent.WithCompactionModel(compactionModel))
+	tm := team.New(team.WithAgents(root))
+	rt, err := NewLocalRuntime(t.Context(), tm, WithSessionCompaction(false), WithModelStore(store))
+	require.NoError(t, err)
+
+	b, err := rt.ContextBreakdown(t.Context(), session.New(session.WithUserMessage("hi")))
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(200_000), b.ContextLimit, "a same-or-larger compaction model never caps the limit")
+	// The identity/window fields are still populated — renderers decide
+	// whether to attribute a cap by comparing CompactionContextLimit against
+	// PrimaryContextLimit, not by the field's mere presence.
+	assert.Equal(t, "compaction/big", b.CompactionModel)
+	assert.Equal(t, int64(200_000), b.CompactionContextLimit)
+	assert.Equal(t, int64(200_000), b.PrimaryContextLimit)
+}
+
+func TestContextBreakdown_NoCompactionModelLeavesAttributionZero(t *testing.T) {
+	t.Parallel()
+
+	rt := newBreakdownRuntime(t)
+
+	b, err := rt.ContextBreakdown(t.Context(), session.New(session.WithUserMessage("hi")))
+	require.NoError(t, err)
+
+	assert.Empty(t, b.CompactionModel)
+	assert.Zero(t, b.CompactionContextLimit)
+	assert.Zero(t, b.PrimaryContextLimit)
+}
+
+func TestContextBreakdown_UnresolvableCompactionWindowLeavesAttributionZero(t *testing.T) {
+	t.Parallel()
+
+	// The compaction model has no catalogue entry and no provider_opts
+	// context_size, so its window can't be resolved: the effective limit
+	// must fall back to the primary. The model identity is still reported
+	// (a dedicated model IS configured), but its window is 0.
+	store := mapModelStore{limits: map[string]int{"primary/big": 200_000}}
+	primary := &mockProvider{id: "primary/big"}
+	compactionModel := &mockProvider{id: "compaction/unresolvable"}
+	root := agent.New("root", "test", agent.WithModel(primary), agent.WithCompactionModel(compactionModel))
+	tm := team.New(team.WithAgents(root))
+	rt, err := NewLocalRuntime(t.Context(), tm, WithSessionCompaction(false), WithModelStore(store))
+	require.NoError(t, err)
+
+	b, err := rt.ContextBreakdown(t.Context(), session.New(session.WithUserMessage("hi")))
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(200_000), b.ContextLimit)
+	assert.Equal(t, "compaction/unresolvable", b.CompactionModel)
+	assert.Zero(t, b.CompactionContextLimit)
+	assert.Equal(t, int64(200_000), b.PrimaryContextLimit)
+}
+
 func TestContextBreakdown_UnknownContextLimit(t *testing.T) {
 	t.Parallel()
 

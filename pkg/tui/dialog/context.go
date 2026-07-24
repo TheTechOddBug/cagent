@@ -290,8 +290,13 @@ const (
 	contextRowMarker = "■"
 )
 
-// contextHeaderLines is the number of fixed (non-scrolling) lines at the top
-// of the dialog: title (with its meta line) + separator + spacer.
+// contextHeaderLines is the number of fixed (non-scrolling) ENTRIES at the
+// top of the lines array: the header block (title, plus its meta line(s))
+// + separator + spacer. It is an array-index count, not a rendered-row
+// count: the header entry's own visual height varies (an extra warning line
+// renders when a dedicated compaction model caps the limit), so callers
+// that need the fixed block's rendered height measure it directly (see
+// applyScrolling) instead of assuming one row per entry.
 const contextHeaderLines = 3
 
 // contextEstimateNote labels every figure in the dialog as an estimate, as
@@ -330,6 +335,9 @@ func (d *contextDialog) renderContent(contentWidth, maxHeight int) string {
 	header := RenderTitle("Context Window", contentWidth, styles.DialogTitleStyle)
 	if meta := contextHeaderMeta(b); meta != "" {
 		header += "\n" + styles.DialogOptionsStyle.Width(contentWidth).Render(meta)
+	}
+	if compactionMeta := contextCompactionMeta(b); compactionMeta != "" {
+		header += "\n" + styles.WarningStyle.Width(contentWidth).Render(compactionMeta)
 	}
 
 	lines := []string{
@@ -543,18 +551,39 @@ func markerColor(i int, row contextRow, colors []color.Color) color.Color {
 	return colors[i]
 }
 
-// contextHeaderMeta returns the "model • limit" line under the title.
+// contextHeaderMeta returns the "model  •  limit" line under the title. In
+// the edge case where only the compaction model's window is resolvable (the
+// primary model's own window is unknown), the limit re-attributes to it so
+// the figure isn't silently presented as the primary model's.
 func contextHeaderMeta(b *runtime.ContextBreakdown) string {
 	var parts []string
 	if b.Model != "" {
 		parts = append(parts, b.Model)
 	}
-	if b.ContextLimit > 0 {
-		parts = append(parts, "limit: "+formatTokenCount(b.ContextLimit)+" tokens")
-	} else {
+	switch {
+	case b.ContextLimit <= 0:
 		parts = append(parts, "context limit unknown")
+	case b.PrimaryContextLimit == 0 && b.CompactionContextLimit > 0 && b.ContextLimit == b.CompactionContextLimit:
+		parts = append(parts, "limit: "+formatTokenCount(b.ContextLimit)+" tokens (from compaction model)")
+	default:
+		parts = append(parts, "limit: "+formatTokenCount(b.ContextLimit)+" tokens")
 	}
 	return strings.Join(parts, "  •  ")
+}
+
+// contextCompactionMeta returns the second header line attributing a capped
+// effective limit to the dedicated compaction model that imposes it, or ""
+// when the limit isn't actually capped (no dedicated model, or its window is
+// unresolvable or not smaller than the primary model's). Deliberately terse
+// (no primary-window parenthetical): naming which model's window is being
+// compared confused readers more than it clarified (see plan refinement).
+func contextCompactionMeta(b *runtime.ContextBreakdown) string {
+	if b.CompactionContextLimit <= 0 || b.CompactionContextLimit >= b.PrimaryContextLimit {
+		return ""
+	}
+	return fmt.Sprintf("compaction cap: %s • %s tokens",
+		b.CompactionModel,
+		formatTokenCount(b.CompactionContextLimit))
 }
 
 // usageSummary is the line under the bar: "~24.5K of 128.0K tokens (19%)",
@@ -634,14 +663,19 @@ func renderContextRow(row *contextRow, scale int64, labelWidth int, markerCol co
 func (d *contextDialog) applyScrolling(allLines []string, contentWidth, maxHeight int) string {
 	const footerLines = 2 // space + help
 
-	visibleLines := max(1, maxHeight-contextHeaderLines-footerLines-4)
+	// The header entry's rendered height varies (an extra warning line when
+	// the compaction model caps the limit), so the fixed block's total row
+	// count is measured from it rather than assumed to be one row per entry.
+	headerRows := lipgloss.Height(allLines[0]) + (contextHeaderLines - 1)
+
+	visibleLines := max(1, maxHeight-headerRows-footerLines-4)
 	contentLines := allLines[contextHeaderLines:]
 
 	regionWidth := contentWidth + d.scrollview.ReservedCols()
 	d.scrollview.SetSize(regionWidth, visibleLines)
 
 	dialogRow, dialogCol := d.Position()
-	d.scrollview.SetPosition(dialogCol+3, dialogRow+2+contextHeaderLines)
+	d.scrollview.SetPosition(dialogCol+3, dialogRow+2+headerRows)
 	d.scrollview.SetContent(contentLines, len(contentLines))
 
 	parts := make([]string, 0, contextHeaderLines+3)
@@ -680,6 +714,9 @@ func (d *contextDialog) renderPlainText() string {
 	lines := []string{"Context Window"}
 	if meta := contextHeaderMeta(b); meta != "" {
 		lines = append(lines, meta)
+	}
+	if compactionMeta := contextCompactionMeta(b); compactionMeta != "" {
+		lines = append(lines, compactionMeta)
 	}
 	lines = append(lines, "", usageSummary(b), "")
 

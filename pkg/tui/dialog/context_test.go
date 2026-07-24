@@ -1,6 +1,7 @@
 package dialog
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -91,6 +92,70 @@ func TestContextDialogViewUnknownLimit(t *testing.T) {
 	assert.NotContains(t, view, "Free space")
 }
 
+// TestContextDialogViewCompactionCap verifies the dedicated second header
+// line attributing a capped effective limit to the compaction model imposing
+// it, shown ONLY when the compaction model's window is strictly smaller than
+// the primary model's.
+func TestContextDialogViewCompactionCap(t *testing.T) {
+	t.Parallel()
+
+	b := testBreakdown()
+	b.ContextLimit = 16_000
+	b.CompactionModel = "local/small"
+	b.CompactionContextLimit = 16_000
+	b.PrimaryContextLimit = 128_000
+
+	dialog := NewContextDialog(b)
+	dialog.SetSize(100, 50)
+	view := dialog.View()
+
+	assert.Contains(t, view, "limit: 16.0K tokens")
+	assert.Contains(t, view, "compaction cap: local/small • 16.0K tokens")
+	assert.NotContains(t, view, "128.0K", "the primary window is no longer echoed in the capped line")
+}
+
+// TestContextDialogViewCompactionModelNotCapping verifies the second header
+// line stays absent when a dedicated compaction model is configured but its
+// window is equal to or larger than the primary model's, i.e. it never caps.
+func TestContextDialogViewCompactionModelNotCapping(t *testing.T) {
+	t.Parallel()
+
+	b := testBreakdown()
+	b.CompactionModel = "local/big"
+	b.CompactionContextLimit = 128_000
+	b.PrimaryContextLimit = 128_000
+
+	dialog := NewContextDialog(b)
+	dialog.SetSize(100, 50)
+	view := dialog.View()
+
+	assert.Contains(t, view, "limit: 128.0K tokens")
+	assert.NotContains(t, view, "compaction cap:")
+}
+
+// TestContextDialogViewCompactionOnlyResolvableLimit covers the edge case
+// where only the compaction model's window is resolvable (the primary
+// model's own window is unknown): the main meta line re-attributes the
+// figure to the compaction model instead of silently presenting it as the
+// primary model's, and the second (capped) line stays absent since there is
+// no primary window to compare against.
+func TestContextDialogViewCompactionOnlyResolvableLimit(t *testing.T) {
+	t.Parallel()
+
+	b := testBreakdown()
+	b.ContextLimit = 16_000
+	b.CompactionModel = "local/small"
+	b.CompactionContextLimit = 16_000
+	b.PrimaryContextLimit = 0
+
+	dialog := NewContextDialog(b)
+	dialog.SetSize(100, 50)
+	view := dialog.View()
+
+	assert.Contains(t, view, "limit: 16.0K tokens (from compaction model)")
+	assert.NotContains(t, view, "compaction cap:")
+}
+
 func TestContextDialogEmptyBreakdown(t *testing.T) {
 	t.Parallel()
 
@@ -177,6 +242,24 @@ func TestContextDialogPlainText(t *testing.T) {
 	assert.Contains(t, text, "(23 tools)")
 	assert.Contains(t, text, "Free space")
 	assert.Contains(t, text, "estimates")
+	assert.NotContains(t, text, "\x1b[", "plain text must carry no ANSI escapes")
+}
+
+// TestContextDialogPlainTextCompactionCap verifies the plain-text/clipboard
+// path (used for copy) also carries the capped second line.
+func TestContextDialogPlainTextCompactionCap(t *testing.T) {
+	t.Parallel()
+
+	b := testBreakdown()
+	b.ContextLimit = 16_000
+	b.CompactionModel = "local/small"
+	b.CompactionContextLimit = 16_000
+	b.PrimaryContextLimit = 128_000
+
+	d := &contextDialog{breakdown: b}
+	text := d.renderPlainText()
+
+	assert.Contains(t, text, "compaction cap: local/small • 16.0K tokens")
 	assert.NotContains(t, text, "\x1b[", "plain text must carry no ANSI escapes")
 }
 
@@ -357,6 +440,29 @@ func TestContextDialogLiveSessionsView(t *testing.T) {
 	assert.Contains(t, view, "compact", "help must advertise the compact key")
 }
 
+// TestContextDialogLiveSessionsViewNoPerRowSuffix verifies live-session rows
+// no longer render a per-row cap suffix (the /context header is the sole
+// authority on the capped effective limit): a row whose CompactionModel is
+// set renders exactly like an uncapped row.
+func TestContextDialogLiveSessionsViewNoPerRowSuffix(t *testing.T) {
+	t.Parallel()
+
+	rows := testLiveSessions()
+	rows[1].CompactionModel = "local/small"
+	rows[1].PrimaryContextLimit = 200_000
+
+	dialog := NewContextDialog(testBreakdown(), rows...)
+	dialog.SetSize(120, 50)
+	view := dialog.View()
+
+	assert.NotContains(t, view, "capped by")
+	for line := range strings.SplitSeq(view, "\n") {
+		if strings.Contains(line, "aaaa1111") || strings.Contains(line, "bbbb2222") {
+			assert.NotContains(t, line, "capped")
+		}
+	}
+}
+
 func TestContextDialogNoLiveSessions(t *testing.T) {
 	t.Parallel()
 
@@ -488,4 +594,30 @@ func TestContextDialogPlainTextLiveSessions(t *testing.T) {
 	assert.Contains(t, text, "developer  aaaa1111  55.1K of 200.0K (28%)")
 	assert.Contains(t, text, "developer  bbbb2222  1.2K tokens, limit unknown")
 	assert.NotContains(t, text, "\x1b[", "plain text must carry no ANSI escapes")
+}
+
+// TestContextDialogViewScalesWithCappedHeader is a regression test for the
+// header block's variable height (an extra line renders when capped): the
+// selection/scroll math derived from the rendered header must still land on
+// the right row rather than an off-by-one from a stale line count.
+func TestContextDialogViewScalesWithCappedHeader(t *testing.T) {
+	t.Parallel()
+
+	b := testBreakdownWithFiles()
+	b.ContextLimit = 16_000
+	b.CompactionModel = "local/small"
+	b.CompactionContextLimit = 16_000
+	b.PrimaryContextLimit = 128_000
+
+	d := NewContextDialog(b, testLiveSessions()...).(*contextDialog)
+	d.SetSize(120, 50)
+	d.View()
+
+	require.Equal(t, 0, d.selected, "selection still starts on the first live session despite the taller header")
+
+	// Selection must still walk every row: 3 live sessions + 3 attached files.
+	for range 5 {
+		d.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	assert.Equal(t, 5, d.selected)
 }

@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [Unreleased]
+
+## What's New
+
+- Splits the sidebar's Token Usage click target in two: clicking the token/context part (glyph, token count, context `%`, or the "compacting…" marker) opens the `/context` dialog, while clicking the cost part (`$` figure, `⚠ capped` marker, sub-session count) keeps opening `/cost`; the "Token Usage" section title is no longer clickable
+
+
 ## [v1.115.0] - 2026-07-22
 
 This release fixes permission pattern parsing for colon-containing values, adds provider-level compaction model defaults, resolves agent-switch slash commands over HTTP, and includes several bug fixes and refactors.

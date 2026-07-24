@@ -13,6 +13,23 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
 
+// TestTokenUsageLine_ShowsCompactionCap verifies the usage line marks a
+// capped effective limit with a short warning marker, and stays silent once
+// SetAgentInfo reports an uncapped/absent compaction model.
+func TestTokenUsageLine_ShowsCompactionCap(t *testing.T) {
+	t.Parallel()
+
+	m := newTestSidebar(t)
+	m.SetAgentInfo("root", "anthropic/claude", "", 16_000, "local/small", 128_000)
+
+	line := ansi.Strip(m.tokenUsageLine())
+	assert.Contains(t, line, "⚠ capped")
+
+	m.SetAgentInfo("root", "anthropic/claude", "", 128_000, "", 0)
+	line = ansi.Strip(m.tokenUsageLine())
+	assert.NotContains(t, line, "capped")
+}
+
 func TestActiveSessionTokens_SingleSession(t *testing.T) {
 	t.Parallel()
 

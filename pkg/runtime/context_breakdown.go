@@ -82,6 +82,23 @@ type ContextBreakdown struct {
 	// Model is the effective model label ("provider/model", or the
 	// harness label for harness-backed agents).
 	Model string `json:"model"`
+
+	// CompactionModel is the identity ("provider/model") of the agent's
+	// dedicated compaction model, set whenever one is configured (regardless
+	// of whether its window actually caps ContextLimit) — renderers need the
+	// unresolved-primary edge case (PrimaryContextLimit == 0) too. Use
+	// CompactionContextLimit and PrimaryContextLimit together with
+	// [LocalRuntime.effectiveContextLimit]'s cap predicate to decide whether
+	// to attribute a reduction.
+	CompactionModel string `json:"compaction_model,omitempty"`
+	// CompactionContextLimit is the dedicated compaction model's own context
+	// window, or 0 when it cannot be resolved. Set only alongside
+	// CompactionModel.
+	CompactionContextLimit int64 `json:"compaction_context_limit,omitempty"`
+	// PrimaryContextLimit is the primary model's own context window (before
+	// any compaction-model cap is applied), or 0 when it cannot be resolved.
+	// Set only alongside CompactionModel.
+	PrimaryContextLimit int64 `json:"primary_context_limit,omitempty"`
 }
 
 // TotalTokens returns the estimated size of the whole prompt.
@@ -112,7 +129,11 @@ func (r *LocalRuntime) ContextBreakdown(ctx context.Context, sess *session.Sessi
 
 	b := &ContextBreakdown{Model: agentModelLabel(ctx, a)}
 	if !a.HasHarness() {
-		b.ContextLimit = r.contextLimitForAgentModel(ctx, a, r.getEffectiveModelID(ctx, a))
+		modelID := r.getEffectiveModelID(ctx, a)
+		b.ContextLimit = r.contextLimitForAgentModel(ctx, a, modelID)
+		if a.CompactionModel() != nil {
+			b.CompactionModel, b.PrimaryContextLimit, b.CompactionContextLimit = r.compactionCapAttribution(ctx, a, modelID)
+		}
 	}
 
 	messages := sess.GetMessages(a)
