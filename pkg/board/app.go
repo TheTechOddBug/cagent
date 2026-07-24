@@ -257,6 +257,15 @@ func (a *App) saveConfigLocked() error {
 	})
 }
 
+// projectsLocked returns the stored projects, nil when the board section
+// does not exist yet. Callers must hold a.mu.
+func (a *App) projectsLocked() []userconfig.BoardProject {
+	if a.config.Board == nil {
+		return nil
+	}
+	return a.config.Board.Projects
+}
+
 // Projects returns the configured projects.
 func (a *App) Projects() []Project {
 	a.mu.Lock()
@@ -264,8 +273,9 @@ func (a *App) Projects() []Project {
 	if a.config.Board == nil {
 		return nil
 	}
-	projects := make([]Project, 0, len(a.config.Board.Projects))
-	for _, p := range a.config.Board.Projects {
+	stored := a.projectsLocked()
+	projects := make([]Project, 0, len(stored))
+	for _, p := range stored {
 		projects = append(projects, Project{Name: p.Name, Path: expandHome(p.Path), Agent: p.Agent})
 	}
 	return projects
@@ -282,13 +292,13 @@ func (a *App) AddProject(p Project) error {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.config.Board == nil {
-		a.config.Board = &userconfig.Board{}
-	}
-	for _, existing := range a.config.Board.Projects {
+	for _, existing := range a.projectsLocked() {
 		if existing.Name == stored.Name {
 			return fmt.Errorf("project %q already exists", stored.Name)
 		}
+	}
+	if a.config.Board == nil {
+		a.config.Board = &userconfig.Board{}
 	}
 	a.config.Board.Projects = append(a.config.Board.Projects, stored)
 	return a.saveConfigLocked()
@@ -306,10 +316,7 @@ func (a *App) UpdateProject(oldName string, p Project) error {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var projects []userconfig.BoardProject
-	if a.config.Board != nil {
-		projects = a.config.Board.Projects
-	}
+	projects := a.projectsLocked()
 	idx := slices.IndexFunc(projects, func(bp userconfig.BoardProject) bool { return bp.Name == oldName })
 	if idx < 0 {
 		return fmt.Errorf("unknown project %q", oldName)
@@ -377,10 +384,7 @@ func normalizeProjectPath(path string) (string, error) {
 func (a *App) MoveProject(name string, delta int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var projects []userconfig.BoardProject
-	if a.config.Board != nil {
-		projects = a.config.Board.Projects
-	}
+	projects := a.projectsLocked()
 	idx := slices.IndexFunc(projects, func(p userconfig.BoardProject) bool { return p.Name == name })
 	if idx < 0 {
 		return fmt.Errorf("unknown project %q", name)
