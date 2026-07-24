@@ -812,15 +812,8 @@ func (r *LocalRuntime) runTurn(
 		messages = rewritten
 	}
 
-	// Apply registered before_llm_call message transforms (e.g.
-	// strip_unsupported_modalities for text-only models, plus any
-	// embedder-supplied redactor / scrubber registered via
-	// WithMessageTransform). Runs after the gate so a transform
-	// failure cannot waste the gate's allow verdict. modelID is
-	// passed explicitly so transforms see the actual model the
-	// loop chose (per-tool override + alloy-mode selection),
-	// not whatever a fresh agent.Model() call would re-randomize.
-	messages = r.applyBeforeLLMCallTransforms(ctx, sess, a, modelID.String(), messages)
+	// Runtime message transforms run inside fallback.execute so each attempt
+	// uses the capabilities of the provider that will receive it.
 
 	// Try primary model with fallback chain if configured
 	agentTools = r.toolDeferrals.MarkAt(sess.ID, lastToolCallID(messages), agentTools)

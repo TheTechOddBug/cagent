@@ -712,6 +712,7 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		dmrModelLister:               dmrmodels.ListModels,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
+	r.fallback.prepareMessages = r.prepareMessagesForModel
 
 	// stripUnsupportedModalitiesTransform captures the runtime closure to
 	// resolve the agent from Input.AgentName, so it lives here rather
