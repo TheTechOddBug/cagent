@@ -294,31 +294,119 @@ Attached files are also recorded on the session so sub-agents spawned by task tr
 
 ## Generated Media
 
-Returned media is saved in the owning session's workspace with safe names,
-MIME-derived extensions and collision suffixes. Absolute, traversal,
-home-relative and symlink-escaping targets redirect to a sanitized workspace
-basename and warn without an external write or confirmation dialog. An unusable
-basename uses `generated-N`. Failed saves retain assistant text and successful
-siblings; a missing owning workspace never falls back to a data directory.
+Some models (e.g. Gemini image-output models like `gemini-2.5-flash-image`)
+are designed to generate an image directly as part of their reply, not just
+describe one. When models.dev reports that a model can generate images, or
+[`output_capabilities.image: true`](../../configuration/models/index.md#output-capabilities)
+explicitly enables it, Docker Agent asks it for text *and* image output on the
+models gateway, direct Gemini API, and Vertex AI. An explicit `false` disables
+this behavior. See
+[Google Gemini: Generated Images](../../providers/google/index.md#generated-images)
+for exact configuration and limitations — ordinary image-output requests with
+custom tools or structured output are rejected locally before any request is
+sent. Session-title and compaction requests omit image response modalities and
+skip this guard; they do not explicitly force TEXT-only output. Google
+Search, Maps, and code-execution built-ins remain available. For custom tools,
+models.dev metadata lets the error distinguish
+a model that cannot call tools from an image-output request shape that cannot
+combine both capabilities; unknown metadata keeps a conservative generic
+message.
 
-The session message holds owner-qualified references and sanitized metadata.
-Manifest authorization gates resolution before portable bytes or workspace files
-are read. Ordinary follow-up history uses placeholders rather than resending the
-stored bytes. Branches and restored messages keep the original artifact owner.
+At a text-only stop, Docker Agent checks the last user prompt for phrases
+such as "generate an image" or "draw a picture". A match preserves the reply
+and adds this nonfatal warning: `The model returned text but no image for this
+image-generation request. Try rephrasing the request.` Prompts without a
+matching phrase do not trigger it. This is phrase matching, not semantic
+intent detection: negated or quoted phrases can match, other wording can be
+missed, and the check does not require an image-output-capable model. It does
+not track a whole submission across tool calls, steering, stop hooks, or
+handoffs. A terminal provider error skips this check, as does structured
+output on the current agent model; the check does not inspect every override
+or parse the reply to determine whether it is structured.
 
-Supported terminals render generated images inline; others show a safe path
-label. Unavailable or forged references keep an unavailable placeholder. File
-fallback requires workspace containment and regular-file identity checks, not
-content-integrity verification. See [Generated-Media Artifacts](../sessions/index.md#generated-media-artifacts)
-for storage and lifecycle details.
+**Where images land.** Docker Agent attempts to save each generated image
+as an ordinary workspace file and record it in the session manifest. After
+both steps succeed, it stores a complete portable copy in the session database.
+A failed portable-copy write does not remove the saved workspace file and
+produces a per-item warning.
+Database upgrades are in-place and older binaries may not understand the
+upgraded schema — see [Sessions](../sessions/index.md#generated-media-files).
+Generated files are untracked workspace files, yours to edit, commit, move,
+or delete. A remote runtime writes to its own workspace; the local TUI does
+not receive a remote binary-rendering path from this feature.
 
-### Optional Validation
+**Naming.** The model is instructed to honor an explicit prompt filename
+such as `assets/red-panda.jpg` in a private naming marker. This is a request,
+not a guarantee: emitted markers take precedence. When exactly one image is
+returned without a marker, a single explicit filename found by a conservative
+prompt parser is used. An unmarked item among several returned images does
+not qualify. Otherwise names come from the provider, then `generated-1`,
+`generated-2`, and so on. Parent directories are created when the validated
+save succeeds. Two rules always apply:
 
-Use a disposable workspace and session store for optional image-generation
-trials. Live model calls require credentials, may be billed and can return text
-only; Vertex live image-generation validation is deferred. Deterministic tests
-cover naming, redirection, persistence, no-resend history and restoration without
-provider credentials.
+- **The extension matches the data.** The image format is decided by the
+  provider (typically PNG) — asking for `sunshine.gif` or `diagram.svg`
+  does not transcode anything. If the model returns PNG data, the file is
+  saved as `sunshine.png` and a notice tells you so.
+- **Existing files are never overwritten.** A name collision gets a dash
+  suffix instead: a second `red-panda.jpg` is saved as `red-panda-1.jpg`.
+  Publication requires hard-link support; filesystems without it fail safely
+  with a save warning instead of using a replacing rename.
+
+**Paths stay in the workspace.** A prompt-directed target that is absolute,
+`~`-rooted, or climbs above the workspace with `..` is not written outside the
+owning session's workspace. Docker Agent discards the directory portion,
+sanitizes the basename, saves it at the workspace root, and adds a bounded
+warning to the turn. This does not prompt or wait for confirmation, including
+over ACP and other interfaces without an elicitation consumer. General MCP and
+tool elicitation is unaffected. If the owning session has no workspace root,
+the save fails instead of falling back to the data directory. Relative
+subdirectories remain supported after containment and symlink checks. An unusable
+basename falls back to `generated-N`; a redirected save can still fail and warn
+without discarding successful siblings or assistant text.
+
+**Rendering.** Successfully resolved images can appear inline in the same
+assistant turn, using Kitty-graphics support and `render_images` as described
+under [Markdown Images](#markdown-images). Graphics-disabled or unsupported
+terminals show a filename/path fallback. Resolution checks the owning session's
+manifest before preferring its portable database copy; saved bytes can survive
+workspace edits, deletion, or missing provenance. Without workspace provenance,
+the label uses the recorded relative path rather than a verified absolute file. It falls back to the manifest-gated workspace file only when the
+session store has no blob interface or the blob is not found. Other blob errors
+fail closed. Historical manifest entries that identify an external root are
+rejected. Stores without blob support and sessions created before portable
+blobs were introduced continue to use legacy workspace files.
+
+Ordinary outgoing history replaces generated-media parts with metadata
+placeholders, so follow-up turns do not resend stored bytes. Explicitly
+attaching a generated file or asking a tool to read it can send its contents
+to a model. Legacy files still require manifest authorization, containment,
+regular-file and symlink checks. These are not content-integrity checks: an
+ordinary file's bytes may have changed. Failed resolution shows an unavailable
+label rather than reading an unauthorized fallback.
+This generated-media behavior is separate from the existing input bound for
+ordinary Markdown images rendered from assistant text.
+
+If a save fails (unwritable directory, full disk, …), only that image is
+dropped, with a concise warning — the reply text and any sibling images in
+the same turn are kept. If all saves in a media-only reply fail, an empty
+assistant record may remain alongside the warnings. Disk-full, quota, and
+unclassified failures currently use generic retry/debug advice.
+Note also that an image-capable model can answer
+with text only and generate no image at all; that is provider behavior, so
+reword or repeat the prompt.
+
+Inline image rendering in the TUI also covers a tool/MCP result that
+returns an image, or a Markdown image reference to a file a tool actually
+writes to disk — see [Markdown Images](#markdown-images) above.
+
+### Team Context Budgets and Targeted Compaction
+
+The `/context` dialog also shows a **Live sessions** section: the current session plus every currently running sub-agent session (foreground children spawned by task transfer and long-running `run_background_agent` tasks). Each row shows the agent name, a short session ID (so two concurrent runs of the same agent stay distinguishable), and that session's context budget: used tokens, context limit, and percentage, or an explicit "limit unknown" reading when the model's window cannot be resolved. Live-sessions rows do not repeat the compaction-cap wording themselves — the dialog's header line is the sole authority on which model, if any, caps the effective limit.
+
+When a compaction has occurred, the dialog displays the verbatim text of the most recent compaction summary below the file inventory, under a "Latest compaction summary" section. This shows exactly what was summarized, preserving hard newlines and soft-wrapping long lines to the dialog width.
+
+Select a live session with <kbd>↑</kbd>/<kbd>↓</kbd> and press <kbd>Enter</kbd> to explicitly compact it. Cross-agent compaction happens only on this explicit request: no idle-triggered automatic compaction is added, and the existing automatic threshold and overflow-recovery compaction of sub-agent sessions is unchanged. The request is queued onto the target session's own run loop and executes at the next safe point between model turns, so it cannot corrupt an in-flight turn. The dialog closes and a notification confirms the request; a second notification reports the outcome (compacted, skipped, or failed) with the agent's name. Selecting the main row runs the same compaction as `/compact`. `/compact` itself keeps compacting the current root session. Remote runtimes do not expose live-session tracking, so the section is omitted there.
 
 ## Runtime Model Switching
 

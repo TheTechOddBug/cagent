@@ -40,8 +40,8 @@ models:
       pdf: boolean # Optional: whether the model accepts PDF attachments
       audio: boolean # Optional: whether the model accepts audio attachments
       video: boolean # Optional: whether the model accepts video attachments
-    output_capabilities: # Optional: generative output capabilities; explicit override, else resolved from models.dev
-      image: boolean # Optional: whether the model is declared able to generate image output
+    output_capabilities: # Optional: override generative output capabilities (otherwise detected from models.dev)
+      image: boolean # Optional: whether the model can generate image output
     cost: # Optional: explicit token pricing (USD per 1M tokens)
       input: float # Optional: price per 1M input tokens
       output: float # Optional: price per 1M output tokens
@@ -76,7 +76,7 @@ models:
 | `track_usage`         | boolean    | ✗        | Track and report token usage for this model                                           |
 | `routing`             | array      | ✗        | Rule-based routing to different models. See [Model Routing](../routing/index.md). |
 | `capabilities`        | object     | ✗        | Override attachment (input) capabilities for this model. See [Attachment Capability Overrides](#attachment-capability-overrides). |
-| `output_capabilities` | object     | ✗        | Generative output capabilities for this model, e.g. image generation, resolved from an explicit override or the models.dev catalogue. Cannot be combined with `first_available`. See [Output Capabilities](#output-capabilities). |
+| `output_capabilities` | object     | ✗        | Override generative output capabilities for this model, e.g. image generation. Omitted flags are detected from models.dev; explicit values take precedence. Cannot be combined with `first_available`. See [Output Capabilities](#output-capabilities). |
 | `cost`                | object     | ✗        | Explicit token pricing in USD per 1M tokens, overriding the built-in catalogue. See [Custom Token Pricing](#custom-token-pricing). |
 | `provider_opts`       | object     | ✗        | Provider-specific options (see provider pages)                                        |
 | `title_model`         | string     | ✗        | Model used for session-title generation. Can be a named model from the `models:` section or an inline `provider/model` string. When omitted, the agent's primary model generates titles. Cannot be combined with `first_available`. |
@@ -151,14 +151,15 @@ See [`examples/capability-overrides.yaml`](https://github.com/docker/docker-agen
 [`examples/strip-unsupported-media.yaml`](https://github.com/docker/docker-agent/blob/main/examples/strip-unsupported-media.yaml) for a fixture demonstrating the
 stripping behaviour with and without an override.
 
-## Output Capabilities
+### Output capabilities
 
-`output_capabilities` declares what a model can generate, as opposed to
-`capabilities`, which declares what it accepts as input. When `image` is
-omitted (including an omitted `output_capabilities` block), Docker Agent
-resolves it from the models.dev catalogue's declared output modalities;
-matching on the model name string is deliberately avoided as unreliable.
-Models absent from the catalogue conservatively resolve to no image output.
+`output_capabilities` overrides what a model can generate, as opposed to
+`capabilities`, which overrides what it accepts as input. Resolution follows
+one precedence chain: explicit `false`, explicit `true`, then an exact
+models.dev record whose `Modalities.Output` contains `image`. An omitted image
+flag (including `output_capabilities: {}`) therefore uses catalogue metadata;
+an unknown model or unavailable catalogue leaves image output disabled. Docker
+Agent never infers this capability from the model name.
 
 ```yaml
 models:
@@ -173,21 +174,23 @@ models:
 | --------------------------- | ------- | -------------------------------------------------------------|
 | `output_capabilities.image` | boolean | Whether the model is declared able to generate image output  |
 
-Leaving `image` unset or `false` (explicit or resolved from the catalogue)
-preserves existing behavior. When it resolves to `true` — explicitly or via
-the catalogue — Docker Agent's Gemini provider asks the model for `TEXT`
-and `IMAGE` response modalities on ordinary chat completions, and rejects,
-before any request is sent, a request that combines image output with
-custom function tools or structured output. Docker Agent does not yet
-render generated image bytes back to the user; see
-[Generated Images](../../providers/google/index.md#generated-images).
+Omitting `output_capabilities`, using an empty block, or omitting `image` uses
+models.dev metadata for that exact model when available. Setting `image`
+explicitly overrides the catalogue; an explicit `false` has highest precedence
+and disables image response modalities even when the catalogue lists image
+output. Enabling image output only opts the model into behavior that keys off
+that capability (for example, a provider-specific image-output request
+contract); it does not guarantee that a provider will return an image.
 
-Declaring `image: true` does not exclude a model from session-title
-generation: title (and compaction) calls are always dispatched without
-image response modalities, so an image-output-capable model still produces
-a plain text-only title. All configured candidates remain eligible in
-order (dedicated `title_model`, then the agent's model, then its
-fallbacks).
+Session-title and compaction requests omit image response modalities and
+bypass the guard even for image-output-capable models; they do not explicitly
+force TEXT-only output. On supported Google surfaces, the guard runs only when
+image output resolves as enabled and an ordinary request includes custom tools
+or structured output; matching requests are rejected locally. Google
+server-side built-ins remain available. For a custom-tool conflict,
+models.dev's `tool_call` capability makes the error say
+whether the model lacks tool calls entirely or only cannot combine them with
+image output; unavailable metadata keeps a conservative generic message.
 
 > [!WARNING]
 > **Constraint**
