@@ -6,8 +6,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// apiSurface* classifies which backend/transport a Client talks to. Used
-// only for diagnostics; never derived from or containing request content.
+// These transport categories gate response modalities and label diagnostics;
+// they never contain request content.
 const (
 	apiSurfaceGeminiAPI = "gemini_api"
 	apiSurfaceVertexAI  = "vertex_ai"
@@ -55,12 +55,8 @@ type RequestShape struct {
 	// or "gateway".
 	APISurface string
 
-	// OutputCapabilityKnown and OutputCapabilityEnabled report whether an
-	// authoritative source for the model's image/media *output* capability
-	// was consulted for this request. No such source exists yet — it is the
-	// subject of a later step — so both fields are always false today,
-	// deliberately reporting "unknown" rather than guessing from the model
-	// ID string.
+	// OutputCapabilityKnown records whether the capability was resolved from an
+	// explicit configuration override instead of the catalogue.
 	OutputCapabilityKnown   bool
 	OutputCapabilityEnabled bool
 }
@@ -68,7 +64,7 @@ type RequestShape struct {
 // newRequestShape captures a [RequestShape] from a fully-built
 // genai.GenerateContentConfig (i.e. after tools/ToolConfig have been
 // attached) and the client that built it.
-func newRequestShape(c *Client, config *genai.GenerateContentConfig, functionToolCount int) RequestShape {
+func newRequestShape(c *Client, config *genai.GenerateContentConfig, functionToolCount int, imageOutputEnabled bool) RequestShape {
 	modalities := normalizeResponseModalities(config.ResponseModalities)
 	kinds := builtInToolKinds(config.Tools)
 
@@ -83,6 +79,8 @@ func newRequestShape(c *Client, config *genai.GenerateContentConfig, functionToo
 		ThinkingConfigSet:       config.ThinkingConfig != nil,
 		NoThinkingRequested:     c.ModelOptions.NoThinking(),
 		APISurface:              c.apiSurface,
+		OutputCapabilityKnown:   c.ModelConfig.OutputCapabilities != nil && c.ModelConfig.OutputCapabilities.Image != nil,
+		OutputCapabilityEnabled: imageOutputEnabled,
 	}
 
 	if config.ToolConfig != nil {
