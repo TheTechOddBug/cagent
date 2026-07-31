@@ -1376,6 +1376,10 @@ func (r *LocalRuntime) materializeGeneratedMedia(ctx context.Context, sess *sess
 	if rootErr != nil {
 		slog.DebugContext(ctx, "No workspace root for generated media; dropping every media item, keeping the rest of the turn",
 			"agent", agentName, "session_id", sess.ID, "error", rootErr)
+	} else {
+		// Seed the resolver cache so live inline rendering of this turn's
+		// media does not have to re-resolve the root from the store.
+		r.generatedFiles.setRoot(sess.ID, root)
 	}
 
 	parts := make([]chat.MessagePart, 0, len(media))
@@ -1472,20 +1476,25 @@ func (r *LocalRuntime) sessionLookup() session.Lookup {
 	return r.sessionStore.GetSession
 }
 
-// recordGeneratedFile writes one manifest record after a successful
-// write — materialization is the only writer of the manifest.
+// recordGeneratedFile writes one manifest record after a successful write.
+// Materialization is the only writer of the manifest; resolvers always read
+// it back so authorization reflects current store state.
 func (r *LocalRuntime) recordGeneratedFile(ctx context.Context, sessionID string, root chat.ArtifactRootKind, finalPath, mimeType string) error {
 	manifest, ok := r.sessionStore.(session.GeneratedMediaManifest)
 	if !ok {
 		return fmt.Errorf("session store %T does not implement the generated-media manifest", r.sessionStore)
 	}
-	return manifest.AddGeneratedFile(ctx, session.GeneratedFile{
+	file := session.GeneratedFile{
 		SessionID: sessionID,
 		RelPath:   finalPath,
 		Root:      root,
 		MimeType:  mimeType,
 		CreatedAt: r.now(),
-	})
+	}
+	if err := manifest.AddGeneratedFile(ctx, file); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *LocalRuntime) recordGeneratedBlob(ctx context.Context, sessionID, finalPath string, data []byte) error {
