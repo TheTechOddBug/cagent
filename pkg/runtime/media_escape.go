@@ -10,9 +10,9 @@ import (
 
 type generatedMediaItem struct {
 	workspaceRoot string
-	// requestedPath is the prompt-directed target (untrusted model input,
-	// see chat.MediaDelta.RequestedPath); empty when the model named
-	// nothing explicitly.
+	// requestedPath is the prompt-directed target (untrusted marker or
+	// user-prompt input, see chat.MediaDelta.RequestedPath); empty when
+	// nothing named the blob explicitly.
 	requestedPath string
 	providerName  string
 	genericName   string
