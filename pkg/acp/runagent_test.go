@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -19,11 +21,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	agentpkg "github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
+	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	"github.com/docker/docker-agent/pkg/tools/builtin/todo"
@@ -180,6 +186,84 @@ func promptRequest(text string) acpsdk.PromptRequest {
 		SessionId: acpsdk.SessionId(testSessionID),
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(text)},
 	}
+}
+
+type escapingMediaProvider struct {
+	requested string
+}
+
+func (p *escapingMediaProvider) ID() modelsdev.ID        { return modelsdev.ParseIDOrZero("test/media") }
+func (p *escapingMediaProvider) BaseConfig() base.Config { return base.Config{} }
+func (p *escapingMediaProvider) MaxTokens() int          { return 0 }
+func (p *escapingMediaProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
+	return &escapingMediaStream{responses: []chat.MessageStreamResponse{
+		{Choices: []chat.MessageStreamChoice{{Index: 0, Delta: chat.MessageDelta{
+			Content: "completed",
+			Media:   []chat.MediaDelta{{Data: []byte("png"), MimeType: "image/png", Name: "provider.png", RequestedPath: p.requested, Size: 3}},
+		}}}},
+		{Choices: []chat.MessageStreamChoice{{Index: 0, FinishReason: chat.FinishReasonStop}}, Usage: &chat.Usage{InputTokens: 1, OutputTokens: 1}},
+	}}, nil
+}
+
+type escapingMediaStream struct {
+	responses []chat.MessageStreamResponse
+	index     int
+}
+
+func (s *escapingMediaStream) Recv() (chat.MessageStreamResponse, error) {
+	if s.index == len(s.responses) {
+		return chat.MessageStreamResponse{}, io.EOF
+	}
+	response := s.responses[s.index]
+	s.index++
+	return response, nil
+}
+
+func (*escapingMediaStream) Close() {}
+
+func TestPrompt_EscapingGeneratedMediaCompletesWithoutElicitation(t *testing.T) {
+	workspace := t.TempDir()
+	external := filepath.Join(t.TempDir(), "cat.png")
+	store := session.NewInMemorySessionStore()
+	root := agentpkg.New("root", "You are a test agent", agentpkg.WithModel(&escapingMediaProvider{requested: external}))
+	rt, err := runtime.New(t.Context(), team.New(team.WithAgents(root)),
+		runtime.WithSessionCompaction(false), runtime.WithSessionStore(store))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rt.Close()) })
+	rt.OnElicitationRequest(func(runtime.Event) { t.Error("generated media escape must not elicit") })
+	agent, sess, peer := newPromptTestAgent(t, rt)
+	sess.sess.ID = testSessionID
+	sess.sess.WorkingDir = workspace
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	response, err := agent.Prompt(ctx, promptRequest("save the generated image"))
+	require.NoError(t, err)
+	assert.Equal(t, acpsdk.StopReasonEndTurn, response.StopReason)
+	assert.NoFileExists(t, external)
+	assert.Equal(t, []byte("png"), mustReadACPFile(t, filepath.Join(workspace, "cat.png")))
+	stored, err := store.GetSession(t.Context(), testSessionID)
+	require.NoError(t, err)
+	require.Len(t, stored.GetAllMessages(), 2)
+	assistant := stored.GetAllMessages()[1].Message
+	assert.Equal(t, "completed", assistant.Content)
+	require.Len(t, assistant.MultiContent, 2)
+	document := assistant.MultiContent[1].Document
+	require.NotNil(t, document)
+	assert.Equal(t, "cat.png", document.Source.ArtifactPath)
+	assert.Equal(t, chat.ArtifactRootWorkspace, document.Source.ArtifactRoot)
+	assert.Equal(t, testSessionID, document.Source.ArtifactOwnerSessionID)
+	out, ok := peer.out.(*captureWriter)
+	require.True(t, ok)
+	assert.Contains(t, strings.Join(out.lines(), "\n"), "outside the workspace")
+	assert.Empty(t, peer.recordedRequests())
+}
+
+func mustReadACPFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return b
 }
 
 func TestPromptReplacementCancelsQueuedTurnWithoutSideEffects(t *testing.T) {

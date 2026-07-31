@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -1328,13 +1327,15 @@ func sanitizeToolCallName(name string) string {
 // generated-media manifest ([session.GeneratedMediaManifest]), the trust
 // anchor a resolver must consult before reading a workspace path back.
 //
-// The requested filename is the sanitized provider display name when one
-// exists, otherwise a generic "generated-N"; the writer owns MIME/extension
+// The requested filename is the prompt-directed path when the provider
+// surfaced one ([chat.MediaDelta.RequestedPath], populated by marker
+// extraction once that lands), otherwise the sanitized provider display
+// name, otherwise a generic "generated-N"; the writer owns MIME/extension
 // correction and collision suffixing, and the part persists the exact final
-// relative path it returns. A corrected extension additionally surfaces a
-// bounded user-visible notice naming the final path. Explicit
-// prompt-directed naming (and its out-of-workspace confirmation flow) is
-// intentionally not implemented here yet.
+// path it returns. A corrected extension additionally surfaces a bounded
+// user-visible notice naming the final path. A prompt-directed path that
+// escapes the workspace (absolute, "..", or "~"-rooted) is redirected into
+// the workspace root under the sanitized basename with a bounded warning.
 //
 // When no workspace root is available (no provenance anywhere in the parent
 // chain, or a malformed stored value) every item fails with the same
@@ -1394,29 +1395,23 @@ func (r *LocalRuntime) materializeGeneratedMedia(ctx context.Context, sess *sess
 			continue
 		}
 
-		requested := safeName
-		generic := fmt.Sprintf("generated-%d", i+1)
-		if requested == "" {
-			requested = generic
-		}
-		res, err := workspacemediaWrite(root, requested, m.Data, m.MimeType)
-		if err != nil && requested != generic && errors.Is(err, workspacemedia.ErrPathEscape) {
-			// A provider display name the writer refuses even after display
-			// sanitization (e.g. a Windows-reserved name like "CON.png") must
-			// not cost the user the item; there is no user-chosen path to
-			// honor at this stage, so fall back to the generic name.
-			res, err = workspacemediaWrite(root, generic, m.Data, m.MimeType)
-		}
+		res, err := r.writeGeneratedMedia(generatedMediaItem{
+			workspaceRoot: root,
+			requestedPath: m.RequestedPath,
+			providerName:  safeName,
+			genericName:   fmt.Sprintf("generated-%d", i+1),
+			data:          m.Data,
+			mimeType:      m.MimeType,
+			agentName:     agentName,
+			index:         i + 1,
+			total:         len(media),
+		}, events)
 		if err != nil {
 			warnItemFailed(err)
 			continue
 		}
-
-		if err := r.recordGeneratedFile(ctx, sess.ID, res.RelPath, safeMimeType); err != nil {
-			// The file is already a real workspace deliverable, so keep the
-			// reference; without the manifest record inline display will
-			// refuse to render it (fail closed), which the user should hear
-			// about. res.RelPath is writer-sanitized and workspace-relative.
+		if err := r.recordGeneratedFile(ctx, sess.ID, chat.ArtifactRootWorkspace, res.RelPath, safeMimeType); err != nil {
+			// Keep the saved file, but warn that missing manifest authorization prevents display.
 			slog.DebugContext(ctx, "Failed to record generated media in the manifest; the file was written but may not display inline",
 				"agent", agentName, "session_id", sess.ID, "rel_path", res.RelPath, "error", err)
 			if events != nil {
@@ -1458,15 +1453,16 @@ func (r *LocalRuntime) sessionLookup() session.Lookup {
 }
 
 // recordGeneratedFile writes one manifest record after a successful
-// workspace write — materialization is the only writer of the manifest.
-func (r *LocalRuntime) recordGeneratedFile(ctx context.Context, sessionID, relPath, mimeType string) error {
+// write — materialization is the only writer of the manifest.
+func (r *LocalRuntime) recordGeneratedFile(ctx context.Context, sessionID string, root chat.ArtifactRootKind, finalPath, mimeType string) error {
 	manifest, ok := r.sessionStore.(session.GeneratedMediaManifest)
 	if !ok {
 		return fmt.Errorf("session store %T does not implement the generated-media manifest", r.sessionStore)
 	}
 	return manifest.AddGeneratedFile(ctx, session.GeneratedFile{
 		SessionID: sessionID,
-		RelPath:   relPath,
+		RelPath:   finalPath,
+		Root:      root,
 		MimeType:  mimeType,
 		CreatedAt: r.now(),
 	})
