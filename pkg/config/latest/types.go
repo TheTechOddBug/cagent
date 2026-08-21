@@ -1235,8 +1235,9 @@ type ModelConfig struct {
 	// [CapabilitiesConfig].
 	Capabilities *CapabilitiesConfig `json:"capabilities,omitempty"`
 	// OutputCapabilities optionally overrides the model's generative *output*
-	// capabilities. An omitted flag is resolved from the models.dev catalogue;
-	// an explicit value takes precedence. See [OutputCapabilitiesConfig].
+	// capabilities. Explicit false takes precedence over explicit true; an
+	// omitted Image flag (including an empty block) falls back to the exact
+	// models.dev record, and unknown or unavailable metadata stays disabled.
 	OutputCapabilities *OutputCapabilitiesConfig `json:"output_capabilities,omitempty"`
 	// Cost optionally declares the model's token pricing explicitly,
 	// overriding the models.dev catalogue. See [CostConfig].
