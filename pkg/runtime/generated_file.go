@@ -23,12 +23,6 @@ import (
 // only ever say "unavailable"; the wrapped cause is for debug logs.
 var ErrGeneratedFileUnavailable = errors.New("generated file unavailable")
 
-// maxGeneratedFileBytes bounds how much a single resolution reads into
-// memory. Matches the inline-rendering bound in pkg/tui/image; a recorded
-// path whose content grew beyond it (i.e. was replaced) is refused rather
-// than loaded.
-const maxGeneratedFileBytes = 20 << 20
-
 // GeneratedFileRef identifies one persisted generated-media reference, as
 // carried by [chat.DocumentSource] (ArtifactPath/ArtifactRoot/
 // ArtifactOwnerSessionID).
@@ -43,9 +37,9 @@ type GeneratedFileRef struct {
 	Path string
 }
 
-// ResolvedGeneratedFile is a successful resolution: the file bytes plus the
-// validated canonical absolute path, safe to display verbatim (owner IDs,
-// raw refs, and error details are never part of it).
+// ResolvedGeneratedFile carries the resolved bytes and a display path.
+// Portable blobs remain readable without workspace provenance; in that case
+// Path is the recorded relative artifact path, not a canonical absolute path.
 type ResolvedGeneratedFile struct {
 	Data []byte
 	Path string
@@ -106,6 +100,16 @@ func (r *LocalRuntime) ResolveGeneratedFile(ctx context.Context, ref GeneratedFi
 		return nil, fmt.Errorf("%w: reference root %q does not match recorded root %q", ErrGeneratedFileUnavailable, ref.Root, record.Root)
 	}
 
+	if blobs, ok := r.sessionStore.(session.GeneratedMediaBlobStore); ok {
+		data, err := blobs.LookupGeneratedBlob(ctx, ref.OwnerSessionID, ref.Path)
+		if err == nil {
+			return &ResolvedGeneratedFile{Data: data, Path: generatedFileDisplayPath(ctx, r, ref)}, nil
+		}
+		if !errors.Is(err, session.ErrGeneratedBlobNotFound) {
+			return nil, fmt.Errorf("%w: loading portable media: %w", ErrGeneratedFileUnavailable, err)
+		}
+	}
+
 	workspaceRoot, err := r.generatedFileWorkspaceRoot(ctx, ref.OwnerSessionID)
 	if err != nil {
 		return nil, err
@@ -115,6 +119,18 @@ func (r *LocalRuntime) ResolveGeneratedFile(ctx context.Context, ref GeneratedFi
 		return nil, fmt.Errorf("%w: %w", ErrGeneratedFileUnavailable, err)
 	}
 	return &ResolvedGeneratedFile{Data: data, Path: canonical}, nil
+}
+
+func generatedFileDisplayPath(ctx context.Context, r *LocalRuntime, ref GeneratedFileRef) string {
+	root, err := r.generatedFileWorkspaceRoot(ctx, ref.OwnerSessionID)
+	if err != nil {
+		return ref.Path
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		canonicalRoot = root
+	}
+	return filepath.Join(canonicalRoot, filepath.FromSlash(ref.Path))
 }
 
 // lookupGeneratedFile returns the current manifest record for ref.
