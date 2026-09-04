@@ -54,7 +54,8 @@ a session revokes its references even if workspace provenance is cached. A
 legacy workspace file that was deleted, replaced by
 a symlink, made invalid, or cannot be read appears as a short "unavailable"
 note. Manifest and containment checks do not verify the integrity of
-ordinary-file contents, which may have changed. Deleting a session also deletes its stored
+ordinary-file contents, which may have changed. Generated-media storage and
+resolution have no byte cap. Deleting a session also deletes its stored
 generated-media blobs. See
 [Generated Media](../tui/index.md#generated-media) for naming, collision
 handling, and rendering details.

@@ -82,7 +82,7 @@ The workspace file is the visible deliverable. After that file and its manifest
 entry are saved, a portable copy is also stored in the session database and
 preferred when the session is reopened. It can render the original generated
 bytes even if the workspace file was edited, moved, or deleted.
-If portable
+Generated-media storage and resolution do not impose a size cap. If portable
 persistence fails, the workspace file is still kept and the turn includes a
 warning.
 Sessions created before portable copies were introduced continue to use their

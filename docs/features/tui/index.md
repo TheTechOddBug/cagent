@@ -376,6 +376,7 @@ session store has no blob interface or the blob is not found. Other blob errors
 fail closed. Historical manifest entries that identify an external root are
 rejected. Stores without blob support and sessions created before portable
 blobs were introduced continue to use legacy workspace files.
+Generated-media resolution has no byte cap.
 
 Ordinary outgoing history replaces generated-media parts with metadata
 placeholders, so follow-up turns do not resend stored bytes. Explicitly
