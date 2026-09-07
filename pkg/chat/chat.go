@@ -180,6 +180,14 @@ type Usage struct {
 	ReasoningTokens   int64 `json:"reasoning_tokens,omitempty"`
 }
 
+// PromptTokens returns the total prompt size: fresh, cached and
+// cache-written input are mutually exclusive billing buckets that together
+// make up everything the model read. It is the figure long-context price
+// tiers are compared against.
+func (u *Usage) PromptTokens() int64 {
+	return u.InputTokens + u.CachedInputTokens + u.CacheWriteTokens
+}
+
 // Add accumulates other's token counts into u. A nil other is a no-op so
 // callers can pass a message's optional usage without checking.
 func (u *Usage) Add(other *Usage) {

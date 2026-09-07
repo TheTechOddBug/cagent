@@ -122,7 +122,11 @@ See [`examples/capability-overrides.yaml`](https://github.com/docker/docker-agen
 ## Custom Token Pricing
 
 Docker Agent prices each model call from the [models.dev](https://models.dev/)
-catalogue. Models the catalogue does not know — custom OpenAI-compatible
+catalogue, including long-context price tiers: when a request's prompt (fresh,
+cached and cache-written input) exceeds a model's tier threshold — 272k tokens
+for OpenAI GPT-5.x, 200k for Gemini Pro — the whole call is billed at that
+tier's higher rates, exactly as the provider invoices it. Models the catalogue
+does not know — custom OpenAI-compatible
 providers, local models, private deployments — are "unpriced": every call is
 recorded at $0 despite consuming tokens, with only a log warning.
 

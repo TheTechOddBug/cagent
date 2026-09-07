@@ -1134,14 +1134,19 @@ func applyConfigCost(m *modelsdev.Model, id modelsdev.ID, cost *latest.CostConfi
 // assistant message (dereferenced to 0 when nil) and the
 // after_llm_call hook payload (which keeps the nil/0 distinction), so
 // the two can never disagree.
+//
+// The price band is chosen per call from the prompt size, so a request
+// past a model's long-context threshold (e.g. >272k for GPT-5.x) is
+// billed at the higher tier for all of its tokens.
 func computeMessageCost(usage *chat.Usage, m *modelsdev.Model) *float64 {
 	if usage == nil || m == nil || m.Cost == nil {
 		return nil
 	}
-	cost := (float64(usage.InputTokens)*m.Cost.Input +
-		float64(usage.OutputTokens)*m.Cost.Output +
-		float64(usage.CachedInputTokens)*m.Cost.CacheRead +
-		float64(usage.CacheWriteTokens)*m.Cost.CacheWrite) / 1e6
+	rates := m.Cost.RatesFor(usage.PromptTokens())
+	cost := (float64(usage.InputTokens)*rates.Input +
+		float64(usage.OutputTokens)*rates.Output +
+		float64(usage.CachedInputTokens)*rates.CacheRead +
+		float64(usage.CacheWriteTokens)*rates.CacheWrite) / 1e6
 	return &cost
 }
 
