@@ -64,6 +64,15 @@ func TestCostRatesFor(t *testing.T) {
 		assert.Equal(t, Rates{Input: 2, Output: 4}, c.RatesFor(101))
 	})
 
+	t.Run("zero-rate tier is free rather than falling back", func(t *testing.T) {
+		t.Parallel()
+		c := &Cost{
+			Input: 1, Output: 2,
+			Tiers: []CostTier{{Tier: TierSpec{Type: "context", Size: 200_000}}},
+		}
+		assert.Equal(t, Rates{}, c.RatesFor(200_001))
+	})
+
 	t.Run("non-context tiers are ignored", func(t *testing.T) {
 		t.Parallel()
 		c := &Cost{
