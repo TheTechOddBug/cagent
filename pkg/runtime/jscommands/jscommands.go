@@ -17,7 +17,11 @@ import (
 // Register installs the goja-backed evaluator as the runtime's command
 // evaluator. It is idempotent and safe to call from multiple goroutines.
 func Register() {
-	runtime.RegisterCommandEvaluator(func(agentTools []tools.Tool) runtime.CommandEvaluator {
-		return js.NewEvaluator(agentTools)
-	})
+	runtime.RegisterCommandEvaluator(Factory)
+}
+
+// Factory builds the JavaScript evaluator without changing global registration.
+// Pass it to runtime.WithCommandEvaluatorFactory for instance-scoped wiring.
+func Factory(agentTools []tools.Tool) runtime.CommandEvaluator {
+	return js.NewEvaluator(agentTools)
 }

@@ -231,7 +231,8 @@ type ModelStore interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	harnessFactory *harness.Factory
+	harnessFactory   *harness.Factory
+	commandEvaluator *CommandEvaluatorFactory
 
 	ctx                       func() context.Context
 	toolMap                   map[string]ToolHandlerFunc
