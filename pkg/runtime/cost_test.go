@@ -134,9 +134,9 @@ func TestConfigCostReplacesContextTiers(t *testing.T) {
 		assert.Empty(t, m.Cost.Tiers)
 		got := computeMessageCost(usage, m)
 		require.NotNil(t, got)
-		assert.Equal(t, price, *got)
+		assert.InDelta(t, price, *got, 1e-9)
 	}
 	got := computeMessageCost(usage, catalogued)
 	require.NotNil(t, got)
-	assert.Equal(t, 4.0, *got, "overrides must not mutate shared catalog tiers")
+	assert.InDelta(t, 4.0, *got, 1e-9, "overrides must not mutate shared catalog tiers")
 }
