@@ -563,9 +563,6 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		if err != nil {
 			slog.DebugContext(ctx, "Failed to get model definition", "error", err)
 		}
-		// A config-declared price table takes precedence over the
-		// catalogue and prices models the catalogue doesn't know.
-		m = applyConfigCost(m, modelID, model.BaseConfig().ModelConfig.Cost)
 		// We can only compact if we know the context limit.
 		// resolveContextLimit prefers provider_opts.context_size when set
 		// (some providers — notably Docker Model Runner — use it to size
@@ -838,6 +835,21 @@ func (r *LocalRuntime) runTurn(
 		return turnExit
 	}
 
+	if usedModel != nil {
+		if usedModel.ID() != modelID {
+			slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", modelID.String(), "used", usedModel.ID().String())
+			modelID = usedModel.ID()
+			m, err = r.modelsStore.GetModel(ctx, modelID)
+			if err != nil {
+				slog.DebugContext(ctx, "Failed to get fallback model definition", "model_id", modelID.String(), "error", err)
+				m = nil
+			}
+			events.Emit(AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage()))
+		}
+		// Fallbacks may share an ID but have different endpoint pricing overrides.
+		m = applyConfigCost(m, modelID, usedModel.BaseConfig().ModelConfig.Cost)
+	}
+
 	// A successful model call resets the overflow compaction counter.
 	ls.overflowCompactions = 0
 
@@ -863,10 +875,6 @@ func (r *LocalRuntime) runTurn(
 	// per-turn billing data for sidecar cost ledgers.
 	r.executeAfterLLMCallHooks(ctx, sess, a, modelID.String(), res.Content, res.Usage, msgCost)
 
-	if usedModel != nil && usedModel.ID() != model.ID() {
-		slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", model.ID().String(), "used", usedModel.ID().String())
-		events.Emit(AgentInfo(a.Name(), usedModel.ID().String(), a.Description(), a.WelcomeMessage()))
-	}
 	streamSpan.SetAttributes(
 		attribute.Int("tool.calls", len(res.Calls)),
 		attribute.Int("content.length", len(res.Content)),
