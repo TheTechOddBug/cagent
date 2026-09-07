@@ -180,10 +180,7 @@ type Usage struct {
 	ReasoningTokens   int64 `json:"reasoning_tokens,omitempty"`
 }
 
-// PromptTokens returns the total prompt size: fresh, cached and
-// cache-written input are mutually exclusive billing buckets that together
-// make up everything the model read. It is the figure long-context price
-// tiers are compared against.
+// PromptTokens sums the disjoint fresh, cache-read, and cache-write input buckets.
 func (u *Usage) PromptTokens() int64 {
 	return u.InputTokens + u.CachedInputTokens + u.CacheWriteTokens
 }

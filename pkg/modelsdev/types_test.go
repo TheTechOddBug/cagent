@@ -8,9 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCostRatesFor pins the long-context tier selection: the base band
-// applies up to and including the threshold, the tier strictly above it, and
-// with several tiers the highest exceeded threshold wins.
 func TestCostRatesFor(t *testing.T) {
 	t.Parallel()
 
@@ -77,9 +74,6 @@ func TestCostRatesFor(t *testing.T) {
 	})
 }
 
-// TestCostJSONRoundTrip verifies the models.dev wire shape for tiers decodes
-// into CostTier and survives a re-marshal, so the snapshot generator keeps
-// long-context pricing instead of silently dropping it.
 func TestCostJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 

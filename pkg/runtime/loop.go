@@ -1124,20 +1124,8 @@ func applyConfigCost(m *modelsdev.Model, id modelsdev.ID, cost *latest.CostConfi
 	return &out
 }
 
-// computeMessageCost returns the USD cost of a single model response,
-// or nil when the response cannot be priced. It is nil when there is
-// no usage to price (usage == nil) or the model has no pricing table
-// (m == nil — e.g. an unknown model ID or a custom endpoint without
-// cost config — or m.Cost == nil). A non-nil result of 0 therefore
-// means "priced, but this call was free", distinct from "unpriced"
-// (nil). This single arithmetic source feeds both the persisted
-// assistant message (dereferenced to 0 when nil) and the
-// after_llm_call hook payload (which keeps the nil/0 distinction), so
-// the two can never disagree.
-//
-// The price band is chosen per call from the prompt size, so a request
-// past a model's long-context threshold (e.g. >272k for GPT-5.x) is
-// billed at the higher tier for all of its tokens.
+// computeMessageCost prices the whole call at the tier selected by its prompt size.
+// Nil means unpriced; a non-nil zero means free. Messages and hooks share this value.
 func computeMessageCost(usage *chat.Usage, m *modelsdev.Model) *float64 {
 	if usage == nil || m == nil || m.Cost == nil {
 		return nil

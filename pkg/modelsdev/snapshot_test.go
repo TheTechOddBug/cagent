@@ -58,9 +58,6 @@ func TestEmbeddedSnapshotIncludesClaudeOpus5(t *testing.T) {
 	assert.Equal(t, "claude-opus", m.Family, "claude-opus-5 must belong to the claude-opus family")
 }
 
-// TestEmbeddedSnapshotKeepsLongContextTiers guards against the snapshot
-// generator dropping long-context price bands: without cost.tiers every
-// GPT-5.x request past 272k tokens would be billed at the base rate.
 func TestEmbeddedSnapshotKeepsLongContextTiers(t *testing.T) {
 	t.Parallel()
 
