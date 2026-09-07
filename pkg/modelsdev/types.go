@@ -70,17 +70,13 @@ type TierSpec struct {
 	Size int64 `json:"size"`
 }
 
-// tierTypeContext is the only tier dimension models.dev defines; the schema
-// defaults an absent type to it.
-const tierTypeContext = "context"
-
 // RatesFor selects the highest threshold exceeded by the prompt, or the base rates.
 // Prompt tokens include cache reads and writes, but not output tokens.
 func (c *Cost) RatesFor(promptTokens int64) Rates {
 	var best *CostTier
 	for i := range c.Tiers {
 		t := &c.Tiers[i]
-		if t.Tier.Type != "" && t.Tier.Type != tierTypeContext {
+		if t.Tier.Type != "" && t.Tier.Type != "context" {
 			continue
 		}
 		if promptTokens > t.Tier.Size && (best == nil || t.Tier.Size > best.Tier.Size) {
