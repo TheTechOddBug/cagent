@@ -1,4 +1,4 @@
-package api
+package client
 
 const maxOutputSize = 30000
 

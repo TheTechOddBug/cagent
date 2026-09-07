@@ -36,18 +36,18 @@ func WithExpander[E Expander](newExpander func(environment.Provider) E) Opt {
 // envRef matches ${env.NAME} and ${NAME} where NAME is a plain identifier.
 var envRef = regexp.MustCompile(`\$\{\s*(env\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\}`)
 
-// envExpander is the default Expander: it resolves ${env.NAME} from the
+// EnvExpander is the default Expander: it resolves ${env.NAME} from the
 // environment and ${name} from the bound values, and leaves any other
 // expression untouched so it stays visible rather than silently vanishing.
-type envExpander struct {
+type EnvExpander struct {
 	env environment.Provider
 }
 
 func newEnvExpander(env environment.Provider) Expander {
-	return envExpander{env: env}
+	return NewEnvExpander(env)
 }
 
-func (e envExpander) Expand(ctx context.Context, text string, values map[string]string) string {
+func (e EnvExpander) Expand(ctx context.Context, text string, values map[string]string) string {
 	if !strings.Contains(text, "${") {
 		return text
 	}
@@ -69,7 +69,7 @@ func (e envExpander) Expand(ctx context.Context, text string, values map[string]
 	})
 }
 
-func (e envExpander) ExpandCommands(ctx context.Context, cmds types.Commands) types.Commands {
+func (e EnvExpander) ExpandCommands(ctx context.Context, cmds types.Commands) types.Commands {
 	if cmds == nil {
 		return nil
 	}
@@ -79,6 +79,21 @@ func (e envExpander) ExpandCommands(ctx context.Context, cmds types.Commands) ty
 		cmd.Instruction = e.Expand(ctx, cmd.Instruction, nil)
 		cmd.URL = e.Expand(ctx, cmd.URL, nil)
 		expanded[k] = cmd
+	}
+	return expanded
+}
+
+// NewEnvExpander resolves ${env.NAME} and bound ${name} placeholders without
+// evaluating JavaScript. Unknown placeholders are left untouched.
+func NewEnvExpander(env environment.Provider) *EnvExpander {
+	return &EnvExpander{env: env}
+}
+
+// ExpandMap expands each value without modifying the input map.
+func (e EnvExpander) ExpandMap(ctx context.Context, values map[string]string) map[string]string {
+	expanded := make(map[string]string, len(values))
+	for key, value := range values {
+		expanded[key] = e.Expand(ctx, value, nil)
 	}
 	return expanded
 }

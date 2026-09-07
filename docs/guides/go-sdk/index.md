@@ -154,7 +154,7 @@ The RAG toolset (`type: rag`) is included in `NewDefaultToolsetRegistry()` (from
 
 The underlying tree-sitter code parser uses cgo, but build-tag guards in `pkg/rag/treesitter` mean importing the package is safe regardless of `CGO_ENABLED`: with `CGO_ENABLED=0` the parser stub compiles in and returns a runtime error on first use rather than failing at compile time.
 
-If you want to exclude the RAG toolset from your binary entirely — surfacing a load-time warning on the agent rather than a deferred runtime error from the `!cgo` stub — remove it from the registry before passing it to `teamloader.Load`:
+To disable the RAG toolset at runtime — surfacing a load-time warning rather than a deferred error from the `!cgo` stub — remove it from the registry before passing it to `teamloader.Load`. This does not remove its package dependencies; use a hand-picked registry without importing the full defaults for that:
 
 ```go
 import (
@@ -182,7 +182,7 @@ import (
     "github.com/docker/docker-agent/pkg/model/provider"
     "github.com/docker/docker-agent/pkg/model/provider/anthropic"
     "github.com/docker/docker-agent/pkg/teamloader"
-    "github.com/docker/docker-agent/pkg/tools/builtin/api"
+    "github.com/docker/docker-agent/pkg/tools/builtin/api/client"
     "github.com/docker/docker-agent/pkg/tools/builtin/think"
 )
 
@@ -191,7 +191,7 @@ team, err := teamloader.Load(ctx, ocisource.New("myorg/agent:v1"), runConfig,
         "anthropic": provider.Adapt(anthropic.NewClient),
     })),
     teamloader.WithToolsetRegistry(teamloader.NewToolsetRegistry(map[string]teamloader.ToolsetCreator{
-        "api":   api.Creator,
+        "api":   client.Creator(teamloader.NewEnvExpander),
         "think": teamloader.Creator(think.CreateToolSet),
     })),
     // Deny every optional feature; pass e.g. config.FeatureSkills to allow one.
@@ -213,6 +213,65 @@ team, err := teamloader.Load(ctx, ocisource.New("myorg/agent:v1"), runConfig,
 > `config.Resolve`, `config.ResolveSources`, `config.ResolveAlias` and `config.BuiltinAgentNames` are now in `pkg/config/sources`; `config.NewOCISource` is `ocisource.New` in `pkg/config/ocisource`; and `config.Load` no longer auto-detects HCL — wrap the source with `hcl.NewSource` (which `sources.Resolve` does for you). `teamloader.ToolsetRegistry` gained a `Has(toolsetType string) bool` method.
 >
 > If you call `teamloader.Load` without `loaderdefaults.Opts()`, JavaScript expansion, code mode, TOON, deferred tools and harness agents are now off until you enable them (see *Optional loader features* above). Code-built teams that use `harness:` agents must call `runtime.RegisterHarness(codingharness.Factory)`; `codingharness.Label` moved into the runtime.
+
+### Per-runtime feature configuration
+
+Prefer instance options over `runtime.RegisterHarness` and
+`runtime.RegisterCommandEvaluator`, which affect the entire process:
+
+```go
+rt, err := runtime.New(ctx, team,
+    runtime.WithProviderRegistry(providers),
+    runtime.WithHarnessFactory(codingharness.Factory),
+    runtime.WithCommandEvaluatorFactory(jscommands.Factory),
+)
+```
+
+Import `pkg/codingharness` or `pkg/runtime/jscommands` only when needed.
+Passing `nil` to either factory option explicitly disables that feature for
+this runtime, even if another caller registered a global default. Omitting the
+options retains the legacy global fallback, including registrations made after
+runtime construction. Factories are still invoked lazily, at execution time.
+Runtime decorators used with `ResolveCommand` should forward
+`CommandEvaluatorFactory() runtime.CommandEvaluatorFactory` to preserve this
+selection. The `runtime.Runtime` interface itself is unchanged.
+
+These options also work through `embeddedchat.Config.RuntimeOptions`. Loader
+policy remains separate: `teamloader.WithStrict(config.FeatureHarness)` permits
+harness declarations but does not install a driver. Likewise, supplying an
+implementation does not automatically authorize a feature in strict mode.
+
+### HTTP tools without JavaScript
+
+The `pkg/tools/builtin/api/client` package accepts an expander instead of
+importing JavaScript. Register a placeholder-only HTTP tool with:
+
+```go
+"api": client.Creator(teamloader.NewEnvExpander),
+```
+
+This supports `${env.NAME}` and bound `${argument}` placeholders and resolves
+credentials on each request. Unknown placeholders and JavaScript expressions
+remain unchanged. `api.Creator` and `api.New` retain the full JavaScript and
+upstream-header behavior for existing callers. The leaf package does **not**
+automatically expand `${headers.NAME}`; use `client.WithHeaderResolver` to supply
+that policy. Passing `upstream.ResolveHeaders` restores the legacy behavior but
+also imports JavaScript.
+
+A complete placeholder-only example lives in
+[examples/golibrary/leanapi](https://github.com/docker/docker-agent/tree/main/examples/golibrary/leanapi).
+The older `yamlstrict` example intentionally retains JavaScript-capable API and
+fetch tools.
+
+Selecting the leaf removes four external modules from the HTTP tool's import
+closure: Goja, regexp2, go-sourcemap, and pprof. Importing the full defaults and
+then deleting registry entries does **not** remove those package dependencies.
+
+Go package dependencies and module requirements are different: these changes
+reduce the packages compiled and their required source modules. Docker Agent
+still has one `go.mod`, so this does not promise an equally small
+`go list -m all` graph or a small `go mod download all`. Independently versioned
+optional modules would be a separate packaging change.
 
 ## Registering Custom Built-in Themes
 
