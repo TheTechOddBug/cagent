@@ -107,6 +107,13 @@ tasks:
     cmds:
       - go test ./...
 
+  test-wasm-providers:
+    desc: Test explicit provider registration in the WASM demo (requires Node)
+    cmds:
+      - GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/wasm
+      - GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" pkg/model/provider/factory_js_openai_vendor_test.go
+      - go test ./e2e -run '^TestWasmProviderDependencies$'
+
   test-binary:
     desc: Run tests on build binary
     deps: [deploy-local]
