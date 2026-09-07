@@ -180,6 +180,11 @@ type Usage struct {
 	ReasoningTokens   int64 `json:"reasoning_tokens,omitempty"`
 }
 
+// PromptTokens sums the disjoint fresh, cache-read, and cache-write input buckets.
+func (u *Usage) PromptTokens() int64 {
+	return u.InputTokens + u.CachedInputTokens + u.CacheWriteTokens
+}
+
 // Add accumulates other's token counts into u. A nil other is a no-op so
 // callers can pass a message's optional usage without checking.
 func (u *Usage) Add(other *Usage) {

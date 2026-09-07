@@ -563,9 +563,6 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		if err != nil {
 			slog.DebugContext(ctx, "Failed to get model definition", "error", err)
 		}
-		// A config-declared price table takes precedence over the
-		// catalogue and prices models the catalogue doesn't know.
-		m = applyConfigCost(m, modelID, model.BaseConfig().ModelConfig.Cost)
 		// We can only compact if we know the context limit.
 		// resolveContextLimit prefers provider_opts.context_size when set
 		// (some providers — notably Docker Model Runner — use it to size
@@ -838,6 +835,21 @@ func (r *LocalRuntime) runTurn(
 		return turnExit
 	}
 
+	if usedModel != nil {
+		if usedModel.ID() != modelID {
+			slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", modelID.String(), "used", usedModel.ID().String())
+			modelID = usedModel.ID()
+			m, err = r.modelsStore.GetModel(ctx, modelID)
+			if err != nil {
+				slog.DebugContext(ctx, "Failed to get fallback model definition", "model_id", modelID.String(), "error", err)
+				m = nil
+			}
+			events.Emit(AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage()))
+		}
+		// Fallbacks may share an ID but have different endpoint pricing overrides.
+		m = applyConfigCost(m, modelID, usedModel.BaseConfig().ModelConfig.Cost)
+	}
+
 	// A successful model call resets the overflow compaction counter.
 	ls.overflowCompactions = 0
 
@@ -863,10 +875,6 @@ func (r *LocalRuntime) runTurn(
 	// per-turn billing data for sidecar cost ledgers.
 	r.executeAfterLLMCallHooks(ctx, sess, a, modelID.String(), res.Content, res.Usage, msgCost)
 
-	if usedModel != nil && usedModel.ID() != model.ID() {
-		slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", model.ID().String(), "used", usedModel.ID().String())
-		events.Emit(AgentInfo(a.Name(), usedModel.ID().String(), a.Description(), a.WelcomeMessage()))
-	}
 	streamSpan.SetAttributes(
 		attribute.Int("tool.calls", len(res.Calls)),
 		attribute.Int("content.length", len(res.Content)),
@@ -1124,24 +1132,17 @@ func applyConfigCost(m *modelsdev.Model, id modelsdev.ID, cost *latest.CostConfi
 	return &out
 }
 
-// computeMessageCost returns the USD cost of a single model response,
-// or nil when the response cannot be priced. It is nil when there is
-// no usage to price (usage == nil) or the model has no pricing table
-// (m == nil — e.g. an unknown model ID or a custom endpoint without
-// cost config — or m.Cost == nil). A non-nil result of 0 therefore
-// means "priced, but this call was free", distinct from "unpriced"
-// (nil). This single arithmetic source feeds both the persisted
-// assistant message (dereferenced to 0 when nil) and the
-// after_llm_call hook payload (which keeps the nil/0 distinction), so
-// the two can never disagree.
+// computeMessageCost prices the whole call at the tier selected by its prompt size.
+// Nil means unpriced; a non-nil zero means free. Messages and hooks share this value.
 func computeMessageCost(usage *chat.Usage, m *modelsdev.Model) *float64 {
 	if usage == nil || m == nil || m.Cost == nil {
 		return nil
 	}
-	cost := (float64(usage.InputTokens)*m.Cost.Input +
-		float64(usage.OutputTokens)*m.Cost.Output +
-		float64(usage.CachedInputTokens)*m.Cost.CacheRead +
-		float64(usage.CacheWriteTokens)*m.Cost.CacheWrite) / 1e6
+	rates := m.Cost.RatesFor(usage.PromptTokens())
+	cost := (float64(usage.InputTokens)*rates.Input +
+		float64(usage.OutputTokens)*rates.Output +
+		float64(usage.CachedInputTokens)*rates.CacheRead +
+		float64(usage.CacheWriteTokens)*rates.CacheWrite) / 1e6
 	return &cost
 }
 

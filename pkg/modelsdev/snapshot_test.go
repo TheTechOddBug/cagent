@@ -58,6 +58,22 @@ func TestEmbeddedSnapshotIncludesClaudeOpus5(t *testing.T) {
 	assert.Equal(t, "claude-opus", m.Family, "claude-opus-5 must belong to the claude-opus family")
 }
 
+func TestEmbeddedSnapshotKeepsLongContextTiers(t *testing.T) {
+	t.Parallel()
+
+	db := embeddedSnapshot()
+	require.NotNil(t, db)
+	m, ok := db.Providers["openai"].Models["gpt-5.4"]
+	require.True(t, ok, "embedded snapshot must contain openai/gpt-5.4")
+	require.NotNil(t, m.Cost)
+	require.NotEmpty(t, m.Cost.Tiers, "openai/gpt-5.4 must carry its >272k price tier")
+
+	tier := m.Cost.Tiers[0]
+	assert.Equal(t, int64(272_000), tier.Tier.Size)
+	assert.Greater(t, tier.Input, m.Cost.Input, "the long-context tier must be pricier than the base band")
+	assert.Equal(t, tier.Rates, m.Cost.RatesFor(272_001))
+}
+
 // TestEmbeddedSnapshotParses ensures the snapshot baked into the binary is
 // valid JSON and carries a non-trivial catalog. A broken snapshot would
 // silently degrade every offline lookup, so we guard it at build time.
