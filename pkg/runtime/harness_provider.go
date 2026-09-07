@@ -18,6 +18,8 @@ var harnessFactory atomic.Pointer[harness.Factory]
 // RegisterHarness installs the factory used to run `harness:` agents:
 //
 //	runtime.RegisterHarness(codingharness.Factory)
+//
+// Prefer [WithHarnessFactory] to configure independent runtimes.
 func RegisterHarness(factory harness.Factory) {
 	harnessFactory.Store(&factory)
 }
@@ -26,9 +28,21 @@ func RegisterHarness(factory harness.Factory) {
 // driver was registered with RegisterHarness.
 var ErrHarnessNotRegistered = errors.New("harness agents need a driver: call runtime.RegisterHarness(codingharness.Factory)")
 
-func newHarnessProvider(cfg *latest.HarnessConfig) (harness.Provider, error) {
-	factory := harnessFactory.Load()
+// WithHarnessFactory selects the harness driver for this runtime only.
+// Passing nil disables harnesses, even when a global driver is registered.
+// Without this option, the runtime uses [RegisterHarness]'s global driver.
+func WithHarnessFactory(factory harness.Factory) Opt {
+	return func(r *LocalRuntime) {
+		r.harnessFactory = &factory
+	}
+}
+
+func (r *LocalRuntime) newHarnessProvider(cfg *latest.HarnessConfig) (harness.Provider, error) {
+	factory := r.harnessFactory
 	if factory == nil {
+		factory = harnessFactory.Load()
+	}
+	if factory == nil || *factory == nil {
 		return nil, ErrHarnessNotRegistered
 	}
 	return (*factory)(cfg)
