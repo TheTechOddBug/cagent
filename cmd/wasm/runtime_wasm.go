@@ -77,7 +77,7 @@ func buildRuntime(ctx context.Context, cfg *latest.Config, env environment.Provi
 			return nil, fmt.Errorf("agent %q: %w", agentCfg.Name, err)
 		}
 
-		prov, err := provider.NewWithModels(ctx, &modelCfg, cfg.Models, env, options.WithProviders(cfg.Providers))
+		prov, err := demoProviders.NewWithModels(ctx, &modelCfg, cfg.Models, env, options.WithProviders(cfg.Providers))
 		if err != nil {
 			return nil, fmt.Errorf("agent %q: building model provider: %w", agentCfg.Name, err)
 		}
@@ -90,7 +90,7 @@ func buildRuntime(ctx context.Context, cfg *latest.Config, env environment.Provi
 				slog.WarnContext(ctx, "Skipping fallback model", "agent", agentCfg.Name, "model", fbModel, "error", err)
 				continue
 			}
-			fbProv, err := provider.NewWithModels(ctx, &fbCfg, cfg.Models, env, options.WithProviders(cfg.Providers))
+			fbProv, err := demoProviders.NewWithModels(ctx, &fbCfg, cfg.Models, env, options.WithProviders(cfg.Providers))
 			if err != nil {
 				slog.WarnContext(ctx, "Skipping fallback model", "agent", agentCfg.Name, "model", fbModel, "error", err)
 				continue

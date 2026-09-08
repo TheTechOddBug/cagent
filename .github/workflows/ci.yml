@@ -72,6 +72,9 @@ jobs:
           task test
           task test-binary
 
+      - name: Test WASM provider registration
+        run: task test-wasm-providers
+
   # Native Windows tests. Plan storage relies on OS-specific file locking and
   # path semantics, so the full Go test suite runs natively on Windows in a
   # single blocking `task test` step, mirroring the Linux job.

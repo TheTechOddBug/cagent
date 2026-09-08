@@ -160,6 +160,33 @@ func TestDependencies(t *testing.T) {
 	})
 }
 
+// Check the target-specific closure without cross-compiling the native test
+// dependencies, which intentionally exercise providers unavailable in WASM.
+func TestWasmProviderDependencies(t *testing.T) {
+	t.Parallel()
+	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps",
+		"./pkg/model/provider", "./pkg/teamloader", "./pkg/runtime",
+		"./pkg/model/provider/anthropic")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	forbidden := []string{
+		"github.com/docker/docker-agent/pkg/model/provider/openai",
+		"github.com/docker/docker-agent/pkg/model/provider/gemini",
+		"github.com/docker/docker-agent/pkg/model/provider/providers",
+		"github.com/openai/openai-go",
+		"google.golang.org/genai",
+		"google.golang.org/grpc",
+		"cloud.google.com/go",
+	}
+	for dep := range strings.FieldsSeq(string(out)) {
+		for _, prefix := range forbidden {
+			assert.False(t, dep == prefix || strings.HasPrefix(dep, prefix+"/"), "unrequested provider dependency: %s", dep)
+		}
+	}
+}
+
 // listTransitiveDeps returns the full (non-test) dependency closure of the
 // given packages, as reported by `go list -deps`.
 func listTransitiveDeps(t *testing.T, pkgs ...string) map[string]bool {
