@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/docker/docker-agent/pkg/configsize"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
@@ -156,7 +158,7 @@ func (a urlSource) storeEncryptedConfig(ctx context.Context, enc, encPath string
 	if a.encryptedConfig != nil {
 		a.encryptedConfig.Store(&enc)
 	}
-	// Ensure the cache directory exists: captureEncryptedConfig may run before
+	// Ensure the cache directory exists: captureEncryptedConfigFromEnvelope may run before
 	// the YAML-caching block that creates it (e.g. this fetch returns early).
 	if err := os.MkdirAll(filepath.Dir(encPath), 0o700); err != nil {
 		slog.DebugContext(ctx, "Failed to create cache dir for encrypted agent config", "url", a.url, "error", err)
@@ -203,25 +205,75 @@ func (a urlSource) adoptCachedEncryptedConfig(ctx context.Context, encPath, want
 	return true
 }
 
-// captureEncryptedConfig records the X-Cagent-Encrypted-Config response header
-// when the fetch targets a trusted Docker URL. The trust check mirrors the
+// captureEncryptedConfigFromBody, when body is agent YAML from a trusted
+// Docker URL that carries a top-level `encrypted_agent_config` field, records
+// the encrypted config (in memory and on encPath) and returns the body with
+// that field stripped, so the config the rest of the pipeline parses never sees
+// it. For any other body (no such field, non-YAML, or an untrusted host) it
+// returns body unchanged and captures nothing. The trust check mirrors the
 // Docker JWT injection so the value is never captured from an untrusted host.
-// The full value only appears on a 200; on a 304 the server sends just the
-// digest, so the 304 path recovers the value from disk instead (see
-// [urlSource.adoptCachedEncryptedConfig]).
-func (a urlSource) captureEncryptedConfig(ctx context.Context, resp *http.Response, encPath string) {
-	if a.encryptedConfig == nil || resp == nil {
-		return
-	}
+func (a urlSource) captureEncryptedConfigFromBody(ctx context.Context, body, encPath string) string {
 	if !isTrustedDockerURL(a.url) {
-		return
+		return body
 	}
-	enc := resp.Header.Get(httpclient.EncryptedConfigHeader)
+
+	var doc yaml.MapSlice
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		// Not a YAML mapping (or malformed); leave it for the strict parser to
+		// report a precise error later.
+		return body
+	}
+
+	enc := ""
+	stripped := make(yaml.MapSlice, 0, len(doc))
+	for _, item := range doc {
+		if key, ok := item.Key.(string); ok && key == httpclient.EncryptedConfigBodyField {
+			if s, ok := item.Value.(string); ok {
+				enc = s
+			}
+			continue
+		}
+		stripped = append(stripped, item)
+	}
 	if enc == "" {
-		return
+		return body
 	}
-	a.storeEncryptedConfig(ctx, enc, encPath)
-	slog.DebugContext(ctx, "Captured encrypted agent config from Docker source response header", "url", a.url)
+
+	if a.encryptedConfig != nil {
+		a.storeEncryptedConfig(ctx, enc, encPath)
+	}
+	slog.DebugContext(ctx, "Captured encrypted agent config from Docker source YAML field", "url", a.url)
+
+	out, err := yaml.Marshal(stripped)
+	if err != nil {
+		// Should not happen; fall back to the original body so the agent still
+		// loads (the field will surface as an unknown-field parse error, which
+		// is a safe, visible failure rather than silent corruption).
+		slog.DebugContext(ctx, "Failed to re-encode agent YAML after stripping encrypted config", "url", a.url, "error", err)
+		return body
+	}
+	return string(out)
+}
+
+// sendEncryptedQueryParam is the query parameter docker-agent adds to a trusted
+// Docker config-fetch URL to opt in to receiving the encrypted agent config
+// embedded in the response body. It must stay in sync with the Docker gateway
+// (gordon proxy pkg/agents/handler.go), which only injects the config when it
+// is set to "true".
+const sendEncryptedQueryParam = "sendEncrypted"
+
+// urlWithSendEncrypted returns rawURL with sendEncrypted=true added to its
+// query string, preserving any existing parameters. An existing sendEncrypted
+// value is overwritten.
+func urlWithSendEncrypted(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set(sendEncryptedQueryParam, "true")
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // encryptedConfigDigest returns the "sha256:<hex>" fingerprint of enc, matching
@@ -280,7 +332,20 @@ func (a urlSource) read(ctx context.Context, cacheDir, cachePath, etagPath, encP
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.url, http.NoBody)
+	reqURL := a.url
+	if isTrustedDockerURL(a.url) {
+		// Opt in to receiving the encrypted agent config embedded in the
+		// response body. Only trusted Docker gateways honor this, and only a
+		// client that sets it (like us) knows to strip the injected field
+		// before parsing — so the flag both requests the value and signals we
+		// can handle it. Best-effort: a malformed URL falls back to the
+		// original and simply won't receive the config.
+		if withFlag, err := urlWithSendEncrypted(a.url); err == nil {
+			reqURL = withFlag
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -330,6 +395,10 @@ func (a urlSource) read(ctx context.Context, cacheDir, cachePath, etagPath, encP
 		return nil, fmt.Errorf("%w: fetching %s: %w", ErrSourceFetchFailed, a.url, err)
 	}
 	defer resp.Body.Close()
+
+	// The full encrypted agent config now rides in the 200 response body
+	// envelope (handled after the body is read below); a 304 carries only the
+	// digest, handled next.
 
 	// 304 Not Modified - return cached content
 	if resp.StatusCode == http.StatusNotModified {
@@ -391,8 +460,11 @@ func (a urlSource) read(ctx context.Context, cacheDir, cachePath, etagPath, encP
 	}
 
 	// Cache the response and any associated encrypted config only after the
-	// complete body passes the size limit.
-	a.captureEncryptedConfig(ctx, resp, encPath)
+	// complete body passes the size limit. When a trusted Docker source embeds
+	// the encrypted config as a top-level YAML field, capture it and strip the
+	// field so the cached content is the plain agent YAML (raw-YAML sources and
+	// untrusted hosts are returned unchanged).
+	data = []byte(a.captureEncryptedConfigFromBody(ctx, string(data), encPath))
 
 	// Cache the response
 	if err := os.MkdirAll(cacheDir, 0o700); err == nil {
