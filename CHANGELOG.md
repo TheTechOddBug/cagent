@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.136.0] - 2026-09-08
+
+This release adds support for carrying encrypted agent config in the request body instead of headers, addressing potential header-size limit issues.
+
+## What's New
+- Adds support for carrying encrypted agent config in the request body (as `encrypted_agent_config` field) and config-load envelope, replacing the previous `X-Cagent-Encrypted-Config` header approach to avoid header-size limit constraints
+
+## Technical Changes
+- Updates `docker-agent-action` reference to v2.0.6 in the PR review workflow
+### Pull Requests
+
+- [#4196](https://github.com/docker/docker-agent/pull/4196) - docs: update CHANGELOG.md for v1.135.0
+- [#4200](https://github.com/docker/docker-agent/pull/4200) - chore: update docker-agent-action to v2.0.6
+- [#4201](https://github.com/docker/docker-agent/pull/4201) - feat(gateway): carry encrypted agent config in request body and config-load envelope
+
+
 ## [v1.135.0] - 2026-09-08
 
 This release delivers a broad set of stability and security hardening fixes across session management, pricing, and background job handling, plus a new `/copy` command in the lean TUI.
@@ -6005,3 +6021,5 @@ This release improves the terminal user interface with better error handling and
 [v1.134.0]: https://github.com/docker/docker-agent/releases/tag/v1.134.0
 
 [v1.135.0]: https://github.com/docker/docker-agent/releases/tag/v1.135.0
+
+[v1.136.0]: https://github.com/docker/docker-agent/releases/tag/v1.136.0
