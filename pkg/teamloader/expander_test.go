@@ -27,3 +27,19 @@ func TestEnvExpander(t *testing.T) {
 	assert.Equal(t, "root", cmds["c"].Agent)
 	assert.Nil(t, exp.ExpandCommands(t.Context(), nil))
 }
+
+func TestEnvExpanderMap(t *testing.T) {
+	t.Parallel()
+	exp := NewEnvExpander(environment.NewMapEnvProvider(map[string]string{"TOKEN": "secret"}))
+	input := map[string]string{
+		"Authorization": "Bearer ${env.TOKEN}",
+		"Unknown":       "${env.MISSING}",
+		"JavaScript":    "${1 + 1}",
+	}
+	got := exp.ExpandMap(t.Context(), input)
+	assert.Equal(t, "Bearer secret", got["Authorization"])
+	assert.Equal(t, "Bearer ${env.TOKEN}", input["Authorization"])
+	assert.Equal(t, "${env.MISSING}", got["Unknown"])
+	assert.Equal(t, "${1 + 1}", got["JavaScript"])
+	assert.Empty(t, exp.ExpandMap(t.Context(), nil))
+}

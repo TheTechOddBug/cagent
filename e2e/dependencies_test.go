@@ -95,6 +95,8 @@ func TestDependencies(t *testing.T) {
 			"./pkg/config",
 			"./pkg/teamloader",
 			"./pkg/embeddedchat",
+			"./pkg/tools/builtin/api/client",
+			"./examples/golibrary/leanapi",
 			"./pkg/tools/builtin/think",
 			"./pkg/model/provider/anthropic",
 		)

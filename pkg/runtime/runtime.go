@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/harness"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/httpclient"
@@ -230,6 +231,9 @@ type ModelStore interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
+	harnessFactory   *harness.Factory
+	commandEvaluator *CommandEvaluatorFactory
+
 	ctx                       func() context.Context
 	toolMap                   map[string]ToolHandlerFunc
 	toolDeferrals             tools.DeferralTracker
