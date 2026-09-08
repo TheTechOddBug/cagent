@@ -10,7 +10,7 @@ import (
 
 // sseFilterTransport wraps a base RoundTripper and, when the response is a
 // `text/event-stream`, replaces the body with one that strips SSE events
-// containing no `data:` lines.
+// containing no `data:` lines or named `keepalive`.
 //
 // Why this exists: some upstreams (notably OpenRouter) inject comment-only
 // keep-alive frames into their streams:
@@ -28,8 +28,10 @@ import (
 //
 // The filter normalises the byte stream so events with no `data:` lines
 // (comment-only events, or events bearing only `event:` / `id:` headers)
-// never reach the SDK. Well-formed events pass through verbatim, and the
-// filter is a no-op on non-SSE responses.
+// never reach the SDK. Named `keepalive` events are also dropped, even when
+// they carry `data: {}`, because Gemini's SDK rejects their `event:` header.
+// Other data-bearing events pass through, and the filter is a no-op on
+// non-SSE responses.
 type sseFilterTransport struct {
 	base http.RoundTripper
 }
@@ -49,15 +51,16 @@ func (t *sseFilterTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // sseFilterReader buffers the lines of a single SSE event and only emits
 // them once it has seen the trailing blank line AND the event contained at
-// least one `data:` line. A half-built event still pending at EOF is
-// dropped silently — without the terminating blank line a downstream parser
-// would not have dispatched it anyway.
+// least one `data:` line and was not a keepalive. A half-built event still
+// pending at EOF is dropped silently — without the terminating blank line a
+// downstream parser would not have dispatched it anyway.
 type sseFilterReader struct {
-	src     io.ReadCloser
-	scn     *bufio.Scanner
-	out     bytes.Buffer // bytes ready to hand back to the caller
-	pending bytes.Buffer // accumulated lines for the current event
-	hasData bool         // saw at least one `data:` line in `pending`
+	src       io.ReadCloser
+	scn       *bufio.Scanner
+	out       bytes.Buffer // bytes ready to hand back to the caller
+	pending   bytes.Buffer // accumulated lines for the current event
+	hasData   bool         // saw at least one `data:` line in `pending`
+	keepalive bool         // the last `event:` field names a keepalive
 }
 
 func newSSEFilterReader(src io.ReadCloser) *sseFilterReader {
@@ -85,13 +88,14 @@ func (r *sseFilterReader) Read(p []byte) (int, error) {
 func (r *sseFilterReader) consumeLine(line []byte) {
 	switch {
 	case len(line) == 0:
-		// Event boundary: emit the buffered event iff it had data.
-		if r.hasData {
+		// Event boundary: emit data-bearing events except keepalives.
+		if r.hasData && !r.keepalive {
 			r.out.Write(r.pending.Bytes())
 			r.out.WriteByte('\n')
 		}
 		r.pending.Reset()
 		r.hasData = false
+		r.keepalive = false
 	case line[0] == ':':
 		// SSE comment — drop entirely.
 	default:
@@ -99,6 +103,9 @@ func (r *sseFilterReader) consumeLine(line []byte) {
 		r.pending.WriteByte('\n')
 		if bytes.HasPrefix(line, []byte("data:")) {
 			r.hasData = true
+		}
+		if field, value, _ := bytes.Cut(line, []byte(":")); bytes.Equal(field, []byte("event")) {
+			r.keepalive = bytes.Equal(bytes.TrimPrefix(value, []byte(" ")), []byte("keepalive"))
 		}
 	}
 }
