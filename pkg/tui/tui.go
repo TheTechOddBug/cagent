@@ -114,15 +114,11 @@ type appModel struct {
 	planRefreshQueued         bool
 	planRefreshQueuedWarnings bool
 
-	// planBrowserLoadInFlight and planBrowserLoadSessionID guard the /plans
-	// browser-opening read: a repeated request for the same session while its
-	// List is in flight is dropped, so duplicate browsers can never stack and
-	// no redundant read starts. A request for a different session (the user
-	// switched tabs) may launch; the superseded result is dropped as stale by
-	// its session stamp and only the matching result clears the guard. Both
-	// fields are touched exclusively from Update.
-	planBrowserLoadInFlight  bool
-	planBrowserLoadSessionID string
+	// planBrowserLoadInFlight guards the /plans browser-opening read: a
+	// repeated request while its List is in flight is dropped, so duplicate
+	// browsers can never stack and no redundant read starts. Touched
+	// exclusively from Update.
+	planBrowserLoadInFlight bool
 
 	// planDetailLoadsInFlight tracks the refs of running detail-opening
 	// reads, so repeated open requests for the same plan cannot pile up
@@ -1198,9 +1194,6 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case *runtime.SessionTitleEvent:
 		m.sessionState.SetSessionTitle(msg.Title)
 		return m.forwardChat(msg)
-
-	case *runtime.SessionPlanUpdatedEvent:
-		return m.handleSessionPlanUpdatedEvent(msg)
 
 	case *runtime.PlanChangedEvent:
 		return m.handlePlanChangedEvent(msg)
