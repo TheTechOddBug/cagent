@@ -46,3 +46,20 @@ func (s source) Read(ctx context.Context) ([]byte, error) {
 	}
 	return converted, nil
 }
+
+// encryptedConfigSource mirrors config.EncryptedConfigSource so this package
+// can forward the capability without importing pkg/config.
+type encryptedConfigSource interface {
+	EncryptedConfig() string
+}
+
+// EncryptedConfig forwards the inner source's captured encrypted agent config
+// when it implements the capability, so the HCL decorator stays transparent to
+// callers that type-assert for it (e.g. teamloader wiring the value to the
+// Docker models gateway). Returns "" when the inner source does not support it.
+func (s source) EncryptedConfig() string {
+	if ecs, ok := s.Source.(encryptedConfigSource); ok {
+		return ecs.EncryptedConfig()
+	}
+	return ""
+}
