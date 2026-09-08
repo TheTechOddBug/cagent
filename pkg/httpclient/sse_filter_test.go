@@ -36,6 +36,60 @@ func TestSSEFilter_FiltersStream(t *testing.T) {
 			want: "data: {\"id\":\"1\"}\n\n",
 		},
 		{
+			name: "drops keepalive events with data",
+			in:   "event: keepalive\ndata: {}\n\ndata: ok\n\n",
+			want: "data: ok\n\n",
+		},
+		{
+			name: "drops interleaved and trailing keepalives",
+			in: "data: first\n\n" +
+				"event: keepalive\ndata: {}\n\n" +
+				"event: keepalive\ndata: {}\n\n" +
+				"data: last\n\n" +
+				"event: keepalive\ndata: {}\n\n",
+			want: "data: first\n\ndata: last\n\n",
+		},
+		{
+			name: "drops keepalive with data before event header",
+			in:   "data: {}\nevent: keepalive\n\ndata: ok\n\n",
+			want: "data: ok\n\n",
+		},
+		{
+			name: "drops keepalive without optional space and with CRLF",
+			in:   "event:keepalive\r\ndata:{}\r\n\r\ndata: ok\r\n\r\n",
+			want: "data: ok\n\n",
+		},
+		{
+			name: "only keepalives",
+			in:   "event: keepalive\ndata: {}\n\nevent: keepalive\ndata: {}\n\n",
+			want: "",
+		},
+		{
+			name: "uses last event header",
+			in:   "event: chunk\nevent: keepalive\ndata: {}\n\n",
+			want: "",
+		},
+		{
+			name: "later event header overrides keepalive",
+			in:   "event: keepalive\nevent: chunk\ndata: {}\n\n",
+			want: "event: keepalive\nevent: chunk\ndata: {}\n\n",
+		},
+		{
+			name: "empty event header overrides keepalive",
+			in:   "event: keepalive\nevent\ndata: {}\n\n",
+			want: "event: keepalive\nevent\ndata: {}\n\n",
+		},
+		{
+			name: "preserves unnamed empty JSON payload",
+			in:   "data: {}\n\n",
+			want: "data: {}\n\n",
+		},
+		{
+			name: "preserves other named events and errors",
+			in:   "event: keepalive-extra\ndata: {}\n\nevent: error\ndata: {\"error\":\"failed\"}\n\n",
+			want: "event: keepalive-extra\ndata: {}\n\nevent: error\ndata: {\"error\":\"failed\"}\n\n",
+		},
+		{
 			// Guard against the filter breaking ordinary streams that
 			// don't contain comments.
 			name: "passes through well-formed events",
