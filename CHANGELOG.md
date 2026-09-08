@@ -3,6 +3,54 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.135.0] - 2026-09-08
+
+This release delivers a broad set of stability and security hardening fixes across session management, pricing, and background job handling, plus a new `/copy` command in the lean TUI.
+
+## What's New
+- Adds a `/copy` command to the lean TUI that copies the last assistant response to the clipboard via OSC 52 and the native clipboard API, with feedback on success or when no response exists
+- Adds per-runtime harness factory configuration via `WithHarnessFactory`
+- Adds per-instance command evaluator configuration for the runtime
+
+## Bug Fixes
+- Fixes delayed title events leaking across session streams
+- Fixes blocked session event sends not being cancelled
+- Fixes remote MCP connections to protect against SSRF
+- Fixes live session permission updates to be properly synchronized
+- Fixes ACP session turns to be serialized correctly
+- Fixes app turns being incorrectly shared across sessions instead of bound to their own session
+- Fixes OCI cache references to be scoped by registry
+- Fixes message updates to be scoped to their own session
+- Fixes session model switches to be serialized
+- Fixes background agent admission to be atomic
+- Fixes background jobs to terminate reliably
+- Fixes scheduled recalls to retry on failure
+- Fixes task description file reads to be confined
+- Fixes task store updates to be transactional
+- Fixes unreadable task stores being overwritten instead of preserved
+- Fixes stale Unix sockets to be safely reclaimed
+- Fixes remote agent configuration size to be limited
+- Fixes long-context model pricing tiers not being accounted for (e.g. GPT-5.4 above 272k tokens, Gemini 2.5 Pro above 200k tokens were previously billed at the base flat rate)
+- Fixes fallback model requests being billed against the primary model's rates instead of the model that actually handled the call
+- Fixes catalog refresh to be limited to long-context pricing tiers
+- Fixes config cost not being applied after fallback model resolution
+- Fixes WASM provider registration to be explicit, removing implicit inclusion of all browser-compatible SDKs
+
+## Technical Changes
+- Extracts a JavaScript-free HTTP tool client into a new `pkg/tools/builtin/api/client` leaf package, removing `goja`, `regexp2/v2`, `go-sourcemap`, and `google/pprof` from the dependency closure of non-JS embedders
+- Inlines the single-use context tier constant
+### Pull Requests
+
+- [#4185](https://github.com/docker/docker-agent/pull/4185) - fix: harden concurrent and external resource handling
+- [#4186](https://github.com/docker/docker-agent/pull/4186) - fix(http): bound the SSRF pre-check DNS lookup in desktopAwareTransport
+- [#4187](https://github.com/docker/docker-agent/pull/4187) - docs: update CHANGELOG.md for v1.134.0
+- [#4188](https://github.com/docker/docker-agent/pull/4188) - feat: add copy command to lean TUI
+- [#4189](https://github.com/docker/docker-agent/pull/4189) - fix: account for long-context tiers and fallback model pricing
+- [#4192](https://github.com/docker/docker-agent/pull/4192) - fix: make WASM provider registration explicit
+- [#4193](https://github.com/docker/docker-agent/pull/4193) - refactor(api): extract JavaScript-free HTTP client leaf and per-runtime factory options
+- [#4194](https://github.com/docker/docker-agent/pull/4194) - docs: auto-update for merged PRs (2026-09-08)
+
+
 ## [v1.134.0] - 2026-09-07
 
 This release adds machine-readable output to debug commands, improves RAG indexing reliability, fixes config handling for removed fields, and includes a large batch of documentation corrections.
@@ -5955,3 +6003,5 @@ This release improves the terminal user interface with better error handling and
 [v1.133.0]: https://github.com/docker/docker-agent/releases/tag/v1.133.0
 
 [v1.134.0]: https://github.com/docker/docker-agent/releases/tag/v1.134.0
+
+[v1.135.0]: https://github.com/docker/docker-agent/releases/tag/v1.135.0
