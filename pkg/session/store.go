@@ -16,7 +16,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/concurrent"
-	"github.com/docker/docker-agent/pkg/sqliteutil"
 )
 
 var (
@@ -1137,10 +1136,23 @@ func (s *SQLiteSessionStore) SetSessionStarred(ctx context.Context, id string, s
 	return nil
 }
 
+// closeDrainTimeout bounds how long Close waits for in-use connections.
+const closeDrainTimeout = 5 * time.Second
+
 // Close closes the database connection, waiting for in-flight statements to
-// release it so the file can be removed immediately afterwards.
+// release it so the file can be removed immediately afterwards. sql.DB.Close
+// only closes idle connections; a background persistence write still holding
+// one keeps the file open on Windows until it returns.
+//
+// Mirrors sqliteutil.CloseDB; duplicated so pkg/session stays free of the
+// SQLite driver (see pkg/session/sqlitestore).
 func (s *SQLiteSessionStore) Close() error {
-	return sqliteutil.CloseDB(s.db)
+	err := s.db.Close()
+	deadline := time.Now().Add(closeDrainTimeout)
+	for s.db.Stats().OpenConnections > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	return err
 }
 
 // AddMessage adds a message to a session at the next position.
