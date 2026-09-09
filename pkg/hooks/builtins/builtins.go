@@ -23,7 +23,8 @@
 //     session_end) — shadow-git snapshots. Installed via
 //     [RegisterSnapshot] (separate entry point) so the embedder receives
 //     a [SnapshotController] to drive /undo, /snapshots, /reset.
-//   - redact_secrets        (pre_tool_use,
+//   - redact_secrets        (tool_input_transform
+//     or pre_tool_use,
 //     before_llm_call,
 //     tool_response_transform) — scrub secrets
 //     from tool args, outgoing chat content, and
@@ -134,8 +135,8 @@ type AgentDefaults struct {
 	// add_prompt_files.go.
 	AddPromptFilesDepth int
 	// RedactSecrets auto-injects the redact_secrets builtin under
-	// pre_tool_use, before_llm_call, and tool_response_transform — the
-	// three legs of the feature. Equivalent to writing those three
+	// tool_input_transform, before_llm_call, and tool_response_transform
+	// — the three legs of the feature. Equivalent to writing those three
 	// hook entries by hand; the dedup in [hooks.Executor.hooksFor]
 	// makes the auto-injection idempotent against an explicit YAML
 	// entry that already names the same builtin.
@@ -188,8 +189,10 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 		// inject explicit entries here so the resulting effective
 		// config is self-describing (a user inspecting it sees that
 		// args, messages, and tool output are all covered, without
-		// having to read the dispatch table).
-		cfg.PreToolUse = append(cfg.PreToolUse, hooks.MatcherConfig{
+		// having to read the dispatch table). Arguments are scrubbed on
+		// tool_input_transform so the approval pipeline never sees the
+		// raw secret.
+		cfg.ToolInputTransform = append(cfg.ToolInputTransform, hooks.MatcherConfig{
 			Matcher: "*",
 			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
 		})

@@ -107,6 +107,8 @@ func compileEvents(c *Config) map[EventType][]matcher {
 		EventBeforeCompaction:           flat(c.BeforeCompaction),
 		EventAfterCompaction:            flat(c.AfterCompaction),
 		EventToolResponseTransform:      compileMatchers(c.ToolResponseTransform),
+		EventToolInputTransform:         compileMatchers(c.ToolInputTransform),
+		EventToolGuard:                  compileMatchers(c.ToolGuard),
 		EventWorktreeCreate:             flat(c.WorktreeCreate),
 	}
 }
@@ -213,12 +215,19 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("failed to serialize hook input: %w", err)
+		err = fmt.Errorf("failed to serialize hook input: %w", err)
+		if isPreApprovalEvent(event) {
+			// The runtime adapter maps a Dispatch error to "no opinion";
+			// pre-approval events must not fall open on a payload bug.
+			slog.WarnContext(ctx, "Hook input serialization failed; blocking event", "event", event, "error", err)
+			return &Result{ExitCode: -1, Message: err.Error()}, nil
+		}
+		return nil, err
 	}
 
 	var final *Result
 	switch event {
-	case EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform:
+	case EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform, EventToolInputTransform:
 		final = e.runPipeline(ctx, event, hooks, *input, inputJSON)
 	default:
 		results := concurrent.MapSlice(hooks, func(hook Hook) hookResult {
@@ -395,13 +404,43 @@ func parseStdoutJSON(stdout string) *Output {
 	return &parsed
 }
 
-// failClosed reports whether a hook failure on event must deny the
-// event. PreToolUse (both lanes) is a hard security boundary: a
-// crashed safety hook must not silently allow the call through.
-// Every other event surfaces failures as warnings unless the hook
-// opts into ErrorPolicyBlock.
-func failClosed(event EventType) bool {
+// isPreToolUseLane reports whether event is one of the two pre_tool_use
+// dispatch lanes, which share verdict semantics.
+func isPreToolUseLane(event EventType) bool {
 	return event == EventPreToolUse || event == EventPreToolUsePreYolo
+}
+
+// isPreApprovalEvent reports whether event always runs before the
+// deterministic approval pipeline. A dispatch that cannot even run its
+// hooks must block rather than be treated as "no opinion".
+func isPreApprovalEvent(event EventType) bool {
+	return event == EventToolInputTransform || event == EventToolGuard || event == EventPreToolUsePreYolo
+}
+
+// carriesDecision reports whether event's PermissionDecision verdicts
+// aggregate into [Result.Decision].
+func carriesDecision(event EventType) bool {
+	return isPreToolUseLane(event) || event == EventToolGuard
+}
+
+// rewritesToolInput reports whether event honours UpdatedInput.
+func rewritesToolInput(event EventType) bool {
+	return event == EventPreToolUse || event == EventToolInputTransform
+}
+
+// collectsMetadata reports whether event merges hook Metadata into
+// [Result.Metadata] for the confirmation prompt.
+func collectsMetadata(event EventType) bool {
+	return event == EventPermissionRequest || event == EventPreToolUsePreYolo || event == EventToolGuard
+}
+
+// failClosed reports whether a hook failure on event must deny the
+// event. PreToolUse (both lanes) and tool_guard are hard security
+// boundaries: a crashed safety hook must not silently allow the call
+// through. Every other event surfaces failures as warnings unless the
+// hook opts into ErrorPolicyBlock.
+func failClosed(event EventType) bool {
+	return isPreToolUseLane(event) || event == EventToolGuard
 }
 
 // stdoutAsContext reports whether plain stdout (non-JSON, exit 0)
@@ -443,7 +482,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 				final.Allowed = false
 				final.ExitCode = -1
 				final.Stderr = r.Stderr
-				messages = append(messages, fmt.Sprintf("PreToolUse hook failed to execute: %v", r.err))
+				messages = append(messages, hookFailureMessage(event, r.err))
 			} else if policy != ErrorPolicyIgnore {
 				slog.Warn("Hook execution error", "hook", r.hook.DisplayName(), "error", r.err)
 			}
@@ -488,13 +527,13 @@ func aggregate(results []hookResult, event EventType) *Result {
 			sysMsgs = append(sysMsgs, out.SystemMessage)
 		}
 		if hso := out.HookSpecificOutput; hso != nil {
-			if (event == EventPreToolUse || event == EventPreToolUsePreYolo) && hso.PermissionDecision != "" {
+			if carriesDecision(event) && hso.PermissionDecision != "" {
 				final.Decision, final.DecisionReason = strongerDecision(
 					final.Decision, final.DecisionReason,
 					hso.PermissionDecision, hso.PermissionDecisionReason,
 				)
 			}
-			if event == EventPreToolUse || event == EventPreToolUsePreYolo || event == EventPermissionRequest {
+			if carriesDecision(event) || event == EventPermissionRequest {
 				switch hso.PermissionDecision {
 				case DecisionDeny:
 					final.Allowed = false
@@ -510,7 +549,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 					}
 				}
 			}
-			if event == EventPreToolUse && hso.UpdatedInput != nil {
+			if rewritesToolInput(event) && hso.UpdatedInput != nil {
 				if final.ModifiedInput == nil {
 					final.ModifiedInput = make(map[string]any)
 				}
@@ -535,7 +574,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 			if event == EventToolResponseTransform && hso.UpdatedToolResponse != nil {
 				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
-			if (event == EventPermissionRequest || event == EventPreToolUsePreYolo) && len(hso.Metadata) > 0 {
+			if collectsMetadata(event) && len(hso.Metadata) > 0 {
 				// Metadata from every matching hook is merged so multiple
 				// hooks can each contribute keys. On a key clash the last
 				// hook in config order wins (results is iterated in
@@ -556,6 +595,15 @@ func aggregate(results []hookResult, event EventType) *Result {
 	final.AdditionalContext = strings.Join(contexts, "\n")
 	final.SystemMessage = strings.Join(sysMsgs, "\n")
 	return final
+}
+
+// hookFailureMessage keeps the historical wording for pre_tool_use
+// lanes and names the event otherwise.
+func hookFailureMessage(event EventType, err error) string {
+	if isPreToolUseLane(event) {
+		return fmt.Sprintf("PreToolUse hook failed to execute: %v", err)
+	}
+	return fmt.Sprintf("%s hook failed to execute: %v", event, err)
 }
 
 // decisionWeight ranks PermissionDecision verdicts so [strongerDecision]

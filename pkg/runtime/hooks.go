@@ -483,6 +483,8 @@ const (
 	ApprovalSourceTeamPermissionsDeny     = "team_permissions_deny"
 	ApprovalSourcePreToolUseHookAllow     = "pre_tool_use_hook_allow"
 	ApprovalSourcePreToolUseHookDeny      = "pre_tool_use_hook_deny"
+	ApprovalSourceToolInputTransformDeny  = toolexec.ApprovalSourceToolInputTransformDeny
+	ApprovalSourceToolGuardDeny           = toolexec.ApprovalSourceToolGuardDeny
 	ApprovalSourceReadOnlyHint            = "readonly_hint"
 	ApprovalSourceModeBalanced            = "mode_balanced"
 	ApprovalSourceModeRestricted          = "mode_restricted"

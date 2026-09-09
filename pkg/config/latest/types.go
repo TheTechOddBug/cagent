@@ -729,14 +729,15 @@ type AgentConfig struct {
 	// session. Takes precedence over the config-wide RuntimeDefaults.Safety.
 	Safety SafetyMode `json:"safety,omitempty" yaml:"safety,omitempty"`
 	// RedactSecrets enables every leg of the redact_secrets feature:
-	// the pre_tool_use builtin (scrubs tool arguments), the
-	// before_llm_call hook (scrubs outgoing chat content), and the
-	// tool_response_transform hook (scrubs tool output before it
-	// reaches event consumers, the persisted session, the post_tool_use
-	// hook, or the next LLM call). Equivalent to writing all three
-	// hook entries by hand — the runtime auto-injects them when this
-	// flag is true. See pkg/hooks/builtins/redact_secrets.go for the
-	// hook-side implementation.
+	// the tool_input_transform builtin (scrubs tool arguments before
+	// approval), the before_llm_call hook (scrubs outgoing chat
+	// content), and the tool_response_transform hook (scrubs tool
+	// output before it reaches event consumers, the persisted session,
+	// the post_tool_use hook, or the next LLM call). Equivalent to
+	// writing all three hook entries by hand — the runtime auto-injects
+	// them when this flag is true. See
+	// pkg/hooks/builtins/redact_secrets.go for the hook-side
+	// implementation.
 	//
 	// Pointer (tri-state) so we can distinguish "unset" (nil → default
 	// on) from "explicitly disabled" (false). Use
@@ -2770,6 +2771,28 @@ type HooksConfig struct {
 	// pre_tool_use / post_tool_use.
 	ToolResponseTransform HookMatcherConfigs `json:"tool_response_transform,omitempty" yaml:"tool_response_transform,omitempty"`
 
+	// ToolInputTransform hooks run before every tool call, ahead of the
+	// deterministic approval pipeline (safety mode, permission rules,
+	// --yolo) and of tool_guard. Hooks run sequentially and may patch
+	// tool arguments via HookSpecificOutput.updated_input, exactly like
+	// pre_tool_use; the approval pipeline and every later hook see the
+	// rewritten arguments. Verdicts belong on tool_guard. Failures follow
+	// on_error (default warn). Tool-matched; preempt_yolo is rejected
+	// here because the event always preempts approval.
+	ToolInputTransform HookMatcherConfigs `json:"tool_input_transform,omitempty" yaml:"tool_input_transform,omitempty"`
+
+	// ToolGuard hooks run after tool_input_transform and before the
+	// deterministic approval pipeline, so their verdict cannot be
+	// bypassed by any safety mode or permission allow-rule. Hooks run
+	// concurrently; permission_decision verdicts aggregate to the most
+	// restrictive (deny > ask > allow). Deny rejects the call, ask forces
+	// the user prompt even when the session already allowed the tool,
+	// allow is advisory. metadata is merged into the confirmation
+	// prompt. updated_input is ignored — use tool_input_transform. Hook
+	// failures fail closed (deny). Tool-matched; preempt_yolo is
+	// rejected here because the event always preempts approval.
+	ToolGuard HookMatcherConfigs `json:"tool_guard,omitempty" yaml:"tool_guard,omitempty"`
+
 	// WorktreeCreate hooks run once, just after `docker agent run
 	// --worktree` creates a git worktree and before the session starts.
 	// They execute inside the new worktree (their working directory is
@@ -2813,6 +2836,8 @@ func (h *HooksConfig) IsEmpty() bool {
 		len(h.BeforeCompaction) == 0 &&
 		len(h.AfterCompaction) == 0 &&
 		len(h.ToolResponseTransform) == 0 &&
+		len(h.ToolInputTransform) == 0 &&
+		len(h.ToolGuard) == 0 &&
 		len(h.WorktreeCreate) == 0
 }
 
@@ -2833,7 +2858,9 @@ type HookMatcherConfig struct {
 	// permission allow-rules; an allow verdict is advisory (the
 	// pipeline still runs Decide() and the rest of pre_tool_use).
 	// Default pre_tool_use entries fire AFTER Decide(), as before.
-	// Only valid on pre_tool_use; ignored on other events.
+	// Only valid on pre_tool_use. Rejected on tool_input_transform and
+	// tool_guard, which always preempt approval; ignored on other
+	// events.
 	//
 	// Set it on hooks that implement a security-critical check that
 	// must not be bypassed by auto-approval.
@@ -3158,6 +3185,20 @@ func (h *HooksConfig) Validate() error {
 		}
 	}
 
+	// Validate ToolInputTransform matchers
+	for i, m := range h.ToolInputTransform {
+		if err := m.validatePreApproval("tool_input_transform", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate ToolGuard matchers
+	for i, m := range h.ToolGuard {
+		if err := m.validatePreApproval("tool_guard", i); err != nil {
+			return err
+		}
+	}
+
 	// Validate WorktreeCreate hooks
 	for i, hook := range h.WorktreeCreate {
 		if err := hook.validate("worktree_create", i); err != nil {
@@ -3181,6 +3222,15 @@ func (m *HookMatcherConfig) validate(eventType string, index int) error {
 	}
 
 	return nil
+}
+
+// validatePreApproval validates a matcher on an event that always runs
+// before approval, where preempt_yolo is meaningless and rejected.
+func (m *HookMatcherConfig) validatePreApproval(eventType string, index int) error {
+	if m.PreemptYolo != nil {
+		return fmt.Errorf("hooks.%s[%d]: preempt_yolo is not valid on %s (it always runs before approval)", eventType, index, eventType)
+	}
+	return m.validate(eventType, index)
 }
 
 // validate validates a HookDefinition

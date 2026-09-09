@@ -42,7 +42,7 @@ func (e *Executor) runPipeline(ctx context.Context, event EventType, hooks []Hoo
 
 func rewrittenInput(input Input, event EventType, out *HookSpecificOutput) (Input, bool) {
 	switch event {
-	case EventPreToolUse:
+	case EventPreToolUse, EventToolInputTransform:
 		if out.UpdatedInput == nil {
 			return input, false
 		}

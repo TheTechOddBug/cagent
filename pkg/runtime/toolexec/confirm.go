@@ -95,7 +95,7 @@ func (g *Gate) ConfirmAndRun(ctx context.Context, run tools.ConfirmedRun, exec f
 		return "", tools.ErrConfirmationDenied
 	}
 
-	// A pre_tool_use hook may rewrite the action. For skill command expansion,
+	// Input hooks may rewrite the action. For skill command expansion,
 	// execute the approved command rather than the original closure's command.
 	approvedRun := tools.ConfirmedRun{
 		ToolName: run.ToolName,

@@ -33,7 +33,9 @@ Docker Agent dispatches the following hook events:
 
 | Event                       | When it fires                                                                     | Can block? |
 | --------------------------- | --------------------------------------------------------------------------------- | ---------- |
-| `pre_tool_use`              | Before a tool call executes                                                       | Yes        |
+| `pre_tool_use`              | Default lane: approval helper when the safety mode asks; skipped on auto-approved calls                                                       | Yes        |
+| `tool_input_transform`     | Before tool guards, permission rules, and safety classification, including auto-approved calls | Yes |
+| `tool_guard`               | Mandatory checks on transformed arguments, before approval                         | Yes |
 | `tool_response_transform`   | Between a tool's execution and the runtime's emission/record of the response      | No         |
 | `post_tool_use`             | After a tool completes — fires for both success and failure                       | Yes        |
 | `permission_request`        | Just before the runtime would prompt the user to approve a tool                   | Yes        |
@@ -216,7 +218,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 | `add_recent_commits`    | `session_start`                                                                           | _none_, or `["<N>"]`  | Adds `git log --oneline -n N`. `N` defaults to 10; pass a positive integer to override.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `max_iterations`        | `before_llm_call`                                                                         | `["<N>"]` (required)  | Hard-stops the agent after `N` model calls. Stateless: the runtime supplies the iteration counter on every dispatch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `snapshot`              | `session_start`, `turn_start`, `turn_end`, `pre_tool_use`, `post_tool_use`, `session_end` | _none_                | Records filesystem snapshots in a shadow git repo under the Docker Agent data directory. No-op outside git repos; respects the source repo's ignore rules and skips newly-added files larger than 2 MiB.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `redact_secrets`        | `pre_tool_use`, `before_llm_call`, `tool_response_transform`                              | _none_                | Scrubs detected secrets (API keys, tokens, private keys, …) out of tool call arguments, outgoing chat content, and tool output. The same builtin handles all three events and dispatches on the event name. Auto-registered on all three events by `redact_secrets: true` on the agent — see [`examples/redact_secrets_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml) for the manual wiring.                                                                                                                                                                                     |
+| `redact_secrets`        | `tool_input_transform`, `before_llm_call`, `tool_response_transform`                              | _none_                | Scrubs detected secrets (API keys, tokens, private keys, …) out of tool call arguments, outgoing chat content, and tool output. The same builtin handles all three events and dispatches on the event name. Auto-registered on all three events by `redact_secrets: true` on the agent — see [`examples/redact_secrets_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml) for the manual wiring.                                                                                                                                                                                     |
 | `limit_large_tool_results` | `tool_response_transform`, `session_end`                                               | _none_                | **Always-on safety hook** — automatically injected by the runtime, no configuration required. When a tool result from the `filesystem`, `shell`, `mcp`, or `a2a` categories exceeds 2,000 lines or 50 KiB, the full payload is written to a per-session temp file and replaced in the conversation with a notice plus a bounded excerpt (2,000 lines, up to 50 KiB): the tail for most tools, but the head for the built-in filesystem `read_file`, whose notice suggests a follow-up call with `line`/`limit` to continue reading. The `session_end` leg deletes the temp directory. Internal toolsets (`memory`, `plan`, `tasks`, `think`, …) are not affected. |
 | `safer_shell`           | `pre_tool_use`                                                                            | _none_                | **Deprecated compatibility shim.** The runtime now classifies every shell command natively (`safe` / `destructive` / `unknown`) and gates it through the session's [safety mode](../permissions/index.md#safety-modes), so this builtin no longer emits verdicts. Pinned entries keep working as pure labellers that attach classification metadata (`safety_label`, `blast_radius`, `category`, `reason`) to the call. Filters by tool name internally (no-op for calls other than `shell` and `run_background_job`). |
 | `unload`                | `on_agent_switch`                                                                         | _none_                | POSTs `{"model": "<id>"}` to each of the previous agent's DMR model endpoints (`/_unload` by default, overridable per-model via `unload_api`) to free the GPU/RAM the just-departing model was holding. Pure HTTP — reads the model snapshot the runtime ships on `on_agent_switch` and depends on no provider-specific runtime state. Non-DMR providers (OpenAI, Anthropic, …) are silently skipped, so cross-provider chains are safe. Errors are logged and swallowed; agent switching never blocks on a slow or unreachable engine (each call has a 10 s timeout). See [`examples/unload_on_switch.yaml`](https://github.com/docker/docker-agent/blob/main/examples/unload_on_switch.yaml). |
@@ -229,7 +231,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 > [!NOTE]
 > **Auto-injected built-ins**
 >
-> The agent flags `add_date: true`, `add_environment_info: true`, `add_prompt_files: [...]`, and `redact_secrets: true` are shorthands that auto-register the matching built-in hook. You don't need to repeat them under `hooks:` — set the flag _or_ the hook entry(ies), not both. `redact_secrets: true` auto-registers the same builtin on all three of `pre_tool_use`, `before_llm_call`, and `tool_response_transform`; you can also wire any subset of them by hand for finer-grained control (per-tool matchers, ordering with other rewriters, …). Secret redaction is enabled even when `redact_secrets` is omitted; set it to `false` before configuring only selected redaction hooks manually.
+> The agent flags `add_date: true`, `add_environment_info: true`, `add_prompt_files: [...]`, and `redact_secrets: true` are shorthands that auto-register the matching built-in hook. You don't need to repeat them under `hooks:` — set the flag _or_ the hook entry(ies), not both. `redact_secrets: true` auto-registers the same builtin on all three of `tool_input_transform`, `before_llm_call`, and `tool_response_transform`; you can also wire any subset of them by hand for finer-grained control (per-tool matchers, ordering with other rewriters, …). Secret redaction is enabled even when `redact_secrets` is omitted; set it to `false` before configuring only selected redaction hooks manually.
 >
 > `limit_large_tool_results` is injected unconditionally by the runtime — it is always active and cannot be removed from config.
 
@@ -345,6 +347,8 @@ In addition to the common fields, each event ships its own payload:
 
 | Event                       | Extra fields                                                                                                          |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `tool_input_transform`     | `agent_name`, `tool_name`, `tool_use_id`, `tool_category`, `tool_input`, `safety_policy` |
+| `tool_guard`               | `agent_name`, `tool_name`, `tool_use_id`, `tool_category`, `tool_input`, `safety_policy` |
 | `pre_tool_use`              | `agent_name`, `tool_name`, `tool_use_id`, `tool_input`                                                                |
 | `tool_response_transform`   | `tool_name`, `tool_use_id`, `tool_input`, `tool_response`                                                             |
 | `post_tool_use`             | `agent_name`, `tool_name`, `tool_use_id`, `tool_input`, `tool_response`, `tool_error`                                 |
@@ -385,7 +389,7 @@ Notes:
 - For [harness agents](../../features/harnesses/index.md), `cost` is the harness's own reported total for the call rather than a computed price, and is present only when the harness reported a non-zero cost (some harnesses, e.g. `codex`, report token counts but no cost — those turns carry `usage` with `cost` absent, even though the recorded message stores `0`).
 - `after_llm_call` fires for **every** model call, including calls made inside sub-sessions (transferred tasks, background agents, skills). For those, `session_id` is the sub-session's id. Summing `cost` across `after_llm_call` events therefore captures **all** spend, including sub-sessions (and even sub-sessions that error before their cost is persisted). Do **not** add a separately-queried session cost total on top: the runtime's own total already recurses into and includes completed sub-session spend, so combining the two double-counts. Pick one source — the summed hook costs — as the authoritative ledger.
 - `context_limit` is `0` when the model definition is unavailable (treat `0` as "unknown", not as a real limit).
-- `approval_decision` is one of `allow`, `deny`, `canceled`. `approval_source` is a stable classifier of which step decided (e.g. `yolo`, `session_permissions_allow`, `session_permissions_deny`, `team_permissions_allow`, `team_permissions_deny`, `pre_tool_use_hook_allow`, `pre_tool_use_hook_deny`, `readonly_hint`, `user_approved`, `user_approved_session`, `user_approved_safe`, `user_approved_tool`, `user_rejected`, `context_canceled`).
+- `approval_decision` is one of `allow`, `deny`, `canceled`. `approval_source` is a stable classifier of which step decided (e.g. `yolo`, `session_permissions_allow`, `session_permissions_deny`, `team_permissions_allow`, `team_permissions_deny`, `pre_tool_use_hook_allow`, `pre_tool_use_hook_deny`, `tool_input_transform_deny`, `tool_guard_deny`, `readonly_hint`, `user_approved`, `user_approved_session`, `user_approved_safe`, `user_approved_tool`, `user_rejected`, `context_canceled`).
 
 ## Hook Output
 
@@ -423,16 +427,95 @@ All fields are optional. Returning `{}` (or no output at all) means "do nothing,
 
 ### Pre-Tool-Use / Permission-Request Specific Output
 
-The `hook_specific_output` for `pre_tool_use` (and `permission_request`) supports:
+The following fields are supported by tool hooks as indicated:
 
 | Field                        | Type   | Description                             |
 | ---------------------------- | ------ | --------------------------------------- |
-| `permission_decision`        | string | `allow`, `deny`, or `ask`               |
+| `permission_decision`        | string | `allow`, `deny`, or `ask` for `tool_guard`, `pre_tool_use`, and `permission_request`               |
 | `permission_decision_reason` | string | Explanation for the decision            |
-| `updated_input`              | object | Top-level patch to the current tool input (`pre_tool_use` default lane only); omitted keys are preserved |
-| `metadata`                   | object | (`permission_request` and `pre_tool_use` entries with `preempt_yolo: true` only) string key/value annotations merged onto the tool-call confirmation prompt — see below |
+| `updated_input`              | object | Top-level patch to the current tool input (`tool_input_transform` or the `pre_tool_use` default lane); omitted keys are preserved |
+| `metadata`                   | object | (`tool_guard`, `permission_request`, and `pre_tool_use` entries with `preempt_yolo: true` only) string key/value annotations merged onto the tool-call confirmation prompt — see below |
+
+### Tool phases: transform, guard, approve
+
+Use separate events for operations that must run regardless of approval:
+
+1. **`tool_input_transform`** runs sequentially before safety classification or
+   permission checks. Return `hook_specific_output.updated_input` to patch the
+   arguments. Every later guard, prompt, and tool handler sees the final input.
+   `permission_decision` and `metadata` have no effect on this event.
+2. **`tool_guard`** runs mandatory checks against that input. Matching guards run
+   concurrently and combine verdicts using **deny > ask > allow**. They cannot
+   rewrite arguments.
+3. Existing **`pre_tool_use` with `preempt_yolo: true`** runs next, followed by
+   permission rules and the safety-mode decision.
+4. Ordinary **`pre_tool_use`** remains an approval helper: it runs only when the
+   safety mode asks. Auto-approved calls and explicit permission ask rules skip
+   it. Keep expensive LLM judges here unless they must inspect every call.
+5. **`permission_request`** and interactive confirmation remain the fallback.
+   A mandatory guard's `ask` skips approval helpers and forces confirmation.
+
+For `tool_guard`:
+
+- `deny`, `decision: block`, `continue: false`, or exit code `2` rejects the call.
+- `ask` requires approval for **this call**, even with `--yolo`, a permission
+  allow-rule, or a previous “always allow” grant. An explicit policy denial still
+  wins. Non-interactive sessions deny rather than wait for an unavailable user.
+- `allow` is advisory: permission rules and safety mode still apply.
+- No verdict leaves approval unchanged. `metadata` enriches confirmation;
+  guard keys win over static, permission-hook, safety-label, and legacy
+  preempt-hook metadata. Within the event, the last configured hook wins clashes.
+
+Both events use the existing tool-name `matcher` syntax and apply to nested
+shell actions such as commands embedded in skills. They run once per call;
+if a legacy `pre_tool_use` hook changes arguments afterwards, guards and rules
+are checked again against the rewritten call. Transforms and approval helpers
+are not rerun: legacy rewrites are not automatically re-redacted. A new ask
+during revalidation requires fresh approval, not an earlier session grant.
+A no-op patch does not trigger another guard invocation.
+Prefer `tool_input_transform` for new rewriters so guards only need one pass.
+
+```yaml
+hooks:
+  tool_input_transform:
+    - matcher: "shell"
+      hooks:
+        - type: command
+          command: ./normalize-tool-input.sh
+          on_error: block
+  tool_guard:
+    - matcher: "shell"
+      hooks:
+        - type: command
+          command: ./check-tool-policy.sh
+          timeout: 5
+  pre_tool_use:
+    - matcher: "shell"
+      hooks:
+        - type: model
+          model: openai/gpt-4o-mini
+          schema: pre_tool_use_decision
+          prompt: 'May this call be auto-approved? {{ .ToolInput | toJSON }}'
+```
+
+**Failures:** transform execution errors follow `on_error` (default `warn`);
+`on_error: block`, `decision: block`, `continue: false`, and exit `2` prevent
+execution. Guard execution errors and timeouts block regardless of `on_error`.
+Both retain the existing shell exit-code protocol: nonzero codes other than `2`
+are non-blocking, and malformed stdout JSON is not a verdict. A command guard
+must explicitly emit a blocking result or exit `2` when it cannot check safely.
+Neither event accepts `preempt_yolo`, since both already precede approval.
+
+The default secret-redaction argument hook now uses `tool_input_transform`, so
+redaction also applies under auto-approval. Explicit legacy `pre_tool_use`
+redactors keep their conditional behavior; move them to `tool_input_transform`
+to cover every call. See [the complete example](https://github.com/docker/docker-agent/blob/main/examples/tool_hook_phases.yaml).
 
 ### Preempting auto-approval from `pre_tool_use`
+
+For new mandatory checks, prefer `tool_guard`. The legacy `preempt_yolo` option
+remains supported, including its exception for session-scoped “always allow”
+grants. Unlike that option, a `tool_guard` ask always requires fresh approval.
 
 `pre_tool_use` entries default to firing AFTER the deterministic approval
 pipeline (custom allow rules / safety mode), so an auto-approved call
@@ -450,7 +533,7 @@ hooks:
           command: ./security-check.sh
 ```
 
-The entry then fires in a dedicated stage 0 BEFORE `Decide()`:
+The entry fires after `tool_input_transform` and `tool_guard`, before `Decide()`:
 
 - `deny` rejects the call outright; the user is not prompted.
 - `ask` forces user confirmation. The default `pre_tool_use` lane and
@@ -493,7 +576,7 @@ The `hook_specific_output` for `tool_response_transform` supports:
 | ----------------------- | ------ | --------------------------------------------- |
 | `updated_tool_response` | string | Rewritten tool output (replaces the original) |
 
-This is the symmetric counterpart of `pre_tool_use`'s `updated_input`, applied to tool **results** instead of tool **arguments**. The rewrite reaches every downstream consumer — event subscribers, the persisted session file, the `post_tool_use` hook input, and the next LLM call. Use it to truncate excessive output, scrub PII, or normalise tool dialects. The built-in `redact_secrets` registers itself on this event as the third leg of the redact_secrets feature.
+This is the symmetric counterpart of `tool_input_transform`'s `updated_input`, applied to tool **results** instead of tool **arguments**. The rewrite reaches every downstream consumer — event subscribers, the persisted session file, the `post_tool_use` hook input, and the next LLM call. Use it to truncate excessive output, scrub PII, or normalise tool dialects. The built-in `redact_secrets` registers itself on this event as the third leg of the redact_secrets feature.
 
 ### Composing transformations
 
@@ -501,6 +584,7 @@ Hooks for the following events run **sequentially in configuration order**:
 
 | Event | Rewrite field | What the next hook receives |
 | ----- | ------------- | --------------------------- |
+| `tool_input_transform` | `updated_input` | `tool_input` with the patch applied |
 | `pre_tool_use` (default lane) | `updated_input` | `tool_input` with the patch applied |
 | `before_llm_call` | `updated_messages` | The rewritten `messages` array |
 | `tool_response_transform` | `updated_tool_response` | The rewritten `tool_response` string |
@@ -523,7 +607,7 @@ verdicts do not short-circuit the remaining hooks. Failed invocations contribute
 no rewrite and keep the existing error-policy behavior. Each hook retains its
 own timeout, so pipeline latency can add up across hooks.
 
-Other events, including `preempt_yolo: true` checks and `before_compaction`,
+Other events, including `tool_guard`, `preempt_yolo: true` checks, and `before_compaction`,
 continue to run concurrently. Preempting checks do not apply input rewrites;
 compaction summaries still use the first non-empty result in configuration order.
 

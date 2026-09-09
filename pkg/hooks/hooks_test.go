@@ -131,6 +131,20 @@ func TestConfigIsEmpty(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "with tool_input_transform",
+			config: Config{
+				ToolInputTransform: []MatcherConfig{{Matcher: "*"}},
+			},
+			expected: false,
+		},
+		{
+			name: "with tool_guard",
+			config: Config{
+				ToolGuard: []MatcherConfig{{Matcher: "*"}},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

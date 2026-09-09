@@ -1,6 +1,7 @@
 package toolexec
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -46,6 +47,8 @@ const (
 	ApprovalSourceTeamPermissionsDeny        = "team_permissions_deny"
 	ApprovalSourcePreToolUseHookAllow        = "pre_tool_use_hook_allow"
 	ApprovalSourcePreToolUseHookDeny         = "pre_tool_use_hook_deny"
+	ApprovalSourceToolInputTransformDeny     = "tool_input_transform_deny"
+	ApprovalSourceToolGuardDeny              = "tool_guard_deny"
 	ApprovalSourcePermissionRequestHookDeny  = "permission_request_hook_deny"
 	ApprovalSourcePermissionRequestHookAllow = "permission_request_hook_allow"
 	// ApprovalSourceReadOnlyHint marks the legacy default's
@@ -113,7 +116,8 @@ type HookDispatcher interface {
 	// Dispatch fires a tool-related hook (typically [hooks.EventPreToolUse]
 	// or [hooks.EventPostToolUse]). Returning nil is the "carry on with the
 	// original call" signal — used uniformly when no hook is configured,
-	// the agent is missing, or dispatch failed.
+	// or the agent is missing. Pre-approval dispatch failures must return a
+	// blocking result, not nil.
 	Dispatch(ctx context.Context, a *agent.Agent, event hooks.EventType, in *hooks.Input) *hooks.Result
 
 	// NotifyUserInput is invoked just before the dispatcher blocks waiting
@@ -328,6 +332,11 @@ type call struct {
 	preYoloComputed bool
 	preYoloResult   *hooks.Result
 
+	guardComputed bool
+	guardResult   *hooks.Result
+	// A new ask after a legacy rewrite cannot be bypassed by earlier grants.
+	rewrittenInputAsk bool
+
 	// Safety-label cache: the classifier result is stable for the
 	// call, and permissionDecision + confirmationMetadata +
 	// notifyApproval all consume it.
@@ -423,56 +432,15 @@ func (c *call) run(ctx context.Context) CallOutcome {
 // approveAndRun runs runTool if the configured approval pipeline allows
 // it, otherwise records an error or asks the user.
 //
-// The pipeline order is:
-//
-//  0. pre_tool_use entries with preempt_yolo:true — user-authored
-//     security hooks that fire BEFORE the deterministic pipeline so a
-//     Deny or Ask verdict here cannot be bypassed by any safety mode
-//     (including Autonomous) or permission allow rules. Allow /
-//     no-opinion fall through.
-//  1. [Decide] — custom Deny/Allow/Ask rules win outright; otherwise
-//     the (safety mode × safety label) table produces the verdict.
-//     An explicit ask rule goes straight to the user.
-//  2. pre_tool_use hooks (LLM-judge, shell scripts, ...) — the
-//     default lane, consulted ONLY when the mode said Ask. The hook
-//     can Deny (block), Allow (skip the user prompt) or Ask (force
-//     the prompt). Hooks may also rewrite tool arguments via
-//     UpdatedInput, in which case the rewrite is applied here so the
-//     user prompt and the tool handler both see the modified call.
-//  3. legacy read-only auto-approve — sessions that never chose a
-//     safety mode keep the pre-modes contract: read-only-annotated
-//     tools run without prompting. Placed after the hook chain so an
-//     LLM judge still gets a turn on those calls.
-//  4. user confirmation — fallback prompt.
+// Order: input transforms → mandatory guards → legacy preempt hooks →
+// permission rules / safety mode → legacy approval hooks → user confirmation.
+// Approval hooks only run when the safety mode asks, not on auto-approved calls.
 func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) CallOutcome {
-	// Stage 0: pre_tool_use entries flagged with preempt_yolo:true.
-	if r := c.consultPreToolUsePreYolo(ctx); r != nil {
-		switch r.Decision {
-		case hooks.DecisionDeny:
-			slog.DebugContext(ctx, "Tool denied by preempt-yolo pre_tool_use hook", "tool", c.tc.Function.Name, "session_id", c.sess.ID, "reason", r.DecisionReason)
-			c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourcePreToolUseHookDeny)
-			rejectMsg := "The tool call was rejected by a pre_tool_use hook."
-			if reason := strings.TrimSpace(r.DecisionReason); reason != "" {
-				rejectMsg += " Reason: " + reason
-			}
-			c.errorResponse(ctx, rejectMsg)
-			return CallOutcome{}
-		case hooks.DecisionAsk:
-			// A session-scoped allow grant (the interactive "T = always
-			// allow this tool" decision, stored in sess.Permissions) is an
-			// informed opt-in the user made in response to this very safety
-			// prompt. Honor it instead of asking again, otherwise "always
-			// allow" would re-prompt on every matching call. The safety
-			// mode and the team/config permission layer stay subordinate
-			// to the preempt-yolo verdict — see [call.sessionPermissionsAllow].
-			if c.sessionPermissionsAllow() {
-				slog.DebugContext(ctx, "preempt-yolo Ask overridden by session permission allow", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
-				c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceSessionPermissionsAllow)
-				return runTool()
-			}
-			return c.askUser(ctx, runTool)
-		}
-		// DecisionAllow / "" → advisory; fall through to Decide().
+	if c.transformToolInput(ctx) {
+		return CallOutcome{}
+	}
+	if outcome, handled := c.runToolGuards(ctx, runTool); handled {
+		return outcome
 	}
 
 	// Stage 1: custom rules + (mode × label) table.
@@ -547,6 +515,9 @@ func (c *call) permissionArgs() map[string]any {
 }
 
 func (c *call) autoApprovalAfterConfirmationWait() (PermissionDecision, bool) {
+	if c.mandatoryAsk() {
+		return PermissionDecision{}, false
+	}
 	if c.preYoloResult != nil && c.preYoloResult.Decision == hooks.DecisionAsk {
 		// Even under a preempt-yolo Ask, a session-scoped allow grant that
 		// landed while we were blocked on the resume channel (e.g. a
@@ -658,8 +629,7 @@ func (c *call) consultPreToolUsePreYolo(ctx context.Context) *hooks.Result {
 //
 // UpdatedInput from a hook is applied to c.tc here so every downstream
 // path (auto-run, user prompt, runToolset) sees the rewritten
-// arguments — this is the only place pre-call argument rewriting
-// happens.
+// arguments. Mandatory guards and rules are rechecked after a rewrite.
 func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOutcome) (CallOutcome, bool) {
 	if c.d.Hooks == nil {
 		return CallOutcome{}, false
@@ -671,7 +641,10 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 	}
 
 	// Apply UpdatedInput first so subsequent paths see the rewritten args.
-	c.applyHookModifiedInput(result)
+	changed, err := c.applyHookModifiedInput(result)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to marshal modified tool input from hook", "tool", c.tc.Function.Name, "error", err)
+	}
 
 	if !result.Allowed {
 		slog.DebugContext(ctx, "Pre-tool hook blocked tool call", "tool", c.tc.Function.Name, "message", result.Message)
@@ -679,6 +652,15 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 		c.em.EmitHookBlocked(c.tc, c.tool, result.Message, c.a.Name())
 		c.errorResponse(ctx, "Tool call blocked by hook: "+result.Message)
 		return CallOutcome{}, true
+	}
+
+	if changed {
+		c.rewrittenInputAsk = result.Decision == hooks.DecisionAsk
+		// Legacy hooks can rewrite after approval checks. Recheck the actual
+		// arguments once, without rerunning transforms or approval helpers.
+		if outcome, handled := c.recheckRewrittenInput(ctx, runTool); handled {
+			return outcome, true
+		}
 	}
 
 	switch result.Decision {
@@ -693,23 +675,24 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 	return CallOutcome{}, false
 }
 
-// applyHookModifiedInput applies a hook's UpdatedInput to the in-flight
-// tool call. Errors are logged at warn level and otherwise ignored —
-// the hook can't crash the call by returning malformed JSON.
-func (c *call) applyHookModifiedInput(result *hooks.Result) {
+// applyHookModifiedInput replaces arguments with the executor's complete patched input.
+func (c *call) applyHookModifiedInput(result *hooks.Result) (bool, error) {
 	if result.ModifiedInput == nil {
-		return
+		return false, nil
 	}
 	updated, err := json.Marshal(result.ModifiedInput)
 	if err != nil {
-		slog.Warn("Failed to marshal modified tool input from hook", "tool", c.tc.Function.Name, "error", err)
-		return
+		return false, err
 	}
-	slog.Debug("Pre-tool hook modified tool input", "tool", c.tc.Function.Name)
+	// Compare canonical JSON so formatting-only changes don't rerun guards.
+	original, err := json.Marshal(ParseToolInput(c.tc.Function.Arguments))
+	if err == nil && bytes.Equal(original, updated) {
+		c.tc.Function.Arguments = string(updated)
+		return false, nil
+	}
 	c.tc.Function.Arguments = string(updated)
-	// The rewrite may change the shell command; drop the cached label
-	// so the confirmation prompt classifies what will actually run.
 	c.labelComputed = false
+	return true, nil
 }
 
 // notifyApproval forwards the resolved approval decision to the
@@ -807,7 +790,7 @@ func (c *call) confirmationMutex() *sync.Mutex {
 // on the resume channel or for ctx cancellation. Only called when no
 // permission rule auto-approved the tool.
 //
-// permission_request hooks fire first and may short-circuit the prompt
+// permission_request hooks fire first unless a mandatory guard asked, and may short-circuit the prompt
 // with an explicit allow or deny verdict; returning nothing falls
 // through to the interactive confirmation. The permission_request
 // chain is SKIPPED entirely when the preempt-yolo lane of pre_tool_use
@@ -816,7 +799,7 @@ func (c *call) confirmationMutex() *sync.Mutex {
 // hook auto-allow the call would unwind that protection.
 func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutcome {
 	var hookMeta map[string]string
-	if c.preYoloResult == nil || c.preYoloResult.Decision != hooks.DecisionAsk {
+	if !c.mandatoryAsk() && (c.preYoloResult == nil || c.preYoloResult.Decision != hooks.DecisionAsk) {
 		outcome, handled, meta := c.runPermissionRequestHook(ctx, runTool)
 		if handled {
 			return outcome
@@ -934,9 +917,9 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 // confirmationMetadata merges the tool's static metadata (set by the
 // toolset) with the per-call metadata contributed by permission_request,
 // the runtime's own safety label, and the preempt-yolo lane of
-// pre_tool_use. Merge order — and therefore key-clash precedence — is:
+// pre_tool_use and tool_guard. Merge order — and therefore key-clash precedence — is:
 //
-//	tool static  <  permission_request  <  safety label  <  pre_tool_use (preempt_yolo)
+//	tool static < permission_request < safety label < pre_tool_use (preempt_yolo) < tool_guard
 //
 // The runtime's classification (safety_label, blast_radius, category,
 // reason) outranks a policy-level permission_request hook so the
@@ -954,6 +937,9 @@ func (c *call) confirmationMetadata(permissionMeta map[string]string) map[string
 	maps.Copy(merged, permissionMeta)
 	maps.Copy(merged, labelMeta)
 	maps.Copy(merged, preemptMeta)
+	if c.guardResult != nil {
+		maps.Copy(merged, c.guardResult.Metadata)
+	}
 	return merged
 }
 
