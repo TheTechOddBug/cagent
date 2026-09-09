@@ -72,7 +72,10 @@ models:
 
 OpenAI also accepts `priority` for Fast mode. It provides faster processing at premium pricing on supported models, without reducing reasoning effort. This is independent of `thinking_budget` and applies to all requests using the configured model, including internal calls such as title generation and compaction.
 
-The value is forwarded unchanged to Chat Completions (including reranking) and Responses requests, over either SSE or WebSocket. Other tiers, such as `auto`, `default`, and `flex`, can also be requested; availability and valid values depend on the API and model. When omitted or empty, no `service_tier` is sent, leaving the API's default behavior unchanged. Non-string values are ignored.
+The value is forwarded unchanged to Chat Completions (including reranking) and Responses requests, over either SSE or WebSocket. OpenAI-compatible providers using these APIs also receive the option when set; the endpoint must support it. Other tiers, such as `auto`, `default`, and `flex`, can also be requested; availability and valid values depend on the API and model. When omitted or empty, no `service_tier` is sent, leaving the API's default behavior unchanged. Non-string values are ignored.
+
+> [!WARNING]
+> Docker Agent's cost estimates do not automatically adjust for `service_tier`. By default, they use catalogue pricing, which can underestimate premium-tier charges. Set the model's [`cost` override](../../configuration/models/index.md#custom-token-pricing) to the applicable input, output, and cache token rates for your tier.
 
 See [`examples/openai-service-tier.yaml`](https://github.com/docker/docker-agent/blob/main/examples/openai-service-tier.yaml) for a complete example.
 

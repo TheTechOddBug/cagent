@@ -1,4 +1,5 @@
 # Fast mode uses premium pricing on supported OpenAI models.
+# Set models.fast-gpt.cost to your tier's rates for accurate cost estimates.
 # https://developers.openai.com/api/docs/guides/fast-mode
 
 agents:
