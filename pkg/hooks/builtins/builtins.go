@@ -3,6 +3,7 @@
 //
 // Available builtins:
 //
+//   - add_context           (context events)  — Go templates rendered against hook input
 //   - add_date              (turn_start)      — today's date
 //   - add_environment_info  (session_start)   — cwd, git, OS, arch
 //   - add_prompt_files      (turn_start)      — contents of prompt files,
@@ -104,6 +105,7 @@ func Register(r *hooks.Registry, opts ...Option) error {
 	}
 
 	return errors.Join(
+		r.RegisterBuiltin(AddContext, addContext),
 		r.RegisterBuiltin(AddDate, addDate),
 		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
 		r.RegisterBuiltin(AddPromptFiles, addPromptFiles),

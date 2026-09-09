@@ -28,6 +28,7 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 	require.NoError(t, builtins.Register(r))
 
 	for _, name := range []string{
+		builtins.AddContext,
 		builtins.AddDate,
 		builtins.AddEnvironmentInfo,
 		builtins.AddPromptFiles,
