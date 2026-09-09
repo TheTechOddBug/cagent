@@ -41,6 +41,21 @@ func TestCommandGrantCoversCall(t *testing.T) {
 		assert.False(t, cover(grant, "mkdir x < /etc/shadow"))
 	})
 
+	t.Run("refuses alternative shell substitutions for every grant shape", func(t *testing.T) {
+		t.Parallel()
+		for _, tool := range []string{safety.ShellToolName, safety.BackgroundJobToolName} {
+			for _, cmd := range []string{
+				`mkdir =(touch /tmp/marker)`,
+				`mkdir (touch /tmp/marker)`,
+				`mkdir "'" =(touch /tmp/marker)`,
+			} {
+				for _, pattern := range []string{tool, tool + ":cmd=mkdir*", tool + ":cmd=" + cmd} {
+					assert.False(t, commandGrantCoversCall(tool, []string{pattern}, map[string]any{"cmd": cmd}), "%s: %s", pattern, cmd)
+				}
+			}
+		}
+	})
+
 	t.Run("bare dollar expansion stays covered", func(t *testing.T) {
 		t.Parallel()
 		assert.True(t, cover(grant, "mkdir $HOME/x"), "variable expansion alone cannot chain")

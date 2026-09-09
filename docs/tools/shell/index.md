@@ -60,12 +60,16 @@ toolsets:
 Every shell command is classified against an embedded taxonomy before the approval decision — no opt-in required. The same classification applies to the `cmd` of [`run_background_job`](../background-jobs/index.md#command-classification):
 
 - **Destructive matches** (`rm -rf <path>`, `docker volume rm`, `mkfs`, `dd if=… of=/dev/<disk>`, …) are labelled `destructive` with a `blast_radius` (`low` / `medium` / `high`) and a `category` tag. The TUI confirmation dialog renders the blast radius with a color badge.
-- **Known-safe reads** (`ls`, `cat`, `git status`, `git diff`, `docker ps`, `docker logs`, `kubectl get`, …) are labelled `safe`.
+- **Known-safe reads** (`ls`, `cat`, `git status`, `git diff`, `gh pr view`, `go env`, `docker ps`, `docker logs`, `kubectl get`, …) are labelled `safe`.
 - **Everything else** is labelled `unknown`.
 
 The session's [safety mode](../../configuration/permissions/index.md#safety-modes) decides what each label means: `strict` asks about everything, `balanced` auto-runs safe commands and asks about destructive/unknown ones, `restricted` auto-runs safe commands and denies destructive/unknown ones without asking (fail-closed for unattended runs), `autonomous` runs everything. Custom permission rules always win over the mode.
 
-Compound shell (`a && b`, `a; b`, `a | b`) is never matched against the safe allowlist; any destructive segment falls through to ask. The full taxonomy lives in [`pkg/safety/safety_patterns.json`](https://github.com/docker/docker-agent/blob/main/pkg/safety/safety_patterns.json).
+Read patterns also cover numeric `head`/`tail` counts and numeric sed print addresses such as `sed -n '10,20p' file`. Arbitrary sed programs are not safe-listed. GitHub read commands exclude browser/watch flags; Go environment queries exclude configuration writes (`-w`/`-u`). Flags that write output or run external diff/text-conversion helpers are excluded from Git log-family reads. Expansions that could hide a denied flag remain unknown.
+
+In-place formatters (`gofmt -w`, `goimports -w`), `tee` writes, process termination (`pkill`, `killall`), and additional Git force/delete variants receive destructive labels. Ordinary builds, tests, scripts, and task runners remain unknown unless they contain a recognized destructive operation.
+
+Compound shell (`a && b`, `a; b`, `a | b`) and command substitutions (including zsh `=(...)` and fish `(...)`) are never matched against the safe allowlist; any destructive segment falls through to ask. The full taxonomy lives in [`pkg/safety/safety_patterns.json`](https://github.com/docker/docker-agent/blob/main/pkg/safety/safety_patterns.json).
 
 See [`examples/safety_modes.yaml`](https://github.com/docker/docker-agent/blob/main/examples/safety_modes.yaml) for a full example. The legacy `safer: true` toolset flag was removed in config version 15: a config declaring version 15 or later (including a version-less config, which resolves to the latest schema) now fails to load with `unknown field "safer"` if the flag is present — delete it, it has had no effect since v1.117.0. Configs pinned to `version: "14"` or lower still accept the flag and silently ignore it.
 

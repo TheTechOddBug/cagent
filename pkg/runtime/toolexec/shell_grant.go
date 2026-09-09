@@ -17,7 +17,7 @@ package toolexec
 //
 //   - the command must be a single simple invocation — no shell
 //     metacharacters that chain (;, &, |, newlines), substitute
-//     ($(...), `...`), or redirect (>, <);
+//     ($(...), `...`, zsh =(...) or fish (...)), or redirect (>, <);
 //   - a "<tool>:cmd=<literal>*" grant must match at a word boundary:
 //     "mkdir*" covers "mkdir" and "mkdir -p x" but not "mkdiranything".
 //
@@ -49,23 +49,9 @@ func commandGrantCoversCall(toolName string, allowPatterns []string, args map[st
 	return false
 }
 
-// isSimpleShellCommand reports whether cmd is a single simple
-// invocation: free of the metacharacters that let one command smuggle
-// another past a word-level grant — separators/chaining (;, &, |,
-// newlines), command substitution ($( and backticks), and redirection
-// (> and <, a file-write primitive). A bare $ stays allowed: variable
-// expansion ($HOME) cannot execute a second command by itself, and the
-// substitution forms that can are caught by "$(" and "`".
-//
-// Deliberately stricter than safer_shell's containsShellSeparator,
-// which only detects whitespace-surrounded separators because its
-// safe-list regexes are ^…$-anchored as the primary defence; a prefix
-// grant has no such anchor, so this check carries the full weight.
+// isSimpleShellCommand uses the same substitution guard as the classifier.
 func isSimpleShellCommand(cmd string) bool {
-	if strings.ContainsAny(cmd, ";&|<>`\n\r") {
-		return false
-	}
-	return !strings.Contains(cmd, "$(")
+	return !safety.ContainsShellMetacharacter(cmd)
 }
 
 // commandGrantMatches reports whether a single session allow pattern
