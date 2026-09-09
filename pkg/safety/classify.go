@@ -172,7 +172,7 @@ func bestDestructiveMatch(command string, patterns []destructivePattern) *destru
 // from their first segment.
 func bestSafeMatch(command string, patterns []safePattern) *safePattern {
 	normalized := normalizeCommand(command)
-	if containsShellMetacharacter(command) {
+	if ContainsShellMetacharacter(command) {
 		return nil
 	}
 	for i := range patterns {
@@ -187,8 +187,7 @@ func bestSafeMatch(command string, patterns []safePattern) *safePattern {
 // deny-listed flags — exec/write escape hatches inside otherwise
 // read-only commands (`rg --pre <cmd>`, `git log --output=<file>`) that
 // a trailing-wildcard pattern would otherwise vouch for. Quotes are
-// removed to catch concatenated flags; false positives
-// only cost a confirmation prompt.
+// removed to catch concatenated flags; false positives only cost a prompt.
 func carriesDenyFlag(normalized string, flags []string) bool {
 	if len(flags) == 0 {
 		return false
@@ -214,8 +213,9 @@ func carriesDenyFlag(normalized string, flags []string) bool {
 // containsFlagExpansion rejects syntax that could introduce an unseen flag.
 // Quoted search expressions must not be mistaken for shell expansions.
 func containsFlagExpansion(command string) bool {
-	var quote rune
-	for _, c := range command {
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
 		if quote == '\'' {
 			if c == '\'' {
 				quote = 0
@@ -223,8 +223,13 @@ func containsFlagExpansion(command string) bool {
 			continue
 		}
 		switch c {
-		case '$', '\\':
+		case '$':
 			return true
+		case '\\':
+			if quote != '"' {
+				return true
+			}
+			i++
 		case '"':
 			if quote == '"' {
 				quote = 0
@@ -258,18 +263,43 @@ func isShellMetacharAnchor(c byte) bool {
 	return false
 }
 
-// containsShellMetacharacter returns true when the command contains a
-// character that can chain (`;`, `&`), pipe (`|`), redirect (`<`, `>`),
-// or substitute (backticks, `$(`) commands — with or without
-// surrounding whitespace, so `grep foo|rm -rf /` is caught just like
-// `grep foo | rm -rf /`. The safe list must never vouch for such a
-// string: a safe-looking prefix says nothing about what the rest does,
-// and trailing-wildcard patterns (`grep ...`) would otherwise cover the
-// injected tail. Erring toward "not safe" only costs a confirmation
-// prompt. Deliberately the same strictness as the runtime's
-// session-grant check for shell commands.
-func containsShellMetacharacter(command string) bool {
-	return strings.ContainsAny(command, ";&|<>`\n") || strings.Contains(command, "$(")
+// ContainsShellMetacharacter detects chaining, redirection and substitution
+// syntax for the classifier and session-grant checks. Quoted parentheses
+// remain useful in search expressions; unquoted ones can execute commands
+// via zsh's =(...) or fish's (...) substitution.
+func ContainsShellMetacharacter(command string) bool {
+	if strings.ContainsAny(command, ";&|<>`\n\r") || strings.Contains(command, "$(") {
+		return true
+	}
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\\':
+			i++
+		case '"':
+			if quote == '"' {
+				quote = 0
+			} else {
+				quote = '"'
+			}
+		case '\'':
+			if quote == 0 {
+				quote = '\''
+			}
+		case '(':
+			if quote == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // collectDestructiveEntries walks the JSON destructive section. The

@@ -69,7 +69,7 @@ Read patterns also cover numeric `head`/`tail` counts and numeric sed print addr
 
 In-place formatters (`gofmt -w`, `goimports -w`), `tee` writes, process termination (`pkill`, `killall`), and additional Git force/delete variants receive destructive labels. Ordinary builds, tests, scripts, and task runners remain unknown unless they contain a recognized destructive operation.
 
-Compound shell (`a && b`, `a; b`, `a | b`) is never matched against the safe allowlist; any destructive segment falls through to ask. The full taxonomy lives in [`pkg/safety/safety_patterns.json`](https://github.com/docker/docker-agent/blob/main/pkg/safety/safety_patterns.json).
+Compound shell (`a && b`, `a; b`, `a | b`) and command substitutions (including zsh `=(...)` and fish `(...)`) are never matched against the safe allowlist; any destructive segment falls through to ask. The full taxonomy lives in [`pkg/safety/safety_patterns.json`](https://github.com/docker/docker-agent/blob/main/pkg/safety/safety_patterns.json).
 
 See [`examples/safety_modes.yaml`](https://github.com/docker/docker-agent/blob/main/examples/safety_modes.yaml) for a full example. The legacy `safer: true` toolset flag was removed in config version 15: a config declaring version 15 or later (including a version-less config, which resolves to the latest schema) now fails to load with `unknown field "safer"` if the flag is present — delete it, it has had no effect since v1.117.0. Configs pinned to `version: "14"` or lower still accept the flag and silently ignore it.
 

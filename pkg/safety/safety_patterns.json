@@ -337,7 +337,7 @@
       { "pattern": "gh run view", "category": "gh-read" },
       { "pattern": "gh run view ...", "category": "gh-read", "deny_flags": ["--web", "-w", "--watch"] },
       { "pattern": "gh run list", "category": "gh-read" },
-      { "pattern": "gh run list ...", "category": "gh-read", "deny_flags": ["--web", "-w", "--watch"] }
+      { "pattern": "gh run list ...", "category": "gh-read", "deny_flags": ["--web", "--watch"], "notes": "-w selects a workflow, unlike the browser flag on view commands." }
     ],
     "go-read": [
       { "pattern": "go version", "category": "go-read" },
