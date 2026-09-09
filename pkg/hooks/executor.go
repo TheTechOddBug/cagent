@@ -160,7 +160,8 @@ func (e *Executor) Has(event EventType) bool {
 // Dispatch runs the hooks registered for event and aggregates their
 // verdicts into a single [Result]. Sets input.HookEventName so handlers
 // don't have to remember. Defaults [Input.Cwd] to the executor's
-// working directory when the caller didn't supply one.
+// working directory when the caller didn't supply one. Rewrite-capable
+// events run sequentially; all other events run concurrently.
 //
 // EventPreToolUsePreYolo is an internal sentinel for the preempt-yolo
 // lane of pre_tool_use. Hooks on this lane see input.HookEventName =
@@ -215,11 +216,16 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 		return nil, fmt.Errorf("failed to serialize hook input: %w", err)
 	}
 
-	results := concurrent.MapSlice(hooks, func(hook Hook) hookResult {
-		return e.runHook(ctx, hook, inputJSON)
-	})
-
-	final := aggregate(results, event)
+	var final *Result
+	switch event {
+	case EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform:
+		final = e.runPipeline(ctx, event, hooks, *input, inputJSON)
+	default:
+		results := concurrent.MapSlice(hooks, func(hook Hook) hookResult {
+			return e.runHook(ctx, hook, inputJSON)
+		})
+		final = aggregate(results, event)
+	}
 	annotateHookSpan(span, event, final)
 	return final, nil
 }
@@ -523,22 +529,10 @@ func aggregate(results []hookResult, event EventType) *Result {
 				// is to skip the LLM entirely).
 				final.Summary = hso.Summary
 			}
-			if event == EventBeforeLLMCall && len(hso.UpdatedMessages) > 0 && final.UpdatedMessages == nil {
-				// First non-empty rewrite in CONFIG ORDER wins, same
-				// determinism guarantee as Summary above. Concurrent
-				// hooks all see the SAME input snapshot, so chaining two
-				// independent rewrites here would silently throw one
-				// away — callers wanting composition must do it inside
-				// a single hook.
+			if event == EventBeforeLLMCall && len(hso.UpdatedMessages) > 0 {
 				final.UpdatedMessages = hso.UpdatedMessages
 			}
-			if event == EventToolResponseTransform && hso.UpdatedToolResponse != nil && final.UpdatedToolResponse == nil {
-				// First non-nil rewrite in CONFIG ORDER wins (same
-				// determinism + composition trade-off as UpdatedMessages
-				// above). Pointer-typed: an explicit empty-string rewrite
-				// is honoured — the runtime applies *result =
-				// *UpdatedToolResponse verbatim, so a hook that wants to
-				// blank a leaky tool's output entirely can do so.
+			if event == EventToolResponseTransform && hso.UpdatedToolResponse != nil {
 				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
 			if (event == EventPermissionRequest || event == EventPreToolUsePreYolo) && len(hso.Metadata) > 0 {

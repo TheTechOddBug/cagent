@@ -19,10 +19,7 @@ func fakeGitHubPAT() string {
 
 // TestRedactSecretsScrubsTopLevelStringValue: a recognised secret in
 // a top-level string argument is replaced and ONLY the rewritten key
-// is emitted in UpdatedInput. The latter is critical because
-// pre_tool_use hooks aggregate via shallow maps.Copy in config order
-// — returning unchanged keys would clobber concurrent hooks'
-// modifications.
+// is emitted in UpdatedInput.
 func TestRedactSecretsScrubsTopLevelStringValue(t *testing.T) {
 	t.Parallel()
 
@@ -48,7 +45,7 @@ func TestRedactSecretsScrubsTopLevelStringValue(t *testing.T) {
 	assert.NotContains(t, cmd, secret, "raw secret must be gone")
 	assert.Contains(t, cmd, portcullis.Marker)
 	assert.NotContains(t, updated, "timeout",
-		"unchanged keys must NOT appear in UpdatedInput (would clobber concurrent hooks)")
+		"unchanged keys need no patch")
 	assert.Equal(t, hooks.EventPreToolUse, out.HookSpecificOutput.HookEventName)
 }
 
