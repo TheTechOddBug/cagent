@@ -165,10 +165,6 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 	if cfg == nil {
 		cfg = &hooks.Config{}
 	}
-	cfg.ToolResponseTransform = append([]hooks.MatcherConfig{{
-		Matcher: "*",
-		Hooks:   []hooks.Hook{builtinHook(LimitLargeToolResults)},
-	}}, cfg.ToolResponseTransform...)
 	cfg.SessionEnd = append(cfg.SessionEnd, builtinHook(LimitLargeToolResults))
 	if d.AddDate {
 		cfg.TurnStart = append(cfg.TurnStart, builtinHook(AddDate))
@@ -201,6 +197,11 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
 		})
 	}
+	// Redact before the limiter writes oversized responses to disk.
+	cfg.ToolResponseTransform = append(cfg.ToolResponseTransform, hooks.MatcherConfig{
+		Matcher: "*",
+		Hooks:   []hooks.Hook{builtinHook(LimitLargeToolResults)},
+	})
 	if cfg.IsEmpty() {
 		return nil
 	}

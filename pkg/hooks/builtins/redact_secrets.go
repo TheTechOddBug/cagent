@@ -70,10 +70,7 @@ func redactSecrets(_ context.Context, in *hooks.Input, _ []string) (*hooks.Outpu
 // a nil [hooks.Output] so unaffected tool calls take the cheap path
 // through the executor.
 //
-// The returned UpdatedInput contains ONLY keys whose value was
-// actually rewritten. This matters because pre_tool_use hooks run
-// concurrently and aggregate via shallow maps.Copy: emitting unchanged
-// keys would clobber another hook's modifications on the same input.
+// UpdatedInput contains only changed top-level keys; the pipeline preserves the rest.
 func redactToolArgs(in *hooks.Input) *hooks.Output {
 	if len(in.ToolInput) == 0 {
 		return nil

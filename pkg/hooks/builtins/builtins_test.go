@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/portcullis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/internal/portcullistest"
 )
 
 // TestRegisterInstallsAllBuiltins pins the public contract of [Register]:
@@ -816,4 +818,56 @@ func TestApplyAgentDefaultsAppendsToUserHooks(t *testing.T) {
 	require.Len(t, got.TurnStart, 2)
 	assert.Equal(t, user, got.TurnStart[0])
 	assert.Equal(t, builtins.AddDate, got.TurnStart[1].Command)
+}
+
+func TestApplyAgentDefaultsOrdersTransformsBeforeLimiter(t *testing.T) {
+	t.Parallel()
+
+	for _, redact := range []bool{false, true} {
+		cfg := builtins.ApplyAgentDefaults(&hooks.Config{
+			ToolResponseTransform: []hooks.MatcherConfig{{Hooks: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: "custom"}}}},
+		}, builtins.AgentDefaults{RedactSecrets: redact})
+		var names []string
+		for _, matcher := range cfg.ToolResponseTransform {
+			for _, hook := range matcher.Hooks {
+				names = append(names, hook.Command)
+			}
+		}
+		want := []string{"custom"}
+		if redact {
+			want = append(want, builtins.RedactSecrets)
+		}
+		want = append(want, builtins.LimitLargeToolResults)
+		assert.Equal(t, want, names)
+	}
+}
+
+func TestTransformPipelineRedactsBeforeSpillingLargeOutput(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	secret := portcullistest.FakeGitHubPAT("cxLeRrvbJfmYdUtr70xnNE3Q7Gvli4")
+	original := secret + "\n" + strings.Repeat("safe output\n", 6000) + secret + "\n"
+	for _, manual := range []bool{false, true} {
+		cfg := &hooks.Config{}
+		if manual {
+			cfg.ToolResponseTransform = []hooks.MatcherConfig{{Hooks: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: builtins.RedactSecrets}}}}
+		}
+		cfg = builtins.ApplyAgentDefaults(cfg, builtins.AgentDefaults{RedactSecrets: !manual})
+		registry := hooks.NewRegistry()
+		require.NoError(t, builtins.Register(registry))
+		exec := hooks.NewExecutorWithRegistry(cfg, t.TempDir(), nil, registry)
+		result, err := exec.Dispatch(t.Context(), hooks.EventToolResponseTransform, &hooks.Input{
+			SessionID: "redaction-pipeline", ToolName: "shell", ToolCategory: "shell", ToolResponse: original,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result.UpdatedToolResponse)
+		updated := *result.UpdatedToolResponse
+		assert.Contains(t, updated, "Tool call result was too large")
+		assert.NotContains(t, updated, secret)
+		assert.Contains(t, updated, portcullis.Marker)
+
+		stored, err := os.ReadFile(extractLargeResultPath(t, updated))
+		require.NoError(t, err)
+		assert.Equal(t, portcullis.Redact(original), string(stored))
+	}
 }

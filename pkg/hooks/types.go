@@ -532,9 +532,11 @@ type HookSpecificOutput struct {
 	HookEventName EventType `json:"hook_event_name,omitempty"`
 
 	// PreToolUse fields.
-	PermissionDecision       Decision       `json:"permission_decision,omitempty"`
-	PermissionDecisionReason string         `json:"permission_decision_reason,omitempty"`
-	UpdatedInput             map[string]any `json:"updated_input,omitempty"`
+	PermissionDecision       Decision `json:"permission_decision,omitempty"`
+	PermissionDecisionReason string   `json:"permission_decision_reason,omitempty"`
+
+	// UpdatedInput is a top-level patch; omitted keys are preserved.
+	UpdatedInput map[string]any `json:"updated_input,omitempty"`
 
 	// PostToolUse / SessionStart / TurnStart / Stop fields.
 	AdditionalContext  string               `json:"additional_context,omitempty"`
@@ -552,9 +554,8 @@ type HookSpecificOutput struct {
 	// scrubbing outbound chat content. Hooks for other events should
 	// leave it nil; aggregate() only honours it for before_llm_call.
 	//
-	// First non-empty wins when multiple before_llm_call hooks return
-	// rewrites concurrently — see aggregate(). Compose multiple
-	// rewriters into a single hook if you need them to chain.
+	// Hooks run in config order; each sees the preceding rewrite.
+	// The last non-empty rewrite is returned to the runtime.
 	UpdatedMessages []chat.Message `json:"updated_messages,omitempty"`
 
 	// UpdatedToolResponse, when non-nil on a
@@ -564,9 +565,8 @@ type HookSpecificOutput struct {
 	// call. Pointer-typed so an explicit empty string ("clear the
 	// output") is distinguishable from "don't touch it" (nil).
 	//
-	// First non-nil wins when multiple tool_response_transform hooks
-	// return rewrites concurrently — see aggregate(). Compose multiple
-	// rewriters into a single hook if you need them to chain.
+	// Hooks run in config order; each sees the preceding rewrite.
+	// The last non-nil rewrite, including an empty string, is returned.
 	UpdatedToolResponse *string `json:"updated_tool_response,omitempty"`
 
 	// Metadata is a set of key/value annotations a
@@ -589,7 +589,8 @@ type Result struct {
 	PermissionAllowed bool
 	// Message is feedback to include in the response.
 	Message string
-	// ModifiedInput contains modifications to tool input (PreToolUse).
+	// ModifiedInput is the complete tool input after applying PreToolUse patches.
+	// Nil means no hook supplied a patch.
 	ModifiedInput map[string]any
 	// AdditionalContext is context added by the hooks.
 	AdditionalContext  string

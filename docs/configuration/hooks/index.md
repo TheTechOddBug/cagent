@@ -394,7 +394,7 @@ The `hook_specific_output` for `pre_tool_use` (and `permission_request`) support
 | ---------------------------- | ------ | --------------------------------------- |
 | `permission_decision`        | string | `allow`, `deny`, or `ask`               |
 | `permission_decision_reason` | string | Explanation for the decision            |
-| `updated_input`              | object | Modified tool input (replaces original) |
+| `updated_input`              | object | Top-level patch to the current tool input (`pre_tool_use` default lane only); omitted keys are preserved |
 | `metadata`                   | object | (`permission_request` and `pre_tool_use` entries with `preempt_yolo: true` only) string key/value annotations merged onto the tool-call confirmation prompt — see below |
 
 ### Preempting auto-approval from `pre_tool_use`
@@ -459,6 +459,59 @@ The `hook_specific_output` for `tool_response_transform` supports:
 | `updated_tool_response` | string | Rewritten tool output (replaces the original) |
 
 This is the symmetric counterpart of `pre_tool_use`'s `updated_input`, applied to tool **results** instead of tool **arguments**. The rewrite reaches every downstream consumer — event subscribers, the persisted session file, the `post_tool_use` hook input, and the next LLM call. Use it to truncate excessive output, scrub PII, or normalise tool dialects. The built-in `redact_secrets` registers itself on this event as the third leg of the redact_secrets feature.
+
+### Composing transformations
+
+Hooks for the following events run **sequentially in configuration order**:
+
+| Event | Rewrite field | What the next hook receives |
+| ----- | ------------- | --------------------------- |
+| `pre_tool_use` (default lane) | `updated_input` | `tool_input` with the patch applied |
+| `before_llm_call` | `updated_messages` | The rewritten `messages` array |
+| `tool_response_transform` | `updated_tool_response` | The rewritten `tool_response` string |
+
+Every matching hook on these events participates in the sequence, whether it
+rewrites, observes, or returns a verdict. Each hook sees the most recent
+successful rewrite. Hooks that return no rewrite leave the current value
+unchanged; the runtime receives the final result of the sequence.
+
+`updated_input` patches replace only the top-level keys they supply. Other
+arguments are preserved; nested objects are replaced, not deep-merged. An empty
+patch does not clear the arguments. Omitting a key no longer removes it; this
+patch protocol does not support key deletion. `updated_messages` replaces the entire
+message array, with an empty array treated as no rewrite. An explicit empty
+`updated_tool_response` **does** clear the response.
+
+Verdicts still aggregate across all matching hooks: a later allow cannot undo
+a denial, and `pre_tool_use` keeps `deny > ask > allow` precedence. Blocking
+verdicts do not short-circuit the remaining hooks. Failed invocations contribute
+no rewrite and keep the existing error-policy behavior. Each hook retains its
+own timeout, so pipeline latency can add up across hooks.
+
+Other events, including `preempt_yolo: true` checks and `before_compaction`,
+continue to run concurrently. Preempting checks do not apply input rewrites;
+compaction summaries still use the first non-empty result in configuration order.
+
+The automatically injected `limit_large_tool_results` hook is appended after
+configured response transformers and automatic secret redaction. This lets
+redaction scrub the full response **before** the limiter writes it to disk and
+returns a bounded excerpt. For example:
+
+```yaml
+hooks:
+  tool_response_transform:
+    - matcher: "*"
+      hooks:
+        - type: builtin
+          command: redact_secrets
+        - type: command
+          command: ./normalize-output.sh
+# The automatic large-result limiter follows these hooks.
+```
+
+`normalize-output.sh` receives the redacted `tool_response` and can return its
+own `updated_tool_response`. Place redaction before any custom hook that must
+not receive raw secrets. See [the example configuration](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml).
 
 ### Context-Contributing Events
 
@@ -949,4 +1002,4 @@ $ docker agent run myorg/coder \
 > [!NOTE]
 > **Merging behavior**
 >
-> Agent-config, global, drop-in, and CLI hooks are additive. For each event, hooks run in this order: agent-config hooks first, then global hooks from `settings.hooks`, then [hook drop-ins](#hook-drop-in-files-hooksd) from `hooks.d/`, then CLI hooks. No source replaces another, and individual agents cannot opt out of global hooks.
+> Agent-config, global, drop-in, and CLI hooks are additive. For each event, configuration order is: agent-config hooks first, then global hooks from `settings.hooks`, then [hook drop-ins](#hook-drop-in-files-hooksd) from `hooks.d/`, then CLI hooks. Transformation pipelines execute in this order; concurrent events aggregate results in this order. No source replaces another, and individual agents cannot opt out of global hooks.
