@@ -62,6 +62,12 @@ func TestCreateChatCompletionStream_Keepalive(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(stream.Close)
 
+			if !gateway {
+				_, err := stream.Recv()
+				require.ErrorContains(t, err, "invalid stream chunk: event: keepalive")
+				return
+			}
+
 			for _, text := range []string{"hello", " world"} {
 				response, err := stream.Recv()
 				require.NoError(t, err)

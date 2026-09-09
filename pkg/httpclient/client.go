@@ -24,6 +24,10 @@ type HTTPOptions struct {
 	Header http.Header
 	Query  url.Values
 
+	// dropSSEKeepaliveEvents enables keepalive-frame dropping in the SSE
+	// filter transport; see WithSSEKeepaliveFilter.
+	dropSSEKeepaliveEvents bool
+
 	// cagentID resolves the persistent install UUID stamped as
 	// `X-Cagent-Id` on gateway-bound requests. It defaults to
 	// [userid.Get]; tests inject their own source via
@@ -89,7 +93,10 @@ func NewHTTPClient(ctx context.Context, opts ...Opt) *http.Client {
 
 	var wrapped http.RoundTripper = &userAgentTransport{
 		httpOptions: httpOptions,
-		rt:          &sseFilterTransport{base: rt},
+		rt: &sseFilterTransport{
+			base:                rt,
+			dropKeepaliveEvents: httpOptions.dropSSEKeepaliveEvents,
+		},
 	}
 	if httpOptions.refreshAuth != nil {
 		// Outermost, so a replayed request goes through the whole chain again.
@@ -232,6 +239,16 @@ func WithModelName(name string) Opt {
 func WithQuery(query url.Values) Opt {
 	return func(o *HTTPOptions) {
 		o.Query = query
+	}
+}
+
+// WithSSEKeepaliveFilter strips payload-free events named "keepalive".
+// The Gemini gateway emits these transport frames, but the GenAI SDK rejects
+// event-prefixed lines even when their only data is {}. Other names and
+// keepalives with meaningful payloads are deliberately left unchanged.
+func WithSSEKeepaliveFilter() Opt {
+	return func(o *HTTPOptions) {
+		o.dropSSEKeepaliveEvents = true
 	}
 }
 
