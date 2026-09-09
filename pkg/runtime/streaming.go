@@ -47,9 +47,13 @@ type streamResult struct {
 	ReasoningContent  string
 	ThinkingSignature string
 	ThoughtSignature  []byte
-	Stopped           bool
-	FinishReason      chat.FinishReason
-	Usage             *chat.Usage
+	// Media accumulates every [chat.MediaDelta] streamed during the turn
+	// (e.g. generated images). Populated regardless of provider — see
+	// chat.MessageDelta.Media.
+	Media        []chat.MediaDelta
+	Stopped      bool
+	FinishReason chat.FinishReason
+	Usage        *chat.Usage
 }
 
 // handleStream reads a chat.MessageStream to completion, emitting streaming
@@ -110,6 +114,7 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 	var thinkingSignature string
 	var thoughtSignature []byte
 	var toolCalls []tools.ToolCall
+	var media []chat.MediaDelta
 	var messageUsage *chat.Usage
 	var providerFinishReason chat.FinishReason
 
@@ -205,6 +210,11 @@ mainLoop:
 				thoughtSignature = choice.Delta.ThoughtSignature
 			}
 
+			// A terminal chunk can also carry media; collect it before returning.
+			if len(choice.Delta.Media) > 0 {
+				media = append(media, choice.Delta.Media...)
+			}
+
 			// Accumulate tool call deltas from this chunk *before* evaluating the
 			// finish reason below. Some OpenAI-compatible providers (e.g. LiteLLM
 			// in front of Gemini) pack a complete tool call and a terminal
@@ -296,6 +306,7 @@ mainLoop:
 					ReasoningContent:  fullReasoningContent.String(),
 					ThinkingSignature: thinkingSignature,
 					ThoughtSignature:  thoughtSignature,
+					Media:             media,
 					Stopped:           len(toolCalls) == 0, // stop only when there are no tool calls to execute
 					FinishReason:      finishReason,
 					Usage:             messageUsage,
@@ -362,6 +373,8 @@ mainLoop:
 	// Invariant: a bare-EOF turn (no per-choice finish_reason) is terminal
 	// whenever there are no tool calls — the outer loop has nothing to continue
 	// on. Turns with tool calls keep Stopped=false so the loop executes them.
+	// Media is irrelevant to this decision: with no tool calls pending, the turn
+	// is over either way (media or not) — stopping is what ends it correctly.
 	// NOTE(krissetto): this can likely be removed once compaction works properly with all providers (aka dmr)
 	stoppedNoToolCalls := len(toolCalls) == 0
 
@@ -376,7 +389,7 @@ mainLoop:
 		switch {
 		case len(toolCalls) > 0:
 			finishReason = chat.FinishReasonToolCalls
-		case fullContent.Len() > 0:
+		case fullContent.Len() > 0 || len(media) > 0:
 			finishReason = chat.FinishReasonStop
 		default:
 			finishReason = chat.FinishReasonNull
@@ -396,6 +409,7 @@ mainLoop:
 		ReasoningContent:  fullReasoningContent.String(),
 		ThinkingSignature: thinkingSignature,
 		ThoughtSignature:  thoughtSignature,
+		Media:             media,
 		Stopped:           stoppedNoToolCalls,
 		FinishReason:      finishReason,
 		Usage:             messageUsage,
