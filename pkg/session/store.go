@@ -16,6 +16,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/concurrent"
+	"github.com/docker/docker-agent/pkg/sqliteutil"
 )
 
 var (
@@ -1136,9 +1137,10 @@ func (s *SQLiteSessionStore) SetSessionStarred(ctx context.Context, id string, s
 	return nil
 }
 
-// Close closes the database connection
+// Close closes the database connection, waiting for in-flight statements to
+// release it so the file can be removed immediately afterwards.
 func (s *SQLiteSessionStore) Close() error {
-	return s.db.Close()
+	return sqliteutil.CloseDB(s.db)
 }
 
 // AddMessage adds a message to a session at the next position.

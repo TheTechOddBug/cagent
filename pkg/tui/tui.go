@@ -3259,6 +3259,18 @@ func (m *appModel) cleanupManagedResources() {
 	})
 }
 
+// Shutdown releases the resources the TUI owns (theme watcher, tab-state
+// store, session supervisor) and returns once they are closed. It is for
+// callers that stop the program without going through the exit dialogs —
+// notably the tuitest harness, which must have tui_state.db closed before
+// t.TempDir removes it (Windows cannot delete an open file). The context
+// watcher started by contextShutdownCmd performs the same once-guarded
+// cleanup, so calling both is safe: whichever runs second either finds the
+// work done or blocks until it is.
+func (m *appModel) Shutdown() {
+	m.cleanupManagedResources()
+}
+
 // cleanupAll cleans up all sessions, editors, and resources. It is invoked
 // from several message handlers (ExitSessionMsg, ExitConfirmedMsg, …) and may
 // be called more than once on the same model; the entire shutdown sequence is
