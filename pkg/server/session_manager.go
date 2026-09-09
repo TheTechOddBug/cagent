@@ -1700,11 +1700,9 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 	overrides, _ := sess.ModelStateSnapshot()
 	applyStoredOverrides(ctx, sess.ID, run, overrides)
 
-	titleModels := agt.TitleModels(ctx)
-	var titleGen *sessiontitle.Generator
-	if len(titleModels) > 0 {
-		titleGen = sessiontitle.New(titleModels[0], titleModels[1:]...)
-	}
+	// May be nil when the agent has no configured title candidate; a nil
+	// generator skips title generation.
+	titleGen := sessiontitle.New(agt.TitleModels(ctx)...)
 
 	// Construction succeeded: the selected author default may now be
 	// committed and the pending marker consumed, exactly once.
