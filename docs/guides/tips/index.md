@@ -431,6 +431,27 @@ If a sound is enough, set `settings: { sound: true }` instead — Docker Agent p
 
 See the [Hooks documentation](../../configuration/hooks/index.md) for the full list of events, their payloads, and per-hook options (`env`, `working_dir`, `timeout`).
 
+### Inject the Current Session ID with Hooks
+
+Use a `session_start` [hook](../../configuration/hooks/index.md) to make the current session ID available to the model. The hook reads `.session_id` from the JSON payload on stdin and prints it as plain text on stdout, which Docker Agent adds to the model's context:
+
+```yaml
+agents:
+  root:
+    model: openai/gpt-4o
+    description: Session-aware assistant
+    instruction: You are a helpful assistant.
+    hooks:
+      session_start:
+        - type: command
+          command: |
+            jq -r '"Current session ID: \(.session_id)"'
+```
+
+This requires `jq` on `PATH`. The session ID comes from stdin, not an automatically supplied `$SESSION_ID` environment variable.
+
+The model receives context such as `Current session ID: 550e8400-e29b-41d4-a716-446655440000`; this is not a visible chat message. Use `turn_start` instead of `session_start` to refresh the context before every model call.
+
 ### GitHub PR Reviewer Example
 
 Use Docker Agent as a GitHub Actions PR reviewer:
