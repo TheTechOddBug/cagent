@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -243,18 +244,35 @@ tool_guard:
 	} {
 		err := tc.cfg.Validate()
 		require.Error(t, err, tc.name)
-		assert.Contains(t, err.Error(), "hooks."+tc.name+"[0]: preempt_yolo is not valid on "+tc.name)
+		assert.Contains(t, err.Error(), "hooks."+tc.name+"[0]: preempt_yolo is only valid on pre_tool_use")
 	}
 
-	// Legacy events still accept it (pre_tool_use) or ignore it (others).
+	// Only pre_tool_use accepts the legacy lane option.
 	legacy := latest.HooksConfig{
 		PreToolUse:  latest.HookMatcherConfigs{{PreemptYolo: &preempt, Hooks: cfg.ToolGuard[0].Hooks}},
 		PostToolUse: latest.HookMatcherConfigs{{PreemptYolo: &preempt, Hooks: cfg.ToolGuard[0].Hooks}},
 	}
+	require.ErrorContains(t, legacy.Validate(), "preempt_yolo is only valid on pre_tool_use")
+	legacy.PostToolUse = nil
 	require.NoError(t, legacy.Validate())
 
 	// Malformed entries are still caught on the new events.
 	err := (&latest.HooksConfig{ToolGuard: latest.HookMatcherConfigs{{Matcher: "*"}}}).Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hooks.tool_guard[0]: at least one hook is required")
+}
+
+func TestMergeHooksIncludesEveryEvent(t *testing.T) {
+	t.Parallel()
+	base, extra := &latest.HooksConfig{}, &latest.HooksConfig{}
+	for _, cfg := range []*latest.HooksConfig{base, extra} {
+		v := reflect.ValueOf(cfg).Elem()
+		for _, field := range v.Fields() {
+			field.Set(reflect.MakeSlice(field.Type(), 1, 1))
+		}
+	}
+	merged := reflect.ValueOf(MergeHooks(base, extra)).Elem()
+	for i := range merged.NumField() {
+		assert.Equal(t, 2, merged.Field(i).Len(), merged.Type().Field(i).Name)
+	}
 }

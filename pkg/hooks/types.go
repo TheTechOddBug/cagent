@@ -338,10 +338,10 @@ type Input struct {
 	// applies the rewrite before the actual provider call.
 	Messages []chat.Message `json:"messages,omitempty"`
 
-	// SessionStart specific: "startup", "resume", "clear", "compact".
+	// SessionStart specific: "startup".
 	// PreCompact specific: "manual", "auto", "overflow", "tool_overflow".
 	Source string `json:"source,omitempty"`
-	// SessionEnd specific: "clear", "logout", "prompt_input_exit", "other".
+	// SessionEnd specific: "stream_ended".
 	// TurnEnd specific: "normal", "continue", "steered", "error",
 	// "canceled", "hook_blocked", "loop_detected".
 	Reason string `json:"reason,omitempty"`
@@ -578,7 +578,7 @@ type HookSpecificOutput struct {
 	// UpdatedInput is a top-level patch; omitted keys are preserved.
 	UpdatedInput map[string]any `json:"updated_input,omitempty"`
 
-	// PostToolUse / SessionStart / TurnStart / Stop fields.
+	// Context-contributing events (see EventContract).
 	AdditionalContext  string               `json:"additional_context,omitempty"`
 	InstructionContext []InstructionContext `json:"instruction_context,omitempty"`
 
