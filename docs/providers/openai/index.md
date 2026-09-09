@@ -57,6 +57,25 @@ Starting with GPT-5.6, OpenAI renamed the `-mini`/`-nano` size tiers to `-terra`
 
 Find more model names at [modelnames.ai](https://modelnames.ai/) or in the [official OpenAI docs](https://platform.openai.com/docs/models).
 
+## Service Tier (Fast Mode)
+
+Set `provider_opts.service_tier` to request OpenAI's [Fast mode](https://developers.openai.com/api/docs/guides/fast-mode):
+
+```yaml
+models:
+  fast-gpt:
+    provider: openai
+    model: gpt-5.6
+    provider_opts:
+      service_tier: fast
+```
+
+OpenAI also accepts `priority` for Fast mode. It provides faster processing at premium pricing on supported models, without reducing reasoning effort. This is independent of `thinking_budget` and applies to all requests using the configured model, including internal calls such as title generation and compaction.
+
+The value is forwarded unchanged to Chat Completions (including reranking) and Responses requests, over either SSE or WebSocket. Other tiers, such as `auto`, `default`, and `flex`, can also be requested; availability and valid values depend on the API and model. When omitted or empty, no `service_tier` is sent, leaving the API's default behavior unchanged. Non-string values are ignored.
+
+See [`examples/openai-service-tier.yaml`](https://github.com/docker/docker-agent/blob/main/examples/openai-service-tier.yaml) for a complete example.
+
 ## Thinking Budget
 
 OpenAI reasoning models (o-series, gpt-5, gpt-5-mini, gpt-5.6 family) support extended thinking through the `reasoning_effort` API parameter. Set `thinking_budget` to control the effort level:

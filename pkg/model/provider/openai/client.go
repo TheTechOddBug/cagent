@@ -406,8 +406,9 @@ func (c *Client) CreateChatCompletionStream(
 	trackUsage := c.TrackUsageEnabled()
 
 	params := openai.ChatCompletionNewParams{
-		Model:    c.ModelConfig.Model,
-		Messages: c.convertMessages(ctx, messages),
+		Model:       c.ModelConfig.Model,
+		ServiceTier: openai.ChatCompletionNewParamsServiceTier(serviceTier(c.ModelConfig.ProviderOpts)),
+		Messages:    c.convertMessages(ctx, messages),
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(trackUsage),
 		},
@@ -675,7 +676,8 @@ func (c *Client) CreateResponseStream(
 	}
 
 	params := responses.ResponseNewParams{
-		Model: c.ModelConfig.Model,
+		Model:       c.ModelConfig.Model,
+		ServiceTier: responses.ResponseNewParamsServiceTier(serviceTier(c.ModelConfig.ProviderOpts)),
 	}
 	params.Input.OfInputItemList = input
 
@@ -1274,7 +1276,8 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []types.Doc
 	systemPrompt := prompts.BuildRerankSystemPrompt(documents, criteria, c.ModelConfig.ProviderOpts, jsonFormatInstruction)
 
 	params := openai.ChatCompletionNewParams{
-		Model: c.ModelConfig.Model,
+		Model:       c.ModelConfig.Model,
+		ServiceTier: openai.ChatCompletionNewParamsServiceTier(serviceTier(c.ModelConfig.ProviderOpts)),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(systemPrompt),
 			openai.UserMessage(userPrompt),
