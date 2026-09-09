@@ -433,7 +433,7 @@ See the [Hooks documentation](../../configuration/hooks/index.md) for the full l
 
 ### Inject the Current Session ID with Hooks
 
-Use a `session_start` [hook](../../configuration/hooks/index.md) to make the current session ID available to the model. The hook reads `.session_id` from the JSON payload on stdin and prints it as plain text on stdout, which Docker Agent adds to the model's context:
+Use the `add_context` [builtin hook](../../configuration/hooks/index.md#template-context-with-add_context) on `session_start` to make the current session ID available to the model. It renders a Go template against the hook input and adds the result to the model's context, without a shell, `jq`, or other external dependencies:
 
 ```yaml
 agents:
@@ -443,12 +443,13 @@ agents:
     instruction: You are a helpful assistant.
     hooks:
       session_start:
-        - type: command
-          command: |
-            jq -r '"Current session ID: \(.session_id)"'
+        - type: builtin
+          command: add_context
+          args:
+            - "Current session ID: {{ .SessionID }}"
 ```
 
-This requires `jq` on `PATH`. The session ID comes from stdin, not an automatically supplied `$SESSION_ID` environment variable.
+Templates use Go field names such as `.SessionID`, `.AgentName`, and `.Cwd`, rather than the JSON names used by command hooks.
 
 The model receives context such as `Current session ID: 550e8400-e29b-41d4-a716-446655440000`; this is not a visible chat message. Use `turn_start` instead of `session_start` to refresh the context before every model call.
 

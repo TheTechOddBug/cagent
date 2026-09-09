@@ -205,6 +205,7 @@ Built-ins are typically zero-config and faster than equivalent shell hooks becau
 
 | Builtin                 | Event                                                                                     | Args                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------- | ----------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_context` | [Context-contributing events](#context-contributing-events) | `[template1, template2, ...]` | Renders Go templates against hook input and joins non-empty results as additional context. No external dependencies. See [Template context](#template-context-with-add_context). |
 | `add_date`              | `turn_start`                                                                              | _none_                | Prepends `Today's date: YYYY-MM-DD` so the model always knows the current date.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `add_environment_info`  | `session_start`                                                                           | _none_                | Adds the working directory, git-repo status, OS, CPU architecture, and the resolved shell.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `add_prompt_files`      | `turn_start`                                                                              | `[file1, file2, ...]` | Reads each named file from the workdir hierarchy (walking up) and the home directory, and appends their contents.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -264,6 +265,40 @@ See [`examples/snapshot_hooks.yaml`](https://github.com/docker/docker-agent/blob
 > **Two flavors of `max_iterations`**
 >
 > The `max_iterations` agent field has its own UX (it pauses and asks the user to resume past the limit). The `max_iterations` built-in hook is a **hard stop with no resume** — when its counter trips, the agent terminates with a block decision. Use the agent field for interactive sessions and the built-in hook to enforce non-negotiable caps in unattended runs.
+
+### Template Context with add_context
+
+Use `add_context` to inject hook input into the conversation without a shell command, JSON parser, or model call:
+
+```yaml
+hooks:
+  session_start:
+    - type: builtin
+      command: add_context
+      args:
+        - "Current session ID: {{ .SessionID }}"
+        - "Agent: {{ .AgentName }}"
+        - "Working directory: {{ .Cwd }}"
+```
+
+Each argument is an independent Go [`text/template`](https://pkg.go.dev/text/template), rendered against the current [hook input](#hook-input). Templates use Go field names, **not JSON keys**: `.SessionID`, `.AgentName`, and `.Cwd`, rather than `.session_id`, `.agent_name`, and `.cwd`. Event-specific fields are also available, such as `.Prompt` for `user_prompt_submit` and `.ToolName` / `.ToolInput` for tool events. Only fields populated by the selected event carry values. Unknown fields and missing map keys are errors; guard optional maps with `{{ if .ToolInput }}` before accessing their keys. The map must also contain the requested key.
+
+Standard Go template functions and actions (`printf`, `if`, `range`, etc.) are supported. For example:
+
+```yaml
+hooks:
+  user_prompt_submit:
+    - type: builtin
+      command: add_context
+      args:
+        - '{{ if .Prompt }}User request for session {{ .SessionID }}: {{ .Prompt }}{{ end }}'
+```
+
+Non-blank results are joined in argument order with newlines and returned as `additional_context`; no arguments or only blank results contribute nothing. Rendered values remain plain text: they are not executed as commands, re-evaluated as templates, or interpreted as hook-output JSON. Template parse or execution errors discard the hook's entire output and follow its `on_error` policy.
+
+Choose an event that [consumes additional context](#context-contributing-events), such as `session_start`, `turn_start`, or `user_prompt_submit`. Use `turn_start` to recompute the context before every model call. This builtin adds model-visible context, not a visible chat message.
+
+See [`examples/context_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/context_hooks.yaml) for a complete agent configuration.
 
 ## Matcher Patterns
 

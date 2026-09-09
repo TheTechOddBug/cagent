@@ -2902,7 +2902,7 @@ type HookDefinition struct {
 	//   - "builtin":  invoke a named, in-process Go function (the name
 	//                 lives in Command). The set of registered builtins
 	//                 is owned by the runtime; the docker-agent runtime
-	//                 ships add_date, add_environment_info,
+	//                 ships add_context, add_date, add_environment_info,
 	//                 add_prompt_files, redact_secrets (see also the
 	//                 redact_secrets agent flag), and several others
 	//                 documented in pkg/hooks/builtins.
@@ -2919,7 +2919,8 @@ type HookDefinition struct {
 	// Args are arbitrary string arguments passed to the hook handler.
 	// Builtin handlers receive them as the args parameter; future handler
 	// kinds (http, mcp, ...) can adopt the same field. Empty for command
-	// hooks today (the shell command stays self-contained).
+	// hooks today (the shell command stays self-contained). The add_context
+	// builtin renders each argument as a Go template against the hook input.
 	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
 
 	// Timeout is the execution timeout in seconds (default: 60)
