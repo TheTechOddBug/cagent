@@ -3,6 +3,52 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.137.0] - 2026-09-09
+
+This release removes the `session_plan` toolset, adds audio/video/image input and output capability handling, expands hook functionality with new builtins and sequential pipelines, and includes several bug fixes and safety improvements.
+
+## Breaking Changes
+- Removes the `session_plan` toolset, including its tool handlers, stream event, plans service, TUI `/plans` browser, and `--session`/`--scope` addressing on the `plans` command
+
+## What's New
+- Adds detection and filtering of audio/video input modalities per request model, stripping unsupported media parts and preserving provider-specific fallbacks
+- Adds `output_capabilities.image` model override to resolve image output capability from models.dev metadata
+- Adds guard for image-output requests across Google (gateway, direct Gemini API, and Vertex) surfaces, rejecting incompatible custom tools and structured output before dispatch
+- Adds `add_context` builtin hook for dependency-free Go template-based context injection into the model's conversation
+- Adds sequential pipeline execution for `pre_tool_use`, `before_llm_call`, and `tool_response_transform` hooks, replacing the previous concurrent first-rewrite-wins strategy
+- Adds 56 new safe and 27 new destructive shell safety patterns, covering Git read operations, GitHub CLI queries, Go tooling, `rg`/`ripgrep`, and common inspection commands
+
+## Bug Fixes
+- Fixes Gemini keepalive SSE events (`event: keepalive` with `data: {}`) being passed to the SDK parser, causing parse failures; these frames are now dropped at the transport layer
+- Fixes image-output-capable models being incorrectly excluded from session title generation
+- Fixes shell metacharacter detection and corrects `gh`/`rg` pattern classifications
+- Fixes SQLite stores not being closed deterministically on Windows, causing `TempDir` cleanup failures in tests
+- Fixes `pkg/session` importing the SQLite driver, keeping the package free of that dependency
+
+## Technical Changes
+- Adds request-shape diagnostics for Gemini image requests (excluding prompt, schema, media-payload, and credential fields)
+- Adds shared UTF-8-safe display-name sanitization helpers
+- Classifies Gemini API 400 errors into bounded actionable categories
+- Adds documentation tip for injecting session ID into model context using a `session_start` hook
+### Pull Requests
+
+- [#3996](https://github.com/docker/docker-agent/pull/3996) - feat(#3996): detect audio/video input modalities
+- [#4016](https://github.com/docker/docker-agent/pull/4016) - feat(#3996): resolve and filter input media per request model
+- [#4017](https://github.com/docker/docker-agent/pull/4017) - fix(#3996): diagnose Gemini requests and sanitize API failures
+- [#4019](https://github.com/docker/docker-agent/pull/4019) - feat(#3996): resolve image output capability from models.dev
+- [#4020](https://github.com/docker/docker-agent/pull/4020) - feat(#3996): guard image-output requests across Google surfaces
+- [#4021](https://github.com/docker/docker-agent/pull/4021) - fix(#3996): keep image-output models eligible for session titles
+- [#4022](https://github.com/docker/docker-agent/pull/4022) - fix(#3996): filter gateway SSE keepalives and test image requests
+- [#4199](https://github.com/docker/docker-agent/pull/4199) - feat(plan)!: remove the session_plan toolset
+- [#4202](https://github.com/docker/docker-agent/pull/4202) - docs: update CHANGELOG.md for v1.136.0
+- [#4203](https://github.com/docker/docker-agent/pull/4203) - fix: drop Gemini keepalive SSE events before SDK parsing
+- [#4205](https://github.com/docker/docker-agent/pull/4205) - docs: add tip for injecting session ID with a session_start hook
+- [#4206](https://github.com/docker/docker-agent/pull/4206) - feat(hooks): add add_context builtin for dependency-free template context injection
+- [#4207](https://github.com/docker/docker-agent/pull/4207) - feat(hooks): sequential pipeline for pre_tool_use, before_llm_call, and tool_response_transform
+- [#4209](https://github.com/docker/docker-agent/pull/4209) - feat(safety): expand shell safety patterns and harden substitution checks
+- [#4210](https://github.com/docker/docker-agent/pull/4210) - fix(tui): close SQLite stores deterministically so Windows can delete t.TempDir
+
+
 ## [v1.136.0] - 2026-09-08
 
 This release adds support for carrying encrypted agent config in the request body instead of headers, addressing potential header-size limit issues.
@@ -6023,3 +6069,5 @@ This release improves the terminal user interface with better error handling and
 [v1.135.0]: https://github.com/docker/docker-agent/releases/tag/v1.135.0
 
 [v1.136.0]: https://github.com/docker/docker-agent/releases/tag/v1.136.0
+
+[v1.137.0]: https://github.com/docker/docker-agent/releases/tag/v1.137.0
