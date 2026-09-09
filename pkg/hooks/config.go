@@ -5,8 +5,7 @@ import (
 )
 
 // The persisted hooks types live next to the config schema; the
-// runtime uses these short aliases. Adding a new event is a one-line
-// change on [latest.HooksConfig] plus one line in compileEvents.
+// runtime uses these short aliases. Event capabilities live in pkg/hooks/events.
 type (
 	// Config is the hooks configuration for an agent.
 	Config = latest.HooksConfig

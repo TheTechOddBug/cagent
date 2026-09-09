@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/concurrent"
+	"github.com/docker/docker-agent/pkg/hooks/events"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 )
 
@@ -68,49 +69,17 @@ func NewExecutorWithRegistry(config *Config, workingDir string, env []string, re
 	}
 }
 
-// compileEvents builds the per-event matcher lookup. This is the only
-// place in the runtime that enumerates events; the persisted side
-// owns the struct itself, its IsEmpty, and validate, all on
-// [latest.HooksConfig]. Adding a new event is a one-line change here.
+// compileEvents compiles the persisted event lists once per executor.
 func compileEvents(c *Config) map[EventType][]matcher {
-	flat := func(hooks []Hook) []matcher {
-		if len(hooks) == 0 {
-			return nil
+	compiled := make(map[EventType][]matcher)
+	for event, matchers := range c.Events() {
+		if EventType(event) == EventPreToolUse {
+			compiled[EventPreToolUse], compiled[EventPreToolUsePreYolo] = splitPreToolUseByPreemptYolo(matchers)
+		} else {
+			compiled[EventType(event)] = compileMatchers(matchers)
 		}
-		return []matcher{{hooks: hooks}}
 	}
-	preToolUseDefault, preToolUsePreYolo := splitPreToolUseByPreemptYolo(c.PreToolUse)
-	return map[EventType][]matcher{
-		EventPreToolUse:                 preToolUseDefault,
-		EventPreToolUsePreYolo:          preToolUsePreYolo,
-		EventPostToolUse:                compileMatchers(c.PostToolUse),
-		EventPermissionRequest:          compileMatchers(c.PermissionRequest),
-		EventSessionStart:               flat(c.SessionStart),
-		EventUserPromptSubmit:           flat(c.UserPromptSubmit),
-		EventUserSteeringMessagesSubmit: flat(c.UserSteeringMessagesSubmit),
-		EventUserFollowupSubmit:         flat(c.UserFollowupSubmit),
-		EventTurnStart:                  flat(c.TurnStart),
-		EventTurnEnd:                    flat(c.TurnEnd),
-		EventBeforeLLMCall:              flat(c.BeforeLLMCall),
-		EventAfterLLMCall:               flat(c.AfterLLMCall),
-		EventSessionEnd:                 flat(c.SessionEnd),
-		EventPreCompact:                 flat(c.PreCompact),
-		EventSubagentStop:               flat(c.SubagentStop),
-		EventOnUserInput:                flat(c.OnUserInput),
-		EventStop:                       flat(c.Stop),
-		EventNotification:               flat(c.Notification),
-		EventOnError:                    flat(c.OnError),
-		EventOnMaxIterations:            flat(c.OnMaxIterations),
-		EventOnAgentSwitch:              flat(c.OnAgentSwitch),
-		EventOnSessionResume:            flat(c.OnSessionResume),
-		EventOnToolApprovalDecision:     flat(c.OnToolApprovalDecision),
-		EventBeforeCompaction:           flat(c.BeforeCompaction),
-		EventAfterCompaction:            flat(c.AfterCompaction),
-		EventToolResponseTransform:      compileMatchers(c.ToolResponseTransform),
-		EventToolInputTransform:         compileMatchers(c.ToolInputTransform),
-		EventToolGuard:                  compileMatchers(c.ToolGuard),
-		EventWorktreeCreate:             flat(c.WorktreeCreate),
-	}
+	return compiled
 }
 
 // splitPreToolUseByPreemptYolo buckets pre_tool_use matcher entries
@@ -171,6 +140,12 @@ func (e *Executor) Has(event EventType) bool {
 // handlers) and aggregation reuses the EventPreToolUse branches.
 // Tracing keeps the lane visible via the span name.
 func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) (*Result, error) {
+	if EventContract(event).Name == "" {
+		return nil, fmt.Errorf("unknown hook event %q", event)
+	}
+	if input == nil {
+		return nil, errors.New("hook input must not be nil")
+	}
 	hooks := e.hooksFor(event, input.ToolName)
 	if len(hooks) == 0 {
 		return &Result{Allowed: true}, nil
@@ -216,22 +191,26 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		err = fmt.Errorf("failed to serialize hook input: %w", err)
-		if isPreApprovalEvent(event) {
-			// The runtime adapter maps a Dispatch error to "no opinion";
-			// pre-approval events must not fall open on a payload bug.
-			slog.WarnContext(ctx, "Hook input serialization failed; blocking event", "event", event, "error", err)
-			return &Result{ExitCode: -1, Message: err.Error()}, nil
+		results := make([]hookResult, len(hooks))
+		for i, hook := range hooks {
+			results[i] = hookResult{hook: hook, err: err}
 		}
-		return nil, err
+		final := aggregate(results, event)
+		if EventContract(event).CanBlock {
+			final.Allowed = false
+			final.ExitCode = -1
+			final.Message = err.Error()
+		}
+		annotateHookSpan(span, event, final)
+		return final, nil
 	}
 
 	var final *Result
-	switch event {
-	case EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform, EventToolInputTransform:
+	if EventContract(event).Sequential() {
 		final = e.runPipeline(ctx, event, hooks, *input, inputJSON)
-	default:
+	} else {
 		results := concurrent.MapSlice(hooks, func(hook Hook) hookResult {
-			return e.runHook(ctx, hook, inputJSON)
+			return e.runHook(ctx, event, hook, inputJSON)
 		})
 		final = aggregate(results, event)
 	}
@@ -261,7 +240,7 @@ func annotateHookSpan(span trace.Span, event EventType, r *Result) {
 	if r.DecisionReason != "" {
 		attrs = append(attrs, attribute.String("cagent.hook.decision_reason", r.DecisionReason))
 	}
-	if event == EventPermissionRequest {
+	if EventContract(event).PermissionApproval {
 		attrs = append(attrs, attribute.Bool("cagent.hook.permission_allowed", r.PermissionAllowed))
 	}
 	if r.ModifiedInput != nil {
@@ -287,40 +266,38 @@ func annotateHookSpan(span trace.Span, event EventType, r *Result) {
 	span.SetAttributes(attrs...)
 }
 
-// hooksFor returns the deduplicated list of hooks that should run for
-// (event, toolName). Dedup by (type, command, args) catches the common
-// case of an explicit YAML hook overlapping a runtime auto-injected
-// one (e.g. WithAddDate plus a user-authored add_date entry).
+// hooksFor keeps the first matching occurrence of each complete definition.
+// Identical user-authored and auto-injected hooks run only once per dispatch.
 func (e *Executor) hooksFor(event EventType, toolName string) []Hook {
-	seen := make(map[string]bool)
 	var hooks []Hook
 	for _, m := range e.events[event] {
 		if !m.matches(toolName) {
 			continue
 		}
 		for _, h := range m.hooks {
-			key := dedupKey(h)
-			if seen[key] {
+			if slices.ContainsFunc(hooks, func(existing Hook) bool { return sameHook(existing, h) }) {
 				continue
 			}
-			seen[key] = true
 			hooks = append(hooks, h)
 		}
 	}
 	return hooks
 }
 
-// dedupKey returns a deterministic key identifying a hook by (type, command, args).
-func dedupKey(h Hook) string {
-	var b strings.Builder
-	b.WriteString(h.Type)
-	b.WriteByte(0)
-	b.WriteString(h.Command)
-	for _, a := range h.Args {
-		b.WriteByte(0)
-		b.WriteString(a)
-	}
-	return b.String()
+// sameHook compares configured values without expanding env or working_dir.
+func sameHook(a, b Hook) bool {
+	return a.Name == b.Name &&
+		a.Type == b.Type &&
+		a.Command == b.Command &&
+		slices.Equal(a.Args, b.Args) &&
+		a.Timeout == b.Timeout &&
+		maps.Equal(a.Env, b.Env) &&
+		a.WorkingDir == b.WorkingDir &&
+		a.OnError == b.OnError &&
+		a.StrictOutput == b.StrictOutput &&
+		a.Model == b.Model &&
+		a.Prompt == b.Prompt &&
+		a.Schema == b.Schema
 }
 
 // hookResult is the outcome of a single hook invocation: the raw
@@ -338,7 +315,7 @@ type hookResult struct {
 // runHook resolves the hook's [HookType] in the registry, applies its
 // timeout, and returns the structured outcome. JSON-on-stdout is parsed
 // into [Output] when the handler didn't already provide one.
-func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hookResult {
+func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inputJSON []byte) hookResult {
 	factory, ok := e.registry.Lookup(hook.Type)
 	if !ok {
 		return hookResult{hook: hook, err: fmt.Errorf("unsupported hook type: %s", hook.Type)}
@@ -383,112 +360,55 @@ func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hoo
 
 	// Fall back to the legacy "parse JSON from stdout" protocol.
 	if r.Output == nil && r.ExitCode == 0 {
-		r.Output = parseStdoutJSON(r.Stdout)
+		r.Output, err = parseStdoutJSON(r.Stdout, hook.StrictOutput)
+		if err != nil {
+			return markFailed(err)
+		}
+	}
+	if r.ExitCode != 0 && r.ExitCode != 2 {
+		return markFailed(fmt.Errorf("exited with status %d", r.ExitCode))
+	}
+	if r.Output != nil && r.ExitCode == 0 {
+		if err := validateOutput(event, r.Output, hook.StrictOutput); err != nil {
+			return markFailed(err)
+		}
 	}
 	return r
 }
 
-// parseStdoutJSON returns a parsed [Output] when stdout begins with '{'
-// and decodes cleanly, or nil otherwise. Used for the legacy "JSON on
-// stdout" hook protocol where handlers don't pre-populate
-// [HandlerResult.Output].
-func parseStdoutJSON(stdout string) *Output {
-	s := strings.TrimSpace(stdout)
-	if !strings.HasPrefix(s, "{") {
-		return nil
-	}
-	var parsed Output
-	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
-		return nil
-	}
-	return &parsed
-}
-
-// isPreToolUseLane reports whether event is one of the two pre_tool_use
-// dispatch lanes, which share verdict semantics.
-func isPreToolUseLane(event EventType) bool {
-	return event == EventPreToolUse || event == EventPreToolUsePreYolo
-}
-
-// isPreApprovalEvent reports whether event always runs before the
-// deterministic approval pipeline. A dispatch that cannot even run its
-// hooks must block rather than be treated as "no opinion".
-func isPreApprovalEvent(event EventType) bool {
-	return event == EventToolInputTransform || event == EventToolGuard || event == EventPreToolUsePreYolo
-}
-
-// carriesDecision reports whether event's PermissionDecision verdicts
-// aggregate into [Result.Decision].
-func carriesDecision(event EventType) bool {
-	return isPreToolUseLane(event) || event == EventToolGuard
-}
-
-// rewritesToolInput reports whether event honours UpdatedInput.
-func rewritesToolInput(event EventType) bool {
-	return event == EventPreToolUse || event == EventToolInputTransform
-}
-
-// collectsMetadata reports whether event merges hook Metadata into
-// [Result.Metadata] for the confirmation prompt.
-func collectsMetadata(event EventType) bool {
-	return event == EventPermissionRequest || event == EventPreToolUsePreYolo || event == EventToolGuard
-}
-
-// failClosed reports whether a hook failure on event must deny the
-// event. PreToolUse (both lanes) and tool_guard are hard security
-// boundaries: a crashed safety hook must not silently allow the call
-// through. Every other event surfaces failures as warnings unless the
-// hook opts into ErrorPolicyBlock.
-func failClosed(event EventType) bool {
-	return isPreToolUseLane(event) || event == EventToolGuard
-}
-
-// stdoutAsContext reports whether plain stdout (non-JSON, exit 0)
-// from a hook should be routed into Result.AdditionalContext. It is
-// the runtime's emit site that decides whether AdditionalContext is
-// surfaced; events that don't consume it MUST drop plain stdout so
-// hook authors don't think their output mattered when it would have
-// been thrown away.
-func stdoutAsContext(event EventType) bool {
-	switch event {
-	case EventPostToolUse,
-		EventSessionStart,
-		EventUserPromptSubmit,
-		EventUserSteeringMessagesSubmit,
-		EventUserFollowupSubmit,
-		EventTurnStart,
-		EventPreCompact,
-		EventStop,
-		EventWorktreeCreate:
-		return true
-	}
-	return false
-}
-
 // aggregate combines per-hook results into a single [Result].
 func aggregate(results []hookResult, event EventType) *Result {
+	contract := EventContract(event)
 	final := &Result{Allowed: true}
 	var messages, contexts, sysMsgs []string
 
 	for _, r := range results {
+		if r.err == nil && r.ExitCode != 0 && r.ExitCode != 2 {
+			r.err = fmt.Errorf("exited with status %d", r.ExitCode)
+		}
 		switch {
 		case r.err != nil:
 			policy := ErrorPolicy(r.hook.OnError)
 			if policy == "" {
 				policy = ErrorPolicyWarn
 			}
-			if failClosed(event) || policy == ErrorPolicyBlock {
+			if contract.FailClosed || (contract.CanBlock && policy == ErrorPolicyBlock) {
 				slog.Warn("Hook failed; blocking event", "hook", r.hook.DisplayName(), "error", r.err)
 				final.Allowed = false
 				final.ExitCode = -1
 				final.Stderr = r.Stderr
-				messages = append(messages, hookFailureMessage(event, r.err))
+				messages = append(messages, hookFailureMessage(event, fmt.Errorf("hook %q: %w", r.hook.DisplayName(), r.err)))
 			} else if policy != ErrorPolicyIgnore {
 				slog.Warn("Hook execution error", "hook", r.hook.DisplayName(), "error", r.err)
+				sysMsgs = append(sysMsgs, hookFailureMessage(event, fmt.Errorf("hook %q: %w", r.hook.DisplayName(), r.err)))
 			}
 			continue
 
 		case r.ExitCode == 2:
+			if !contract.CanBlock {
+				sysMsgs = append(sysMsgs, fmt.Sprintf("%s hook %q returned exit 2, but this event cannot block", contract.Name, r.hook.DisplayName()))
+				continue
+			}
 			final.Allowed = false
 			final.ExitCode = 2
 			if r.Stderr != "" {
@@ -497,27 +417,26 @@ func aggregate(results []hookResult, event EventType) *Result {
 			}
 			continue
 
-		case r.ExitCode != 0:
-			slog.Debug("Hook returned non-zero exit code", "exit_code", r.ExitCode, "stderr", r.Stderr)
-			continue
-
 		case r.Output == nil:
 			// Plain stdout becomes AdditionalContext only for events
 			// whose runtime consumes it.
-			if r.Stdout != "" && stdoutAsContext(event) {
+			if r.Stdout != "" && contract.Context {
 				contexts = append(contexts, strings.TrimSpace(r.Stdout))
 			}
 			continue
 		}
 
 		out := r.Output
-		if !out.ShouldContinue() {
+		if !contract.CanBlock && (!out.ShouldContinue() || out.IsBlocked()) {
+			sysMsgs = append(sysMsgs, fmt.Sprintf("%s hook %q returned a block, but this event cannot block", contract.Name, r.hook.DisplayName()))
+		}
+		if contract.CanBlock && !out.ShouldContinue() {
 			final.Allowed = false
 			if out.StopReason != "" {
 				messages = append(messages, out.StopReason)
 			}
 		}
-		if out.IsBlocked() {
+		if contract.CanBlock && out.IsBlocked() {
 			final.Allowed = false
 			if out.Reason != "" {
 				messages = append(messages, out.Reason)
@@ -527,13 +446,16 @@ func aggregate(results []hookResult, event EventType) *Result {
 			sysMsgs = append(sysMsgs, out.SystemMessage)
 		}
 		if hso := out.HookSpecificOutput; hso != nil {
-			if carriesDecision(event) && hso.PermissionDecision != "" {
+			if !contract.Permission() && hso.PermissionDecision != "" {
+				sysMsgs = append(sysMsgs, fmt.Sprintf("%s hook %q returned permission_decision, but this event does not support approval decisions", contract.Name, r.hook.DisplayName()))
+			}
+			if contract.Decision && hso.PermissionDecision != "" {
 				final.Decision, final.DecisionReason = strongerDecision(
 					final.Decision, final.DecisionReason,
 					hso.PermissionDecision, hso.PermissionDecisionReason,
 				)
 			}
-			if carriesDecision(event) || event == EventPermissionRequest {
+			if contract.Decision || contract.PermissionApproval {
 				switch hso.PermissionDecision {
 				case DecisionDeny:
 					final.Allowed = false
@@ -541,21 +463,21 @@ func aggregate(results []hookResult, event EventType) *Result {
 						messages = append(messages, hso.PermissionDecisionReason)
 					}
 				case DecisionAllow:
-					if event == EventPermissionRequest {
+					if contract.PermissionApproval {
 						final.PermissionAllowed = true
-					}
-					if hso.PermissionDecisionReason != "" {
-						contexts = append(contexts, hso.PermissionDecisionReason)
+						if final.DecisionReason == "" {
+							final.DecisionReason = hso.PermissionDecisionReason
+						}
 					}
 				}
 			}
-			if rewritesToolInput(event) && hso.UpdatedInput != nil {
+			if contract.Rewrite == events.RewriteToolInput && hso.UpdatedInput != nil {
 				if final.ModifiedInput == nil {
 					final.ModifiedInput = make(map[string]any)
 				}
 				maps.Copy(final.ModifiedInput, hso.UpdatedInput)
 			}
-			if event == EventBeforeCompaction && hso.Summary != "" && final.Summary == "" {
+			if contract.Summary && hso.Summary != "" && final.Summary == "" {
 				// First non-empty summary in CONFIG ORDER wins. Hooks run
 				// concurrently (see runHook above), but we iterate
 				// `results` in the order they were configured — the index
@@ -568,13 +490,13 @@ func aggregate(results []hookResult, event EventType) *Result {
 				// is to skip the LLM entirely).
 				final.Summary = hso.Summary
 			}
-			if event == EventBeforeLLMCall && len(hso.UpdatedMessages) > 0 {
+			if contract.Rewrite == events.RewriteMessages && len(hso.UpdatedMessages) > 0 {
 				final.UpdatedMessages = hso.UpdatedMessages
 			}
-			if event == EventToolResponseTransform && hso.UpdatedToolResponse != nil {
+			if contract.Rewrite == events.RewriteToolResponse && hso.UpdatedToolResponse != nil {
 				final.UpdatedToolResponse = hso.UpdatedToolResponse
 			}
-			if collectsMetadata(event) && len(hso.Metadata) > 0 {
+			if contract.Metadata && len(hso.Metadata) > 0 {
 				// Metadata from every matching hook is merged so multiple
 				// hooks can each contribute keys. On a key clash the last
 				// hook in config order wins (results is iterated in
@@ -584,10 +506,12 @@ func aggregate(results []hookResult, event EventType) *Result {
 				}
 				maps.Copy(final.Metadata, hso.Metadata)
 			}
-			if hso.AdditionalContext != "" {
+			if contract.Context && hso.AdditionalContext != "" {
 				contexts = append(contexts, hso.AdditionalContext)
 			}
-			final.InstructionContext = append(final.InstructionContext, hso.InstructionContext...)
+			if contract.Instructions {
+				final.InstructionContext = append(final.InstructionContext, hso.InstructionContext...)
+			}
 		}
 	}
 
@@ -597,13 +521,8 @@ func aggregate(results []hookResult, event EventType) *Result {
 	return final
 }
 
-// hookFailureMessage keeps the historical wording for pre_tool_use
-// lanes and names the event otherwise.
 func hookFailureMessage(event EventType, err error) string {
-	if isPreToolUseLane(event) {
-		return fmt.Sprintf("PreToolUse hook failed to execute: %v", err)
-	}
-	return fmt.Sprintf("%s hook failed to execute: %v", event, err)
+	return fmt.Sprintf("%s hook failed to execute: %v", EventContract(event).Name, err)
 }
 
 // decisionWeight ranks PermissionDecision verdicts so [strongerDecision]

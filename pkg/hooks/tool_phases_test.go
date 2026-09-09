@@ -160,8 +160,7 @@ func TestToolGuardAggregatesMostRestrictiveVerdict(t *testing.T) {
 	})
 }
 
-// Guard failures fail closed regardless of on_error; non-blocking exit
-// codes keep their legacy meaning.
+// Guard failures, including unexpected exit codes, fail closed regardless of on_error.
 func TestToolGuardFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +175,7 @@ func TestToolGuardFailsClosed(t *testing.T) {
 		{name: "error default", err: errors.New("boom"), allowed: false, exitCode: -1},
 		{name: "error ignore still denies", err: errors.New("boom"), onError: "ignore", allowed: false, exitCode: -1},
 		{name: "canceled", err: context.Canceled, allowed: false, exitCode: -1},
-		{name: "exit 1", result: HandlerResult{ExitCode: 1}, allowed: true},
+		{name: "exit 1", result: HandlerResult{ExitCode: 1}, allowed: false, exitCode: -1},
 		{name: "exit 2", result: HandlerResult{ExitCode: 2, Stderr: "nope"}, allowed: false, exitCode: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,9 +197,7 @@ func TestToolGuardFailsClosed(t *testing.T) {
 	}
 }
 
-// A payload the executor cannot serialize must block pre-approval events
-// (the runtime adapter treats a Dispatch error as "no opinion") while
-// legacy events keep returning the error.
+// A payload the executor cannot serialize must block every block-capable event.
 func TestDispatchSerializationFailureBlocksPreApprovalEvents(t *testing.T) {
 	t.Parallel()
 
@@ -212,7 +209,7 @@ func TestDispatchSerializationFailureBlocksPreApprovalEvents(t *testing.T) {
 	exec := NewExecutor(cfg, t.TempDir(), nil)
 	unserializable := map[string]any{"bad": make(chan int)}
 
-	for _, event := range []EventType{EventToolInputTransform, EventToolGuard, EventPreToolUsePreYolo} {
+	for _, event := range []EventType{EventToolInputTransform, EventToolGuard, EventPreToolUsePreYolo, EventPreToolUse} {
 		result, err := exec.Dispatch(t.Context(), event, &Input{ToolName: "shell", ToolInput: unserializable})
 		require.NoError(t, err, event)
 		require.NotNil(t, result, event)
@@ -220,8 +217,4 @@ func TestDispatchSerializationFailureBlocksPreApprovalEvents(t *testing.T) {
 		assert.Equal(t, -1, result.ExitCode, event)
 		assert.Contains(t, result.Message, "failed to serialize hook input", event)
 	}
-
-	result, err := exec.Dispatch(t.Context(), EventPreToolUse, &Input{ToolName: "shell", ToolInput: unserializable})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }

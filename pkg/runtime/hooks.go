@@ -123,6 +123,9 @@ func (r *LocalRuntime) dispatchHook(
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "Hook execution failed", "event", event, "agent", a.Name(), "error", err)
+		if hooks.EventContract(event).CanBlock {
+			return &hooks.Result{ExitCode: -1, Message: err.Error()}
+		}
 		return nil
 	}
 

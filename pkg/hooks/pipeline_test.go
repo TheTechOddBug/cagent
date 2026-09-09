@@ -197,7 +197,8 @@ func TestPipelineFailuresKeepPriorRewriteAndRunRemainingHooks(t *testing.T) {
 				})
 				require.NoError(t, err)
 				assert.True(t, lastRan)
-				assert.Equal(t, !tc.blocked, result.Allowed)
+				blocked := tc.blocked && EventContract(event).CanBlock || tc.result.ExitCode == 1 && EventContract(event).FailClosed
+				assert.Equal(t, !blocked, result.Allowed)
 				switch event {
 				case EventPreToolUse, EventToolInputTransform:
 					assert.Equal(t, "first", result.ModifiedInput["cmd"])
@@ -285,7 +286,11 @@ func TestNonTransformEventsRemainConcurrent(t *testing.T) {
 			result, err := exec.Dispatch(ctx, event, &Input{ToolInput: map[string]any{"cmd": "original"}})
 			require.NoError(t, err)
 			require.NoError(t, ctx.Err(), "both hooks must start before either finishes")
-			assert.Equal(t, "first\nsecond", result.AdditionalContext)
+			if EventContract(event).Context {
+				assert.Equal(t, "first\nsecond", result.AdditionalContext)
+			} else {
+				assert.Empty(t, result.AdditionalContext)
+			}
 			assert.Nil(t, result.ModifiedInput)
 			if event == EventBeforeCompaction {
 				assert.Equal(t, "first", result.Summary)

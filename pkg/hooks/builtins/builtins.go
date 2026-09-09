@@ -138,8 +138,8 @@ type AgentDefaults struct {
 	// tool_input_transform, before_llm_call, and tool_response_transform
 	// — the three legs of the feature. Equivalent to writing those three
 	// hook entries by hand; the dedup in [hooks.Executor.hooksFor]
-	// makes the auto-injection idempotent against an explicit YAML
-	// entry that already names the same builtin.
+	// makes auto-injection idempotent against an identical explicit
+	// entry (including its name and per-hook options).
 	RedactSecrets bool
 }
 

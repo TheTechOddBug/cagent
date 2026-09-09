@@ -390,10 +390,8 @@ func (c *call) run(ctx context.Context) CallOutcome {
 	slog.DebugContext(ctx, "Processing tool call", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 
 	if ctx.Err() != nil {
-		msg := c.cancellationMessage(ctx)
-		c.errorResponse(ctx, msg)
-		span.SetStatus(codes.Ok, msg)
-		return c.cancellationOutcome(ctx)
+		span.SetStatus(codes.Ok, c.cancellationMessage(ctx))
+		return c.canceled(ctx)
 	}
 
 	// After a handoff the model may hallucinate tools it saw earlier in
@@ -436,8 +434,8 @@ func (c *call) run(ctx context.Context) CallOutcome {
 // permission rules / safety mode → legacy approval hooks → user confirmation.
 // Approval hooks only run when the safety mode asks, not on auto-approved calls.
 func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) CallOutcome {
-	if c.transformToolInput(ctx) {
-		return CallOutcome{}
+	if outcome, handled := c.transformToolInput(ctx); handled {
+		return outcome
 	}
 	if outcome, handled := c.runToolGuards(ctx, runTool); handled {
 		return outcome
@@ -636,6 +634,9 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 	}
 
 	result := c.d.Hooks.Dispatch(ctx, c.a, hooks.EventPreToolUse, NewHooksInput(c.sess, c.tc))
+	if outcome, canceled := c.hookCanceled(ctx); canceled {
+		return outcome, true
+	}
 	if result == nil {
 		return CallOutcome{}, false
 	}
@@ -647,10 +648,7 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 	}
 
 	if !result.Allowed {
-		slog.DebugContext(ctx, "Pre-tool hook blocked tool call", "tool", c.tc.Function.Name, "message", result.Message)
-		c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourcePreToolUseHookDeny)
-		c.em.EmitHookBlocked(c.tc, c.tool, result.Message, c.a.Name())
-		c.errorResponse(ctx, "Tool call blocked by hook: "+result.Message)
+		c.blockToolHook(ctx, hooks.EventPreToolUse, ApprovalSourcePreToolUseHookDeny, cmp.Or(result.Message, result.DecisionReason))
 		return CallOutcome{}, true
 	}
 
@@ -885,28 +883,20 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 		ToolInput:    ParseToolInput(c.tc.Function.Arguments),
 		SafetyPolicy: string(c.sess.GetSafetyPolicy()),
 	})
+	if outcome, canceled := c.hookCanceled(ctx); canceled {
+		return outcome, true, nil
+	}
 	if result == nil {
 		return CallOutcome{}, false, nil
 	}
 
 	if !result.Allowed {
-		slog.DebugContext(ctx, "Tool denied by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.Message)
-		// Stamp the deny on the runtime.tool.call span via notifyApproval
-		// before returning. Without this the span would end with status
-		// Ok and no cagent.approval.* attrs — denied-by-hook calls would
-		// look identical to successful ones in trace dashboards, while
-		// pre_tool_use deny does emit the attrs. Symmetry matters.
-		c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourcePermissionRequestHookDeny)
-		rejectMsg := "The tool call was rejected by a permission_request hook."
-		if reason := strings.TrimSpace(result.Message); reason != "" {
-			rejectMsg += " Reason: " + reason
-		}
-		c.errorResponse(ctx, rejectMsg)
+		c.blockToolHook(ctx, hooks.EventPermissionRequest, ApprovalSourcePermissionRequestHookDeny, result.Message)
 		return CallOutcome{}, true, nil
 	}
 
 	if result.PermissionAllowed {
-		slog.DebugContext(ctx, "Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.AdditionalContext)
+		slog.DebugContext(ctx, "Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.DecisionReason)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourcePermissionRequestHookAllow)
 		return runTool(), true, nil
 	}

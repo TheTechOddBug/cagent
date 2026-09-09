@@ -612,7 +612,7 @@ func TestToolPhases_PreemptYoloFailureBlocks(t *testing.T) {
 		h    hooks.Hook
 		want string
 	}{
-		{name: "crash", h: hook(bCrash), want: "PreToolUse hook failed to execute"},
+		{name: "crash", h: hook(bCrash), want: "pre_tool_use hook failed to execute"},
 		{name: "generic block", h: hook(bBlock, "stop right there"), want: "stop right there"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
