@@ -38,7 +38,7 @@ $ docker agent run [config] [message...] [flags]
 | `--attach <path>`                       | Attach an image file to the initial message                                                                                               |
 | `--dry-run`                             | Initialize the agent without executing anything (useful for validating a config)                                                          |
 | `--remote <addr>`                       | Use a remote runtime at the given address instead of running the agent locally. Mutually exclusive with `--sandbox`, `--worktree`, `--worktree-pr`, `--worktree-base`, `--session`, `--session-db`, `--record`, and `--fake` — a remote runtime owns its own session storage and execution environment, so these local-only concerns don't apply. |
-| `--listen <addr>`                       | Expose this run's control plane over HTTP so an external process can drive the running TUI (send follow-ups, stream events, read the title). Accepts `host:port` or `unix://`, `npipe://`, `fd://`. Hidden from `docker agent run --help` — like `debug`, it's a stable but advanced/automation-oriented flag rather than a day-to-day one. See the [API Server](../api-server/index.md#listen) guide for the full walkthrough. |
+| `--listen <addr>`                       | Expose this run's control plane over HTTP so an external process can drive the running TUI (send follow-ups, stream events, read the title). Accepts `host:port` or `unix://`, `npipe://`, `fd://`. Hidden from `docker agent run --help` — it's a stable but advanced/automation-oriented flag rather than a day-to-day one. See the [API Server](../api-server/index.md#listen) guide for the full walkthrough. |
 | `--session-workingdir-root <path>`      | Confine the `working_dir` of sessions created through the `--listen` control plane to this directory and its descendants (default: no restriction — any clean host directory is accepted, though raw values containing `..` are rejected). Recommended when the control plane is reachable by other users. Hidden from `--help`, like `--listen`. |
 | `--lean`                                | Use a simplified, non-alternate-screen TUI. Unlike the default full-screen TUI, this renders inline in the normal terminal buffer — useful in environments where an alternate screen is unwanted (e.g. inside tmux panes, CI with a tty, or log-friendly pipelines). Like the full TUI, displays an ASCII art banner on startup when the chat is empty (configurable via `show_banner` in [user settings](../../configuration/user-settings/index.md)). |
 | `--app-name <name>`                     | Override the application name label shown in the TUI (status bar, window title, "/exit" notifications).                                   |
@@ -288,7 +288,7 @@ $ docker agent serve api <agent-file>|<agents-dir>|<registry-ref> [flags]
 | `-s, --session-db <path>`  | `session.db`       | Path to the SQLite session database (relative paths resolve against the working directory).                |
 | `--pull-interval <minutes>`| `0`                | Periodically re-pull OCI/URL references and refresh the agent definition. `0` disables auto-pull.          |
 | `--fake <path>`             | (none)             | Replay AI responses from a cassette file (for testing). Mutually exclusive with `--record`.               |
-| `--record [path]`           | (none)             | Record AI API interactions to a cassette file. Routes through `--models-gateway` when one is configured. |
+| `--record <path>`           | (none)             | Record AI API interactions to a cassette file. Routes through `--models-gateway` when one is configured. |
 | `--mcp-oauth-redirect-uri <url>` | (none)        | OAuth redirect URI for the unmanaged MCP OAuth flow in server mode. When set, the runtime drives PKCE and code exchange in-process and sends the full authorize URL to the client via elicitation. See [Remote MCP](../remote-mcp/index.md) for details. |
 
 > **Diagnostics:** Set `CAGENT_PPROF_ADDR=127.0.0.1:6060` (or `--pprof-addr`, a hidden flag) to start a live Go pprof server at `/debug/pprof/`. Use a loopback address; a non-loopback binding logs a security warning.
@@ -722,7 +722,7 @@ Plans live under the data directory (`~/.cagent/plans/` by default), so `--data-
 
 ### `docker agent debug`
 
-Troubleshooting subcommands for inspecting how an agent config resolves and generating diagnostic output — useful when a config isn't behaving the way you expect. `debug` doesn't appear in `docker agent --help` (it's a diagnostic surface, not a day-to-day command), but every subcommand below is stable and fully supported.
+Troubleshooting subcommands for inspecting how an agent config resolves and generating diagnostic output — useful when a config isn't behaving the way you expect. `debug` appears under **Advanced Commands** in `docker agent --help`; every subcommand below is stable and fully supported.
 
 ```bash
 $ docker agent debug <subcommand> [flags]
@@ -762,22 +762,32 @@ The `Source` field says where the token came from: `docker desktop`, or `minted 
 
 The `config`, `toolsets`, `skills`, and `title` subcommands also accept [runtime configuration flags](#runtime-configuration-flags) (`--working-dir`, `--models-gateway`, …); `title` additionally accepts `--model` to override the model used to resolve the config before generating the title.
 
-### `docker agent completion`
+### `docker-agent completion`
 
-Generate a shell completion script for `bash`, `zsh`, `fish`, or `powershell`.
+Generate a shell completion script for the standalone `docker-agent` binary for `bash`, `zsh`, `fish`, or `powershell`.
 
 ```bash
-$ docker agent completion <bash|zsh|fish|powershell>
+$ docker-agent completion <bash|zsh|fish|powershell>
 
 # Examples
 # Bash: load for the current session
-$ source <(docker agent completion bash)
+$ source <(docker-agent completion bash)
 
 # Zsh: install permanently (adjust the path for your $fpath)
-$ docker agent completion zsh > "${fpath[1]}/_docker-agent"
+$ docker-agent completion zsh > "${fpath[1]}/_docker-agent"
 ```
 
-Run `docker agent completion <shell> --help` for shell-specific installation instructions.
+Run `docker-agent completion <shell> --help` for shell-specific installation instructions.
+
+When using the `docker agent` CLI plugin, use Docker's completion instead. The plugin doesn't provide a `docker agent completion` command:
+
+```bash
+# Bash: load Docker CLI completion for the current session
+$ source <(docker completion bash)
+
+# Shell-specific installation instructions
+$ docker completion <shell> --help
+```
 
 ### Self-update
 
