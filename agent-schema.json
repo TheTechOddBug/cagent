@@ -1416,7 +1416,7 @@
         },
         "preempt_yolo": {
           "type": "boolean",
-          "description": "Opt a pre_tool_use entry into firing BEFORE the deterministic approval pipeline (custom allow/ask/deny rules + safety mode). A deny/ask verdict from a preempting hook cannot be bypassed by any safety mode (including autonomous) or permission allow-rules; an allow verdict is advisory (the pipeline still runs Decide() and the rest of pre_tool_use). Default pre_tool_use entries fire AFTER Decide(). Only meaningful on pre_tool_use; rejected on tool_input_transform and tool_guard (which always preempt approval) and ignored on other events. Set it on hooks that implement a security-critical check that must not be bypassed by auto-approval."
+          "description": "Opt a pre_tool_use entry into firing BEFORE the deterministic approval pipeline (custom allow/ask/deny rules + safety mode). A deny/ask verdict from a preempting hook cannot be bypassed by any safety mode (including autonomous) or permission allow-rules; an allow verdict is advisory (the pipeline still runs Decide() and the rest of pre_tool_use). Default pre_tool_use entries fire AFTER Decide(). Only valid on pre_tool_use; rejected on every other event. Set it on hooks that implement a security-critical check that must not be bypassed by auto-approval."
         }
       },
       "required": [
@@ -1471,13 +1471,18 @@
         },
         "on_error": {
           "type": "string",
-          "description": "How non-fail-closed hook failures are handled. 'warn' logs and continues (default), 'ignore' continues silently, and 'block' denies the event.",
+          "description": "Policy for execution errors, timeouts, unexpected nonzero exits and invalid output. 'warn' reports and continues (default), 'ignore' continues silently, and 'block' denies block-capable events. pre_tool_use and tool_guard always fail closed. on_error=block is rejected on observational events.",
           "enum": [
             "warn",
             "ignore",
             "block"
           ],
           "default": "warn"
+        },
+        "strict_output": {
+          "type": "boolean",
+          "description": "Require a single JSON output object (or empty stdout), reject unknown fields and outputs unsupported by the hook event. Failures follow on_error; pre_tool_use and tool_guard fail closed.",
+          "default": false
         },
         "model": {
           "type": "string",

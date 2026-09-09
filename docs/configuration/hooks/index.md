@@ -67,6 +67,49 @@ Docker Agent dispatches the following hook events:
 >
 > `pre_compact` and `before_compaction` both fire just before a compaction. `pre_compact` is the original event and is best-suited to _steering_ the LLM-generated summary by appending guidance via `additional_context`. `before_compaction` is the newer, structured event: it carries the input/output token counts, the model's context limit, and a `compaction_reason` so handlers can decide based on real session pressure, and it can _replace_ the LLM-generated summary verbatim via `hook_specific_output.summary`.
 
+## Event contracts
+
+These contracts describe the native runtime; the experimental WASM runtime does
+not yet implement the mandatory tool phases.
+
+The shared catalog in `pkg/hooks/events` drives configuration validation,
+dispatch strategy, output aggregation, and strict output validation. Tests keep
+this table, the configuration fields, and the JSON schema synchronized.
+“Context” means additional context is consumed by the runtime; `worktree_create`
+shows it to the CLI user. The internal preempting `pre_tool_use` lane is parallel,
+collects metadata, and does not rewrite input.
+
+| Event | Execution | Can block | Failure default | Context | Rewrite |
+| --- | --- | --- | --- | --- | --- |
+| `pre_tool_use` | sequential | yes | block | no | tool input |
+| `post_tool_use` | parallel | yes | warn | no | — |
+| `permission_request` | parallel | yes | warn | no | — |
+| `session_start` | parallel | no | warn | yes | — |
+| `user_prompt_submit` | parallel | yes | warn | yes | — |
+| `user_steering_messages_submit` | parallel | yes | warn | yes | — |
+| `user_followup_submit` | parallel | yes | warn | yes | — |
+| `turn_start` | parallel | no | warn | yes | — |
+| `turn_end` | parallel | no | warn | no | — |
+| `before_llm_call` | sequential | yes | warn | no | messages |
+| `after_llm_call` | parallel | no | warn | no | — |
+| `session_end` | parallel | no | warn | no | — |
+| `pre_compact` | parallel | yes | warn | yes | — |
+| `subagent_stop` | parallel | no | warn | no | — |
+| `on_user_input` | parallel | no | warn | no | — |
+| `stop` | parallel | no | warn | no | — |
+| `notification` | parallel | no | warn | no | — |
+| `on_error` | parallel | no | warn | no | — |
+| `on_max_iterations` | parallel | no | warn | no | — |
+| `on_agent_switch` | parallel | no | warn | no | — |
+| `on_session_resume` | parallel | no | warn | no | — |
+| `on_tool_approval_decision` | parallel | no | warn | no | — |
+| `before_compaction` | parallel | yes | warn | no | — |
+| `after_compaction` | parallel | no | warn | no | — |
+| `tool_response_transform` | sequential | no | warn | no | tool response |
+| `tool_input_transform` | sequential | yes | warn | no | tool input |
+| `tool_guard` | parallel | yes | block | no | — |
+| `worktree_create` | parallel | yes | warn | yes | — |
+
 ## Configuration
 
 You can configure hooks directly in an agent YAML file under the agent's `hooks:` block:
@@ -127,6 +170,27 @@ stop:
   type: command
   command: "./scripts/log-response.sh"
 ```
+
+### Hook identity and deduplication
+
+For each event dispatch, identical matching hook definitions run once, at the
+position of the first match. Identity includes every hook field: `name`, `type`,
+`command`, `args`, `timeout`, `env`, `working_dir`, `on_error`, `strict_output`, `model`, `prompt`,
+and `schema`. Sharing a name or command alone does not make two hooks duplicates.
+
+Hooks with different model prompts, environments, working directories, or other
+options all run. To deliberately run otherwise identical hooks twice, give them
+different names. Repeated dispatches still run the hooks again.
+
+Comparison uses configured values, without expanding environment variables or
+paths. Environment map ordering does not matter; argument ordering does. Empty
+and omitted `args` or `env` are equivalent. Explicit options such as `timeout: 60`
+and `on_error: warn` remain distinct from omitted options.
+
+This also applies to automatic built-ins: an identical explicit entry runs only
+once, but adding a name or changing an option makes it a separate invocation.
+Disable the corresponding agent flag when you want a custom entry *instead of*
+the automatic default.
 
 ## Global (user-level) hooks
 
@@ -353,7 +417,7 @@ In addition to the common fields, each event ships its own payload:
 | `tool_response_transform`   | `tool_name`, `tool_use_id`, `tool_input`, `tool_response`                                                             |
 | `post_tool_use`             | `agent_name`, `tool_name`, `tool_use_id`, `tool_input`, `tool_response`, `tool_error`                                 |
 | `permission_request`        | `agent_name`, `tool_name`, `tool_use_id`, `tool_input`                                                                |
-| `session_start`             | `source` — one of `startup`, `resume`, `clear`, `compact`                                                             |
+| `session_start`             | `source` — `startup` for each run stream                                                             |
 | `user_prompt_submit`        | `prompt` — the text the user just submitted                                                                           |
 | `user_steering_messages_submit` | `steering_messages` — the drained steering messages, in submission order                                         |
 | `user_followup_submit`      | `prompt` — the text of the dequeued follow-up message                                                                |
@@ -361,7 +425,7 @@ In addition to the common fields, each event ships its own payload:
 | `turn_end`                  | `agent_name`, `reason` — one of `normal`, `continue`, `steered`, `error`, `canceled`, `hook_blocked`, `loop_detected` |
 | `before_llm_call`           | `iteration` — 1-based run-loop iteration counter (the model call this hook is gating), `model_id`                    |
 | `after_llm_call`            | `agent_name`, `stop_response`, `last_user_message`, `model_id`, `usage`, `cost`                                       |
-| `session_end`               | `reason` — one of `clear`, `logout`, `prompt_input_exit`, `other`                                                     |
+| `session_end`               | `reason` — `stream_ended`                                                     |
 | `pre_compact`               | `source` — one of `manual`, `auto`, `overflow`, `tool_overflow`                                                       |
 | `before_compaction`         | `input_tokens`, `output_tokens`, `context_limit`, `compaction_reason` (one of `threshold`/`overflow`/`manual`)        |
 | `after_compaction`          | `input_tokens`, `output_tokens`, `context_limit`, `compaction_reason`, `summary`                                      |
@@ -420,7 +484,7 @@ All fields are optional. Returning `{}` (or no output at all) means "do nothing,
 | ----------------- | ------- | ----------------------------------------------- |
 | `continue`        | boolean | Whether to continue execution (default: `true`) |
 | `stop_reason`     | string  | Message to show when `continue=false`           |
-| `suppress_output` | boolean | Hide stdout from transcript                     |
+| `suppress_output` | boolean | Legacy compatibility field; has no effect and is rejected when true in strict mode |
 | `system_message`  | string  | Warning message to display to user              |
 | `decision`        | string  | For blocking: `block` to prevent operation      |
 | `reason`          | string  | Explanation for the decision                    |
@@ -471,7 +535,8 @@ shell actions such as commands embedded in skills. They run once per call;
 if a legacy `pre_tool_use` hook changes arguments afterwards, guards and rules
 are checked again against the rewritten call. Transforms and approval helpers
 are not rerun: legacy rewrites are not automatically re-redacted. A new ask
-during revalidation requires fresh approval, not an earlier session grant.
+during revalidation requires fresh approval, not an earlier session grant; it
+also skips `permission_request` approval helpers.
 A no-op patch does not trigger another guard invocation.
 Prefer `tool_input_transform` for new rewriters so guards only need one pass.
 
@@ -501,9 +566,9 @@ hooks:
 **Failures:** transform execution errors follow `on_error` (default `warn`);
 `on_error: block`, `decision: block`, `continue: false`, and exit `2` prevent
 execution. Guard execution errors and timeouts block regardless of `on_error`.
-Both retain the existing shell exit-code protocol: nonzero codes other than `2`
-are non-blocking, and malformed stdout JSON is not a verdict. A command guard
-must explicitly emit a blocking result or exit `2` when it cannot check safely.
+Unexpected nonzero exits (including `1` and `127`), malformed JSON, and invalid
+verdicts are failures too: guards deny; transforms follow `on_error`.
+Successful no-op hooks must exit `0`.
 Neither event accepts `preempt_yolo`, since both already precede approval.
 
 The default secret-redaction argument hook now uses `tool_input_transform`, so
@@ -634,7 +699,7 @@ not receive raw secrets. See [the example configuration](https://github.com/dock
 
 ### Context-Contributing Events
 
-For `session_start`, `user_prompt_submit`, `user_steering_messages_submit`, `user_followup_submit`, `turn_start`, `post_tool_use`, `pre_compact`, and `stop`, hooks may set `hook_specific_output.additional_context` to inject text into the conversation. `turn_start` context is **transient** (recomputed every turn, never persisted); `session_start` context **persists** for the life of the session. `user_steering_messages_submit` and `user_followup_submit` context is **transient** like `user_prompt_submit` — it is spliced into the steered/follow-up turn only and never persisted. (`worktree_create` also surfaces stdout, but to the CLI user rather than the conversation — the session doesn't exist yet.)
+For `session_start`, `user_prompt_submit`, `user_steering_messages_submit`, `user_followup_submit`, `turn_start`, and `pre_compact`, hooks may set `hook_specific_output.additional_context` to inject text into the conversation. `turn_start` context is **transient** (recomputed every turn, never persisted); `session_start` context **persists** for the life of the session. `user_steering_messages_submit` and `user_followup_submit` context is **transient** like `user_prompt_submit` — it is spliced into the steered/follow-up turn only and never persisted. (`worktree_create` also surfaces stdout, but to the CLI user rather than the conversation — the session doesn't exist yet.)
 
 ### Before-Compaction Specific Output
 
@@ -653,7 +718,7 @@ Returning `decision: "block"` (or exit code 2) instead vetoes the compaction ent
 
 ### Plain Text Output
 
-For `session_start`, `user_prompt_submit`, `user_steering_messages_submit`, `user_followup_submit`, `turn_start`, `post_tool_use`, `pre_compact`, and `stop` hooks, plain text written to stdout (i.e., output that is not valid JSON) is captured as additional context for the agent. For `pre_compact` it is appended to the compaction prompt; for the others it is spliced into the conversation as a (transient or persisted) system message depending on the event.
+For `session_start`, `user_prompt_submit`, `user_steering_messages_submit`, `user_followup_submit`, `turn_start`, and `pre_compact` hooks, plain text written to stdout (i.e., output that does not start with `{`) is captured as additional context for the agent. For `pre_compact` it is appended to the compaction prompt; for the others it is spliced into the conversation as a (transient or persisted) system message depending on the event.
 
 ## Exit Codes
 
@@ -663,7 +728,7 @@ Hook exit codes have special meaning:
 | --------- | -------------------------------------- |
 | `0`       | Success — continue normally            |
 | `2`       | Blocking error — stop the operation    |
-| Other     | Error — logged but execution continues |
+| Other     | Failure — follows `on_error`; security guards fail closed |
 
 ## Per-hook options
 
@@ -684,14 +749,52 @@ hooks:
           on_error: warn # warn | ignore | block
 ```
 
-`pre_tool_use` is fail-closed for safety: a failed pre-tool hook blocks the tool call regardless of `on_error`.
+`pre_tool_use` (both lanes) and `tool_guard` fail closed on **all failures**,
+including exit codes such as `1` or `127`, regardless of `on_error`. Other events
+apply `on_error` consistently to execution errors, timeouts, unexpected nonzero
+exits, malformed JSON, and invalid verdicts. `warn` reports the hook name and
+event (also as a UI warning where the runtime has an event sink); `ignore` stays
+silent. `block` is accepted only on events capable of stopping an operation.
+Exit `2` is an explicit block on those events, not a recoverable error.
+
+**Compatibility:** scripts that previously exited nonzero to signal “no opinion”
+must now exit `0`. Use empty stdout or `{}` for a successful no-op. Parent
+cancellation is reported as cancellation, not a policy denial; a hook's own
+timeout remains a failure.
+
+Set `strict_output: true` for hooks that implement the structured protocol:
+
+```yaml
+hooks:
+  tool_guard:
+    - matcher: shell
+      hooks:
+        - name: project policy
+          type: command
+          command: ./check-command.sh
+          strict_output: true
+          timeout: 5
+```
+
+Strict hooks accept one JSON object or empty stdout. They reject plain text,
+unknown fields, event-name mismatches, invalid decisions, and output fields the
+event cannot consume (for example, `updated_input` on `tool_guard`). Direct Go
+outputs and model outputs receive the same capability checks. Without strict
+mode, plain text remains supported for context events and unknown fields remain
+compatible; malformed JSON beginning with `{` and invalid decisions are still
+failures. JSON followed by log text is also invalid; send diagnostics to stderr.
+Configuration loading validates matchers and error policies at
+load time rather than silently dropping invalid rules.
+
+`stop` and `post_tool_use` do not consume additional context; use a context event
+such as `turn_start` instead. Strict mode makes this mistake an error.
 
 `working_dir` and `env` apply to `command` and `builtin` hooks. For `builtin` hooks, `working_dir` is resolved with the same logic as `command` hooks (absolute path wins; relative paths join onto the executor directory). `working_dir` accepts `~`, `$VAR`, `${VAR}` and `${env.VAR}`; `env` values expand only the plain `${env.VAR}` form (resolved from the OS process environment), keeping any other `$` literal (see [Variable Expansion in Config Fields](../overview/index.md#variable-expansion-in-config-fields)). A `working_dir` that expands to an empty string (e.g. an unset variable) falls back to the executor's directory with a warning. For `model` hooks, both fields are accepted by the schema but have no effect: model hooks render a prompt template and call the LLM API directly — no subprocess is spawned and no file I/O is performed, so working directory and environment variables have no applicable semantics.
 
 > [!WARNING]
 > **Performance**
 >
-> Hooks run synchronously and can slow down agent execution. Keep hook scripts fast and efficient. Consider using `suppress_output: true` for logging hooks to reduce noise.
+> Hooks run synchronously and can slow down agent execution. Keep hook scripts fast and efficient. Write diagnostics to stderr and protocol output to stdout.
 
 > [!NOTE]
 > **Session End and Cancellation**

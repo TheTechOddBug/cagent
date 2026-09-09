@@ -53,6 +53,9 @@ agents:
     handoffs: [list] # Optional: agent names this agent can hand off to
     force_handoff: string # Optional: agent that always receives the conversation when this agent stops
     hooks: # Optional: lifecycle hooks
+      tool_input_transform: [list]
+      tool_guard: [list]
+      permission_request: [list]
       pre_tool_use: [list]
       tool_response_transform: [list]
       post_tool_use: [list]

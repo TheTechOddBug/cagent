@@ -12,6 +12,7 @@ agents:
           hooks:
             - name: normalize whitespace
               type: command
+              strict_output: true
               on_error: block
               command: |
                 python3 -c '
@@ -21,12 +22,13 @@ agents:
                 print(json.dumps({"hook_specific_output": {
                     "updated_input": {"cmd": command.strip()}
                 }}))
-                ' || exit 2
+                '
       tool_guard:
         - matcher: shell
           hooks:
             - name: require confirmation for project commands
               type: command
+              strict_output: true
               timeout: 5
               command: |
                 python3 -c '
@@ -40,7 +42,7 @@ agents:
                     "permission_decision_reason": "Review commands beyond the read-only allowlist",
                     "metadata": {"policy": "project command review"}
                 }}))
-                ' || exit 2
+                '
       # This judge only runs when the guard falls through and safety mode asks.
       # A guard's "ask" skips it; an "allow" here cannot undo a guard denial.
       pre_tool_use:
