@@ -63,12 +63,15 @@ models:
 ## Generated Images
 
 Some Gemini models (e.g. `gemini-2.5-flash-image`) are designed to generate
-an image directly as part of their reply, not just describe one. Docker
-Agent's Gemini request path doesn't yet ask for that image output — that
-support is still being completed — so today a request like this gets a
-text-only reply. See
-[Generated Media](../../features/tui/index.md#generated-media) for the
-current, verified state.
+an image directly as part of their reply, not just describe one. When image
+output is enabled for the model — explicitly via
+[`output_capabilities.image: true`](../../configuration/models/index.md#output-capabilities)
+or resolved from the models.dev catalogue — Docker Agent's Gemini request
+path asks for `TEXT` and `IMAGE` response modalities on ordinary chat
+completions, and any generated image bytes are captured internally. Docker
+Agent does not yet present that generated image to the user anywhere (not
+inline in the terminal UI, nor elsewhere), so today you'll still only see
+the model's text reply.
 
 ```yaml
 agents:
