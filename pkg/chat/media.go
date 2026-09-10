@@ -15,17 +15,12 @@ type MediaDelta struct {
 	// Materialization chooses a fallback when no usable name is available.
 	Name string `json:"name,omitempty"`
 
-	// RequestedPath is the prompt-directed target path the model asked for
-	// (e.g. echoed from an "as sunshine.jpg" instruction), when one exists.
-	// It is untrusted model input: the runtime routes it through
-	// workspacemedia.ClassifyRequestedPath, and a path escaping the workspace
-	// requires an explicit user confirmation before it is honored. Response
-	// marker extraction (the "[media-file: ...]" protocol) will populate it;
-	// until that lands, providers leave it empty and materialization falls
-	// back to Name.
+	// RequestedPath is untrusted. Marker paths take precedence; prompt-filename
+	// fallback applies only to exactly one returned image without a marker.
+	// Materialization redirects paths outside the workspace to a sanitized
+	// workspace basename. Empty paths use the provider name, then a generic name.
 	RequestedPath string `json:"requested_path,omitempty"`
 
-	// Size is the byte length of Data, cached because Data itself is
-	// dropped once the artifact is materialized.
+	// Size is the byte length of Data for downstream metadata.
 	Size int64 `json:"size,omitempty"`
 }
