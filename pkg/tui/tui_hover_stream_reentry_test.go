@@ -47,7 +47,7 @@ func programAck(t *testing.T, program *tea.Program) {
 }
 
 func TestActualProgramPendingSpinnerHoverIsFrameIsolated(t *testing.T) {
-	root, _, _ := wallClockRoot(t, 120, 40)
+	root, _, _ := frozenClockRoot(t, 120, 40)
 	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	program := startStreamingMotionProgram(t, model, tea.WithOutput(&wallClockCountingWriter{}))
