@@ -29,7 +29,14 @@ const NoAgentImage = "none"
 // Falls back to the rolling :edge image when the host binary isn't a release
 // build (version.Version isn't a valid semantic version, e.g. "dev" or "pr").
 func DefaultAgentImage() string {
-	v, err := semver.NewVersion(version.Version)
+	return defaultAgentImageFor(version.Version)
+}
+
+// defaultAgentImageFor is the pure core of DefaultAgentImage, taking the host
+// CLI version explicitly so tests can cover it without mutating the global
+// version.Version (which races with parallel tests reading it).
+func defaultAgentImageFor(hostVersion string) string {
+	v, err := semver.NewVersion(hostVersion)
 	if err != nil {
 		return edgeAgentImage
 	}
