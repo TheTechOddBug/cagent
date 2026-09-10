@@ -110,16 +110,9 @@ tasks:
   test-wasm-providers:
     desc: Test explicit provider registration in the WASM demo (requires Node)
     cmds:
-      - task: test-wasm-js
-      - go test ./e2e -run '^TestWasmProviderDependencies$'
-
-  # The GOOS=js half of test-wasm-providers; the e2e check above already runs
-  # under `task test`, so CI calls this to avoid recompiling the e2e package.
-  test-wasm-js:
-    desc: Run the GOOS=js provider registration tests (requires Node)
-    cmds:
       - GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/wasm
       - GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" pkg/model/provider/factory_js_openai_vendor_test.go
+      - go test ./e2e -run '^TestWasmProviderDependencies$'
 
   test-binary:
     desc: Run tests on build binary
