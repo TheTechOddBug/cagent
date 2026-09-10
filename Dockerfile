@@ -86,6 +86,7 @@ apt-get clean
 rm -rf /var/lib/apt/lists/*
 EOF
 COPY --chmod=0755 --from=docker/mcp-gateway:v2 /docker-mcp /usr/local/lib/docker/cli-plugins/docker-mcp
+COPY --chmod=0755 --from=registry.k8s.io/kubectl:v1.37.0 /bin/kubectl /usr/local/bin/kubectl
 USER agent
 ENV DOCKER_AGENT_NO_TOUR=1 \
     DOCKER_AGENT_HIDE_TELEMETRY_BANNER=1 \

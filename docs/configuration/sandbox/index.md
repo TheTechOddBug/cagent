@@ -206,6 +206,7 @@ layers onto `docker/sandbox-templates:shell-docker` and adds:
 
 - The `docker-agent` binary.
 - `vim` and `tmux`, for interactive debugging inside the VM.
+- `kubectl`, for interacting with Kubernetes clusters from inside the VM.
 - The **`docker-mcp`** Docker CLI plugin, installed at `~/.docker/cli-plugins/docker-mcp`.
 
 The image carries the label `com.docker.sandboxes.flavor=docker-agent-docker`
