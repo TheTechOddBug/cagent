@@ -127,12 +127,7 @@ func TestActualProgramWritesAfterEffectiveIdleInput(t *testing.T) {
 	root := populateScrollableRoot(t)
 	model := &cacheProgramModel{root: root}
 	writer := &cacheProgramWriter{}
-	program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(writer), tea.WithWindowSize(120, 40))
-	done := make(chan error, 1)
-	go func() {
-		_, err := program.Run()
-		done <- err
-	}()
+	program := startTestProgram(t, root, model, tea.WithOutput(writer))
 	require.Eventually(t, func() bool { return writer.snapshot() != "" }, time.Second, time.Millisecond)
 	ack := func() {
 		done := make(chan struct{})
@@ -154,10 +149,6 @@ func TestActualProgramWritesAfterEffectiveIdleInput(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return strings.Contains(ansi.Strip(writer.snapshot()), "PROGRAM-STREAM-MARKER")
 	}, time.Second, time.Millisecond, "stream chunk produced no terminal write while idle")
-
-	program.Quit()
-	require.NoError(t, <-done)
-	root.ar.Stop()
 }
 
 func TestNoOpPointerAndWheelReuseRootCache(t *testing.T) {

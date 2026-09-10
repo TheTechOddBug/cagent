@@ -96,10 +96,7 @@ func TestActualProgramLongStreamMotionWorkIsViewportBounded(t *testing.T) {
 	_ = root.View()
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	writer := &wallClockCountingWriter{}
-	program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(writer), tea.WithWindowSize(120, 40))
-	done := make(chan error, 1)
-	go func() { _, err := program.Run(); done <- err }()
-	<-model.ready
+	program := startStreamingMotionProgram(t, model, tea.WithOutput(writer))
 	waitForProgramQuiescence(t, model, writer)
 
 	chunk := "Paragraph with **markdown**, `code`, Unicode λ界, and a [link](https://example.com).\n\n"
@@ -130,7 +127,4 @@ func TestActualProgramLongStreamMotionWorkIsViewportBounded(t *testing.T) {
 	views := model.views.Load()
 	waitForProgramQuiescence(t, model, writer)
 	require.Equal(t, views, model.views.Load(), "program quiesces after stream input")
-	root.ar.Stop()
-	program.Quit()
-	require.NoError(t, <-done)
 }

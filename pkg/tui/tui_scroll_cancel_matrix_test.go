@@ -22,10 +22,7 @@ func TestActualProgramScrollCancelResizeMatrixNeverNeedsRecoveryClick(t *testing
 		_ = root.View()
 	}
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
-	program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(&wallClockCountingWriter{}), tea.WithWindowSize(120, 40))
-	done := make(chan error, 1)
-	go func() { _, err := program.Run(); done <- err }()
-	<-model.ready
+	program := startStreamingMotionProgram(t, model, tea.WithOutput(&wallClockCountingWriter{}))
 	sequence := []tea.Msg{
 		messages.WheelCoalescedMsg{Delta: -1_000_000, X: 40, Y: 20},
 		tea.MouseMotionMsg{X: 40, Y: 20},
@@ -47,7 +44,4 @@ func TestActualProgramScrollCancelResizeMatrixNeverNeedsRecoveryClick(t *testing
 		require.Equal(t, ansi.Strip(current), ansi.Strip(programFrame(t, program)), "inert click repaired viewport after %T", msg)
 	}
 	require.Contains(t, ansi.Strip(programFrame(t, program)), "matrix marker", "bottom viewport retains current stream content")
-	program.Quit()
-	require.NoError(t, <-done)
-	root.ar.Stop()
 }
