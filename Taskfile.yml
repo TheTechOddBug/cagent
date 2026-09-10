@@ -107,6 +107,12 @@ tasks:
     cmds:
       - go test ./...
 
+  test-race:
+    desc: Run tests with the race detector and shuffled order (slow; CI runs it on main only)
+    dotenv: [.env.test]
+    cmds:
+      - go test -race -shuffle=on ./...
+
   test-wasm-providers:
     desc: Test explicit provider registration in the WASM demo (requires Node)
     cmds:

@@ -89,7 +89,7 @@ done
 
 # Check 2: third-party `uses:` references pinned by 40-char SHA.
 #
-# Local references (`./...`, `../...`) and re-usable workflow refs
+# Local references (`$/...`, `./...`, `../...`) and re-usable workflow refs
 # without an `@` (handled by the regex below) are exempt; everything
 # else, including the `docker/` namespace, must look like
 # `owner/repo@<40hex>`. The trailing comment with the human-readable
@@ -113,7 +113,7 @@ while IFS= read -r line; do
 
   # Skip empty / local / re-usable workflow refs.
   case "$ref" in
-    '' | './'* | '../'*)
+    '' | './'* | '../'* | '$/'*)
       continue
       ;;
   esac

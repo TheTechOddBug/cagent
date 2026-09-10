@@ -2,18 +2,19 @@
 #
 # `gate` is the only check the main ruleset needs to require: it fails when any
 # job it needs failed or was cancelled and passes when they succeeded or were
-# skipped (fork PRs skip `image`). Add a job to `gate.needs` to make it
-# blocking; the ruleset never has to change.
+# skipped (fork PRs skip `image`, docs-only PRs skip every Go job). Add a job to
+# `gate.needs` to make it blocking; the ruleset never has to change.
 name: ci
 
 permissions:
   contents: read
 
-# Main and tag runs get a group of their own so they are never queued behind
-# or cancelled by another run; PR runs supersede the previous run on the ref.
+# Main, tag and merge-queue runs get a group of their own so they are never
+# queued behind or cancelled by another run; PR runs supersede the previous
+# run on the ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+  group: ${{ github.workflow }}-${{ github.event_name != 'pull_request' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   workflow_dispatch:
@@ -35,15 +36,42 @@ on:
     branches: [ main ]
     tags: [ "v*" ]
   pull_request:
+  merge_group:
 
 jobs:
+  # Docs-only PRs (every changed file under docs/) skip the Go jobs. Markdown
+  # elsewhere is test data, so only docs/ counts. Anything but a PR runs all.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs_count != steps.filter.outputs.all_count }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            docs:
+              - 'docs/**'
+            all:
+              - '**'
+
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: ./.github/actions/setup-go
         with:
+          persist-credentials: false
+
+      - uses: $/.github/actions/setup-go
+        with:
+          cache-name: test-linux
+          save: 'false'
           task: 'false'
 
       - name: golangci-lint
@@ -66,18 +94,36 @@ jobs:
       - name: GitHub Actions
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
+          version: 1.7.12
           fail-on-error: true
           pyflakes: false
+          # actionlint does not know GitHub's `$/` same-repository action syntax
+          # yet. The action splits flags on whitespace, hence the \s pattern.
+          flags: -ignore action\s.\$/\S+.\sin\sinvalid\sformat
+
+      # Static security audit of workflows and composite actions; config in
+      # .github/zizmor.yml. Informational findings do not fail the job.
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          advanced-security: false
+          annotations: true
+          min-severity: low
 
       - name: Workflow invariants
         run: ./scripts/workflow-lint.sh
 
   test-linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: ./.github/actions/setup-go
+      - uses: $/.github/actions/setup-go
 
       - name: Build
         run: task build
@@ -91,23 +137,42 @@ jobs:
   # Plan storage relies on OS-specific file locking and path semantics, so the
   # full suite also runs natively on Windows.
   test-windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: ./.github/actions/setup-go
+      - uses: $/.github/actions/setup-go
+
+      # Real-time scanning of every compiled object and test binary is the
+      # dominant I/O cost on hosted Windows runners.
+      - name: Exclude build paths from Defender
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, (go env GOROOT), (go env GOPATH), (go env GOCACHE), (go env GOMODCACHE))
+          Add-MpPreference -ExclusionPath $paths
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
 
       - name: Test
         run: task test
 
   # Compile-only checks kept out of `test-linux` so they run alongside it.
   cross-compile:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: ./.github/actions/setup-go
+      - uses: $/.github/actions/setup-go
 
       - name: Plan storage build tags
         run: task check-plan-cross
@@ -116,30 +181,57 @@ jobs:
         run: task test-wasm-js
 
   licenses:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: ./.github/actions/setup-go
         with:
+          persist-credentials: false
+
+      - uses: $/.github/actions/setup-go
+        with:
+          cache-name: test-linux
+          save: 'false'
           task: 'false'
 
       - name: Check licenses
         run: |
-          go install github.com/google/go-licenses@latest
+          go install github.com/google/go-licenses@v1.6.0
           go-licenses check . --allowed_licenses=Apache-2.0,MIT,BSD-3-Clause,BSD-2-Clause --ignore modernc.org/mathutil --ignore github.com/hashicorp/hcl/v2
 
+  # Race detector on main only: it is several times slower than `task test`
+  # and must not sit on the PR critical path. Not needed by `gate`.
+  test-race:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: $/.github/actions/setup-go
+
+      - name: Test with the race detector
+        run: task test-race
+
   # Builds the image and the sandbox template on Build Cloud (both platforms
-  # natively, one runner). PRs from this repo build into the cache only; main,
-  # v* tags and `image_mode: auto` dispatches on main push by digest, untagged.
-  # Not gated on the test jobs: nothing user-visible moves until `publish`.
+  # natively, one runner). PRs from this repo and merge-queue runs build into
+  # the cache only; main, v* tags and `image_mode: auto` dispatches on main
+  # push by digest, untagged. Not gated on the test jobs: nothing user-visible
+  # moves until `publish`.
   image:
+    needs: changes
     if: >-
+      needs.changes.outputs.code == 'true' &&
       github.repository == 'docker/docker-agent' &&
       !github.event.repository.fork && (
         (github.event_name == 'pull_request' &&
           github.event.pull_request.base.repo.full_name == github.repository) ||
         github.event_name == 'push' ||
+        github.event_name == 'merge_group' ||
         (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/'))
       )
     permissions:
@@ -187,7 +279,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: ./.github/actions/setup-buildx
+      - uses: $/.github/actions/setup-buildx
         id: buildx
         with:
           connection-id: ${{ vars.DOCKERHUB_OIDC_CONNECTION_ID }}
@@ -245,14 +337,19 @@ jobs:
   # Single required status check; see the header comment.
   gate:
     if: always()
-    needs: [ lint, test-linux, test-windows, cross-compile, licenses, image ]
+    needs: [ changes, lint, test-linux, test-windows, cross-compile, licenses, image ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check results
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<< "$RESULTS"
+          {
+            echo "| job | result |"
+            echo "|---|---|"
+            jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<< "$RESULTS"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           jq -e '[.[] | .result] | all(. == "success" or . == "skipped")' <<< "$RESULTS" >/dev/null
 
   # Moves tags onto the digests pushed by `image` once the gate is green. On
@@ -265,16 +362,18 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       IMAGE: docker/docker-agent
       TEMPLATE: docker/docker-agent-sbx-templates
       IMAGE_DIGEST: ${{ needs.image.outputs.image-digest }}
       TEMPLATE_DIGEST: ${{ needs.image.outputs.template-digest }}
     steps:
-      - uses: ./.github/actions/setup-buildx
+      # imagetools talks to the registry directly; no builder needed.
+      - uses: $/.github/actions/setup-buildx
         with:
           connection-id: ${{ vars.DOCKERHUB_OIDC_CONNECTION_ID }}
-          driver: docker-container
+          builder: 'false'
 
       - name: Docker metadata
         id: meta
