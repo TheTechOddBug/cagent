@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,18 @@ import (
 
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
+
+func TestRenderUserLinesMarksPromptStart(t *testing.T) {
+	t.Parallel()
+
+	lines := RenderUserLines("jump back here", 24)
+	require.NotEmpty(t, lines)
+	assert.True(t, strings.HasPrefix(lines[0], seqPromptStart))
+	assert.True(t, strings.HasSuffix(lines[0], seqOutputStart))
+	assert.Equal(t, 1, strings.Count(strings.Join(lines, ""), seqPromptStart))
+	assert.Equal(t, 1, strings.Count(strings.Join(lines, ""), seqOutputStart))
+	assert.Equal(t, 24, DisplayWidth(lines[0]))
+}
 
 func TestRenderUserLinesUsesDistinctFullWidthBackground(t *testing.T) {
 	t.Parallel()

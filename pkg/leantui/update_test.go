@@ -234,6 +234,27 @@ func TestSessionsCommandListsCurrentDirectoryAndResumesSelection(t *testing.T) {
 	assert.NotContains(t, transcript, "Other directory")
 }
 
+func TestLoadInitialSessionTranscriptMarksRestoredUserMessages(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	sess.AddMessage(session.UserMessage("restored question"))
+	sess.AddMessage(session.NewAgentMessage("coder", &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "restored answer",
+	}))
+
+	m := bareModel(80)
+	m.app = app.New(t.Context(), &cycleThinkingRuntime{}, sess)
+	m.sessionState = service.NewSessionState(sess)
+	m.loadInitialSessionTranscript()
+
+	transcript := strings.Join(m.screen.Transcript.Lines(80, 0, false, m.sessionState, nil), "\n")
+	assert.Contains(t, transcript, "\x1b]133;A;redraw=0\x07")
+	assert.Contains(t, transcript, "restored question")
+	assert.Contains(t, transcript, "restored answer")
+}
+
 func TestLoadSessionTranscriptRestoresToolCalls(t *testing.T) {
 	t.Parallel()
 	sess := session.New()
