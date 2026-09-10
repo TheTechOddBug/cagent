@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -74,6 +75,28 @@ func streamWithContent(content string) chat.MessageStream {
 		},
 		errAt: -1,
 	}
+}
+
+func TestGenerateOnceUsesTitleHeadroomAndClearsStructuredOutput(t *testing.T) {
+	t.Parallel()
+
+	structured := &latest.StructuredOutput{Schema: map[string]any{"type": "object"}}
+	baseProvider := &mockProvider{
+		id: modelsdev.NewID("google", "gemini-3-flash"),
+		baseCfgFn: func() base.Config {
+			maxTokens := int64(7)
+			return base.Config{
+				ModelConfig:  latest.ModelConfig{MaxTokens: &maxTokens},
+				ModelOptions: options.Apply(options.WithStructuredOutput(structured)),
+			}
+		},
+		createFn: func() (chat.MessageStream, error) { return streamWithContent("Title"), nil },
+	}
+
+	_, err := generateOnce(t.Context(), baseProvider, buildPrompt([]string{"hello"}))
+	require.NoError(t, err)
+	assert.Equal(t, 1, baseProvider.calls, "a failed clone would call the base provider and lose title-specific options")
+	assert.Equal(t, 128, titleMaxTokens)
 }
 
 func TestGenerator_Generate_FallsBackOnStreamCreateError(t *testing.T) {
