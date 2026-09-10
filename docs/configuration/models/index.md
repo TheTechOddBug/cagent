@@ -40,7 +40,7 @@ models:
       pdf: boolean # Optional: whether the model accepts PDF attachments
       audio: boolean # Optional: whether the model accepts audio attachments
       video: boolean # Optional: whether the model accepts video attachments
-    output_capabilities: # Optional: owner-declared generative output capabilities (never inferred)
+    output_capabilities: # Optional: generative output capabilities; explicit override, else resolved from models.dev
       image: boolean # Optional: whether the model is declared able to generate image output
     cost: # Optional: explicit token pricing (USD per 1M tokens)
       input: float # Optional: price per 1M input tokens
@@ -76,7 +76,7 @@ models:
 | `track_usage`         | boolean    | ✗        | Track and report token usage for this model                                           |
 | `routing`             | array      | ✗        | Rule-based routing to different models. See [Model Routing](../routing/index.md). |
 | `capabilities`        | object     | ✗        | Override attachment (input) capabilities for this model. See [Attachment Capability Overrides](#attachment-capability-overrides). |
-| `output_capabilities` | object     | ✗        | Owner-declared generative output capabilities for this model, e.g. image generation. Never inferred. Cannot be combined with `first_available`. See [Output Capabilities](#output-capabilities). |
+| `output_capabilities` | object     | ✗        | Generative output capabilities for this model, e.g. image generation, resolved from an explicit override or the models.dev catalogue. Cannot be combined with `first_available`. See [Output Capabilities](#output-capabilities). |
 | `cost`                | object     | ✗        | Explicit token pricing in USD per 1M tokens, overriding the built-in catalogue. See [Custom Token Pricing](#custom-token-pricing). |
 | `provider_opts`       | object     | ✗        | Provider-specific options (see provider pages)                                        |
 | `title_model`         | string     | ✗        | Model used for session-title generation. Can be a named model from the `models:` section or an inline `provider/model` string. When omitted, the agent's primary model generates titles. Cannot be combined with `first_available`. |
@@ -154,11 +154,11 @@ stripping behaviour with and without an override.
 ## Output Capabilities
 
 `output_capabilities` declares what a model can generate, as opposed to
-`capabilities`, which declares what it accepts as input. There is no
-automatic detection for output capabilities: no catalogue of
-output-capable models exists, and matching on the model name string is
-deliberately avoided as unreliable. A model's output capabilities are
-therefore always unknown/off unless the owner declares them.
+`capabilities`, which declares what it accepts as input. When `image` is
+omitted (including an omitted `output_capabilities` block), Docker Agent
+resolves it from the models.dev catalogue's declared output modalities;
+matching on the model name string is deliberately avoided as unreliable.
+Models absent from the catalogue conservatively resolve to no image output.
 
 ```yaml
 models:
