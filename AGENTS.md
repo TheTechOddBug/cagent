@@ -115,3 +115,25 @@ Before marking work as complete:
 - Keep branches focused on single features or fixes
 - Ensure your branch is up-to-date before submitting
 - Sign commits with a GPG or SSH key (`git commit -S`)
+
+# GitHub Actions
+
+- `ci / gate` is the single required status check on `main`. It needs every
+  blocking job; to make a new job blocking, add it to `gate.needs` in
+  `.github/workflows/ci.yml` — the ruleset does not change. Docs-only PRs
+  (only `docs/**` changed) skip the Go jobs; `gate` treats skipped as passed
+- Every job sets `timeout-minutes`; every checkout sets
+  `persist-credentials: false`. zizmor (`.github/zizmor.yml`) and Dependabot
+  (`.github/dependabot.yml`, GitHub Actions only) keep both honest
+- Pin every third-party action by 40-character SHA with a `# vX.Y.Z` comment,
+  and only to versions listed in the org allow list
+  (`docker/infra-github-allow-list`, `terraform/docker/main.tf`); `actions/*`,
+  `github/*` and `docker/*` are allowed at any version
+- Every PR-triggered workflow declares a `concurrency` group. Runs on `main`
+  and on tags are never queued or cancelled: their group includes
+  `github.run_id`
+- Shared setup lives in `.github/actions/`, referenced as `$/.github/actions/<name>`
+  (no checkout needed): `setup-go` (Go, Task, per-job
+  cache), `setup-hugo`, `setup-buildx` (Hub OIDC login and builder). Pin tool
+  versions there, not in workflows
+- `scripts/workflow-lint.sh` enforces the above and runs in the `lint` job
