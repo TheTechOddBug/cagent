@@ -631,11 +631,6 @@ func (s *SQLiteSessionStore) AddSession(ctx context.Context, session *Session) e
 		return ErrEmptyID
 	}
 
-	fields, err := sessionPersistedFieldsOf(session)
-	if err != nil {
-		return err
-	}
-
 	// Use a transaction to insert session and its items
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -643,17 +638,7 @@ func (s *SQLiteSessionStore) AddSession(ctx context.Context, session *Session) e
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO sessions (
-			id, origin, tools_approved, safety_policy, input_tokens, output_tokens, title, cost, send_user_message,
-			max_iterations, working_dir, created_at, permissions, agent_model_overrides,
-			custom_models_used, thinking, parent_id, instruction_context, attributes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.Origin, session.ToolsApproved, string(session.SafetyPolicy), session.InputTokens, session.OutputTokens, session.Title,
-		session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
-		session.CreatedAt.Format(time.RFC3339), fields.PermissionsJSON, fields.AgentModelOverridesJSON,
-		fields.CustomModelsUsedJSON, false, fields.ParentID, fields.InstructionContextJSON, fields.AttributesJSON)
-	if err != nil {
+	if err := s.addSessionTx(ctx, tx, session); err != nil {
 		return err
 	}
 
