@@ -60,8 +60,8 @@
 # Requirements: the command-style hooks below pipe stdin through `jq` for
 # convenient JSON access. If you don't have jq installed (`brew install jq`
 # on macOS, `apt-get install jq` on Debian/Ubuntu), a hook will exit non-zero
-# and the runtime will log a 'Hook execution error' warning but otherwise
-# continue — use plain `awk`/`sed`/`grep` or any other parser if you prefer.
+# and fail-closed pre_tool_use hooks will deny the call; other events
+# follow on_error — use plain `awk`/`sed`/`grep` or any other parser if you prefer.
 #
 # Try these prompts:
 #   "Run: echo hello"           → allowed

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"maps"
+
+	"github.com/docker/docker-agent/pkg/hooks/events"
 )
 
 // runPipeline passes each accepted rewrite to the next hook without changing
@@ -11,7 +13,7 @@ import (
 func (e *Executor) runPipeline(ctx context.Context, event EventType, hooks []Hook, input Input, inputJSON []byte) *Result {
 	results := make([]hookResult, 0, len(hooks))
 	for _, hook := range hooks {
-		results = append(results, e.runHook(ctx, hook, inputJSON))
+		results = append(results, e.runHook(ctx, event, hook, inputJSON))
 		r := &results[len(results)-1]
 		if r.err != nil || r.ExitCode != 0 || r.Output == nil || r.Output.HookSpecificOutput == nil {
 			continue
@@ -41,8 +43,8 @@ func (e *Executor) runPipeline(ctx context.Context, event EventType, hooks []Hoo
 }
 
 func rewrittenInput(input Input, event EventType, out *HookSpecificOutput) (Input, bool) {
-	switch event {
-	case EventPreToolUse:
+	switch EventContract(event).Rewrite {
+	case events.RewriteToolInput:
 		if out.UpdatedInput == nil {
 			return input, false
 		}
@@ -51,12 +53,12 @@ func rewrittenInput(input Input, event EventType, out *HookSpecificOutput) (Inpu
 			input.ToolInput = make(map[string]any)
 		}
 		maps.Copy(input.ToolInput, out.UpdatedInput)
-	case EventBeforeLLMCall:
+	case events.RewriteMessages:
 		if len(out.UpdatedMessages) == 0 {
 			return input, false
 		}
 		input.Messages = out.UpdatedMessages
-	case EventToolResponseTransform:
+	case events.RewriteToolResponse:
 		if out.UpdatedToolResponse == nil {
 			return input, false
 		}

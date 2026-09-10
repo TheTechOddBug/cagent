@@ -17,8 +17,10 @@ import (
 // party. The same builtin is registered once and dispatches on
 // [hooks.Input.HookEventName] so a single name covers all three legs:
 //
-//   - [hooks.EventPreToolUse]            — scrub tool ARGUMENTS before
-//     the call leaves the runtime (returns UpdatedInput).
+//   - [hooks.EventToolInputTransform]  — scrub tool ARGUMENTS before
+//     approval and before the call leaves the runtime (returns
+//     UpdatedInput). [hooks.EventPreToolUse] is still accepted for
+//     explicit legacy YAML entries.
 //   - [hooks.EventBeforeLLMCall]         — scrub outgoing CHAT CONTENT
 //     before each model call (returns UpdatedMessages).
 //   - [hooks.EventToolResponseTransform] — scrub tool OUTPUT before it
@@ -45,7 +47,7 @@ func redactSecrets(_ context.Context, in *hooks.Input, _ []string) (*hooks.Outpu
 		return nil, nil
 	}
 	switch in.HookEventName {
-	case hooks.EventPreToolUse:
+	case hooks.EventToolInputTransform, hooks.EventPreToolUse:
 		return redactToolArgs(in), nil
 	case hooks.EventBeforeLLMCall:
 		return redactOutgoingMessages(in), nil
@@ -82,7 +84,7 @@ func redactToolArgs(in *hooks.Input) *hooks.Output {
 	return &hooks.Output{
 		SystemMessage: fmt.Sprintf("redact_secrets: redacted secret material from arguments of tool %q", in.ToolName),
 		HookSpecificOutput: &hooks.HookSpecificOutput{
-			HookEventName: hooks.EventPreToolUse,
+			HookEventName: in.HookEventName,
 			UpdatedInput:  updated,
 		},
 	}

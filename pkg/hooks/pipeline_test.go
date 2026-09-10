@@ -133,7 +133,7 @@ func TestPipelineToolInputEmptyPatch(t *testing.T) {
 func TestPipelineNoRewrite(t *testing.T) {
 	t.Parallel()
 
-	for _, event := range []EventType{EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform} {
+	for _, event := range []EventType{EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform, EventToolInputTransform} {
 		t.Run(string(event), func(t *testing.T) {
 			t.Parallel()
 			exec := pipelineTestExecutor(t, event, []Hook{{Type: HookTypeCommand, Command: "echo '{}'"}}, NewRegistry())
@@ -149,7 +149,7 @@ func TestPipelineNoRewrite(t *testing.T) {
 func TestPipelineFailuresKeepPriorRewriteAndRunRemainingHooks(t *testing.T) {
 	t.Parallel()
 
-	for _, event := range []EventType{EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform} {
+	for _, event := range []EventType{EventPreToolUse, EventBeforeLLMCall, EventToolResponseTransform, EventToolInputTransform} {
 		for _, tc := range []struct {
 			name    string
 			result  HandlerResult
@@ -197,9 +197,10 @@ func TestPipelineFailuresKeepPriorRewriteAndRunRemainingHooks(t *testing.T) {
 				})
 				require.NoError(t, err)
 				assert.True(t, lastRan)
-				assert.Equal(t, !tc.blocked, result.Allowed)
+				blocked := tc.blocked && EventContract(event).CanBlock || tc.result.ExitCode == 1 && EventContract(event).FailClosed
+				assert.Equal(t, !blocked, result.Allowed)
 				switch event {
-				case EventPreToolUse:
+				case EventPreToolUse, EventToolInputTransform:
 					assert.Equal(t, "first", result.ModifiedInput["cmd"])
 				case EventBeforeLLMCall:
 					require.Len(t, result.UpdatedMessages, 1)
@@ -241,7 +242,7 @@ func TestPipelineInvalidRewritePreservesDenyAndInput(t *testing.T) {
 func TestNonTransformEventsRemainConcurrent(t *testing.T) {
 	t.Parallel()
 
-	for _, event := range []EventType{EventSessionStart, EventPermissionRequest, EventBeforeCompaction, EventPreToolUsePreYolo} {
+	for _, event := range []EventType{EventSessionStart, EventPermissionRequest, EventBeforeCompaction, EventPreToolUsePreYolo, EventToolGuard} {
 		t.Run(string(event), func(t *testing.T) {
 			t.Parallel()
 			started := make(chan struct{}, 2)
@@ -279,12 +280,17 @@ func TestNonTransformEventsRemainConcurrent(t *testing.T) {
 			exec := NewExecutorWithRegistry(&Config{
 				SessionStart: hookList, BeforeCompaction: hookList,
 				PermissionRequest: []MatcherConfig{{Hooks: hookList}},
+				ToolGuard:         []MatcherConfig{{Hooks: hookList}},
 				PreToolUse:        []MatcherConfig{{PreemptYolo: &preempt, Hooks: hookList}},
 			}, t.TempDir(), nil, registry)
 			result, err := exec.Dispatch(ctx, event, &Input{ToolInput: map[string]any{"cmd": "original"}})
 			require.NoError(t, err)
 			require.NoError(t, ctx.Err(), "both hooks must start before either finishes")
-			assert.Equal(t, "first\nsecond", result.AdditionalContext)
+			if EventContract(event).Context {
+				assert.Equal(t, "first\nsecond", result.AdditionalContext)
+			} else {
+				assert.Empty(t, result.AdditionalContext)
+			}
 			assert.Nil(t, result.ModifiedInput)
 			if event == EventBeforeCompaction {
 				assert.Equal(t, "first", result.Summary)
@@ -309,6 +315,10 @@ func pipelineTestExecutor(t *testing.T, event EventType, hookList []Hook, regist
 		cfg.BeforeLLMCall = hookList
 	case EventToolResponseTransform:
 		cfg.ToolResponseTransform = []MatcherConfig{{Hooks: hookList}}
+	case EventToolInputTransform:
+		cfg.ToolInputTransform = []MatcherConfig{{Hooks: hookList}}
+	case EventToolGuard:
+		cfg.ToolGuard = []MatcherConfig{{Hooks: hookList}}
 	default:
 		t.Fatalf("unexpected event: %s", event)
 	}

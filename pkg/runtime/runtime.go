@@ -727,7 +727,7 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 	// redact_secrets used to live here as a sibling [MessageTransform];
 	// it now ships entirely as a [hooks.BuiltinFunc] in
 	// pkg/hooks/builtins/redact_secrets.go and is wired into all three
-	// of pre_tool_use, before_llm_call, and tool_response_transform via
+	// of tool_input_transform, before_llm_call, and tool_response_transform via
 	// [builtins.ApplyAgentDefaults] (or a user's hooks YAML directly),
 	// so the rewrite path is the same for every leak vector and there
 	// is no flag-only code path to keep in sync.

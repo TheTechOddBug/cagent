@@ -53,6 +53,9 @@ agents:
     handoffs: [list] # Optional: agent names this agent can hand off to
     force_handoff: string # Optional: agent that always receives the conversation when this agent stops
     hooks: # Optional: lifecycle hooks
+      tool_input_transform: [list]
+      tool_guard: [list]
+      permission_request: [list]
       pre_tool_use: [list]
       tool_response_transform: [list]
       post_tool_use: [list]
@@ -313,7 +316,7 @@ Multiple processes can share the same `path:` cache file safely. Every `Store` t
 
 Secret redaction is enabled by default. The `redact_secrets` field controls scrubbing of detected credentials, tokens, and private keys from an agent's I/O; set it to `false` to opt out. It wires up three complementary defenses:
 
-1. A `pre_tool_use` built-in hook that scrubs detected secrets from the **arguments of every tool call**, before the tool sees them.
+1. A `tool_input_transform` built-in hook that scrubs detected secrets from the **arguments of every tool call**, before the tool sees them.
 2. A `before_llm_call` built-in hook that scrubs the same patterns from **outgoing chat messages** — message content, multi-part text content, prior reasoning content, and the JSON-encoded arguments of any tool call still in the conversation — before they reach the model provider.
 3. A `tool_response_transform` built-in hook that scrubs **tool output at the source**, so the secret never reaches event consumers, the persisted session file, the `post_tool_use` hook input, or the next LLM call.
 
@@ -349,7 +352,7 @@ Each detected span is replaced with the literal string `[REDACTED]`; the surroun
 > [!NOTE]
 > **Equivalent hook entry**
 >
-> The default redaction behavior (or an explicit `redact_secrets: true`) auto-registers all three legs of the feature as hook entries. They share the _same_ built-in name (`type: builtin`, `command: redact_secrets`) on `pre_tool_use`, `before_llm_call`, and `tool_response_transform` respectively — the implementation dispatches on the hook event. Set `redact_secrets: false` before wiring hooks manually to avoid also registering the default hooks. You can spell them out by hand to scope a leg to a subset of tools (set `matcher:` to a regex), stack them with other rewriters in a specific order, or enable just one or two legs. See [`examples/redact_secrets_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml) for a complete manual wiring and the [Hooks reference](../hooks/index.md#available-built-ins) for the builtin's event coverage.
+> The default redaction behavior (or an explicit `redact_secrets: true`) auto-registers all three legs of the feature as hook entries. They share the _same_ built-in name (`type: builtin`, `command: redact_secrets`) on `tool_input_transform`, `before_llm_call`, and `tool_response_transform` respectively — the implementation dispatches on the hook event. Set `redact_secrets: false` before wiring hooks manually to avoid also registering the default hooks. You can spell them out by hand to scope a leg to a subset of tools (set `matcher:` to a regex), stack them with other rewriters in a specific order, or enable just one or two legs. See [`examples/redact_secrets_hooks.yaml`](https://github.com/docker/docker-agent/blob/main/examples/redact_secrets_hooks.yaml) for a complete manual wiring and the [Hooks reference](../hooks/index.md#available-built-ins) for the builtin's event coverage.
 
 ## Welcome Message
 

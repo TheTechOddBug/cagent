@@ -123,6 +123,9 @@ func (r *LocalRuntime) dispatchHook(
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "Hook execution failed", "event", event, "agent", a.Name(), "error", err)
+		if hooks.EventContract(event).CanBlock {
+			return &hooks.Result{ExitCode: -1, Message: err.Error()}
+		}
 		return nil
 	}
 
@@ -483,6 +486,8 @@ const (
 	ApprovalSourceTeamPermissionsDeny     = "team_permissions_deny"
 	ApprovalSourcePreToolUseHookAllow     = "pre_tool_use_hook_allow"
 	ApprovalSourcePreToolUseHookDeny      = "pre_tool_use_hook_deny"
+	ApprovalSourceToolInputTransformDeny  = toolexec.ApprovalSourceToolInputTransformDeny
+	ApprovalSourceToolGuardDeny           = toolexec.ApprovalSourceToolGuardDeny
 	ApprovalSourceReadOnlyHint            = "readonly_hint"
 	ApprovalSourceModeBalanced            = "mode_balanced"
 	ApprovalSourceModeRestricted          = "mode_restricted"
