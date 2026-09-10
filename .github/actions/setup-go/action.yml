@@ -1,0 +1,59 @@
+name: Set up Go
+description: >-
+  Installs Go and Task, then restores the module and build caches saved by the
+  last main run of the same job. setup-go's built-in cache is keyed on go.sum
+  alone, so a single snapshot is shared by every job and never refreshed once
+  saved; keying per job with the commit SHA as suffix keeps each job's build
+  cache warm. On main the cache is saved automatically when the job ends; on
+  every other ref it is restore-only so PR branches never fill the cache quota.
+
+inputs:
+  cache-name:
+    description: Cache namespace; defaults to the job id.
+    required: false
+    default: ${{ github.job }}
+  task:
+    description: Install Task.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - if: inputs.task == 'true'
+      uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      with:
+        version: 3.53.1
+
+    - id: paths
+      shell: bash
+      run: |
+        {
+          echo "paths<<EOF"
+          go env GOMODCACHE
+          go env GOCACHE
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - if: github.ref == 'refs/heads/main'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.paths }}
+        key: go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
+          go-${{ runner.os }}-${{ inputs.cache-name }}-
+
+    - if: github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.paths }}
+        key: go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
+          go-${{ runner.os }}-${{ inputs.cache-name }}-
