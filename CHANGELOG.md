@@ -3,6 +3,65 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.138.0] - 2026-09-10
+
+This release introduces generated image output support with workspace-safe storage and portable session blobs, a new tool hook execution model with mandatory phases, and several other feature additions and fixes.
+
+## What's New
+
+- Adds streaming support for model-generated media deltas, accumulating complete image bytes in runtime stream results
+- Adds workspace media writes with collision-safe naming, MIME-corrected extensions, and no-overwrite publication for generated images
+- Adds generated media materialization as workspace files with no-resend history placeholders stored in session JSON instead of raw base64
+- Keeps all generated-media writes inside the owning workspace; external, traversal, and symlink-escaping paths are redirected to a sanitized basename
+- Names generated media via private `[media-file:]` response markers with fallback to user-prompt filename, provider name, or `generated-N`
+- Renders generated images through manifest-gated authorization, revalidating against the current manifest on every resolution
+- Restores generated media from portable session blobs when resuming sessions
+- Adds `output_capabilities.image` configuration support to resolve image output capability from models.dev metadata
+- Guards image-output requests across Google surfaces (gateway, direct Gemini API, and Vertex), rejecting custom function tools and structured output before dispatch
+- Adds tool hook phases with a fixed mandatory execution order: `tool_input_transform` runs first, followed by `tool_guard`; includes hook deduplication, config validation, and a shared events catalog with centralized contracts
+- Adds `provider_opts.service_tier` field for OpenAI provider, forwarded unchanged to the underlying API for Fast mode support
+- Marks lean TUI user prompts with OSC 133 semantic prompt boundaries in terminal scrollback, enabling navigation between turns in supported terminals (e.g., iTerm2); also restores session transcripts when the lean TUI starts with a resumed session
+
+## Bug Fixes
+
+- Fixes Gemini session title generation by omitting `thinkingConfig` and reserving 128-token reasoning headroom with a separate 50-character visible title limit
+- Fixes session title selection to keep image-output-capable models eligible as title candidates
+- Fixes sanitization and bounding of generated-media metadata
+- Classifies generated-media save failures into safe, reportable reasons
+
+## Technical Changes
+
+- Reverts "fail fast on foreign-OS paths and explain path resolution" from the filesystem tool
+- Moves CI image builds to Docker Build Cloud
+- Reverts CI feedback-loop shortening changes (parallel jobs, warm Go cache, Build Cloud pipeline)
+- Fixes CI image builds for fork pull requests that lack cloud credentials
+### Pull Requests
+
+- [#3996](https://github.com/docker/docker-agent/pull/3996) - feat(#3996): stream model-generated media deltas
+- [#4019](https://github.com/docker/docker-agent/pull/4019) - feat(#3996): resolve image output capability from models.dev
+- [#4020](https://github.com/docker/docker-agent/pull/4020) - feat(#3996): guard image-output requests across Google surfaces
+- [#4021](https://github.com/docker/docker-agent/pull/4021) - fix(#3996): keep image-output models eligible for session titles
+- [#4023](https://github.com/docker/docker-agent/pull/4023) - feat(#3996): stream model-generated media deltas
+- [#4024](https://github.com/docker/docker-agent/pull/4024) - feat(#3996): add workspace media writes and session provenance
+- [#4025](https://github.com/docker/docker-agent/pull/4025) - feat(#3996): save generated media with no-resend placeholders
+- [#4026](https://github.com/docker/docker-agent/pull/4026) - feat(#3996): keep generated media workspace-only with portable session copies
+- [#4027](https://github.com/docker/docker-agent/pull/4027) - feat(#3996): name generated media with private markers and prompt fallback
+- [#4028](https://github.com/docker/docker-agent/pull/4028) - fix(#3996): leave reasoning headroom for Gemini session titles
+- [#4029](https://github.com/docker/docker-agent/pull/4029) - feat(#3996): render generated images from manifest-gated portable blobs
+- [#4030](https://github.com/docker/docker-agent/pull/4030) - docs(#3996): describe portable generated media and Gemini output limits
+- [#4208](https://github.com/docker/docker-agent/pull/4208) - chore: update docker-agent-action to v2.0.7
+- [#4211](https://github.com/docker/docker-agent/pull/4211) - feat(hooks): tool hook phases — mandatory guards, transforms, dedup and strict output
+- [#4212](https://github.com/docker/docker-agent/pull/4212) - docs: update CHANGELOG.md for v1.137.0
+- [#4214](https://github.com/docker/docker-agent/pull/4214) - feat(openai): support provider_opts.service_tier for Fast mode
+- [#4215](https://github.com/docker/docker-agent/pull/4215) - docs: fix CLI completion, debug visibility, task dev parallelism, DCO clarification
+- [#4216](https://github.com/docker/docker-agent/pull/4216) - docs: auto-update for merged PRs (2026-09-10)
+- [#4219](https://github.com/docker/docker-agent/pull/4219) - ci: move image builds to Docker Build Cloud
+- [#4220](https://github.com/docker/docker-agent/pull/4220) - ci: shorten the feedback loop (parallel jobs, warm Go cache, Build Cloud)
+- [#4222](https://github.com/docker/docker-agent/pull/4222) - revert: remove foreign-OS path rejection from filesystem tool
+- [#4223](https://github.com/docker/docker-agent/pull/4223) - Revert "ci: shorten the feedback loop (parallel jobs, warm Go cache, Build Cloud)"
+- [#4224](https://github.com/docker/docker-agent/pull/4224) - feat: mark lean TUI prompts in terminal scrollback
+
+
 ## [v1.137.0] - 2026-09-09
 
 This release removes the `session_plan` toolset, adds audio/video/image input and output capability handling, expands hook functionality with new builtins and sequential pipelines, and includes several bug fixes and safety improvements.
@@ -6071,3 +6130,5 @@ This release improves the terminal user interface with better error handling and
 [v1.136.0]: https://github.com/docker/docker-agent/releases/tag/v1.136.0
 
 [v1.137.0]: https://github.com/docker/docker-agent/releases/tag/v1.137.0
+
+[v1.138.0]: https://github.com/docker/docker-agent/releases/tag/v1.138.0
