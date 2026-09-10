@@ -1,0 +1,48 @@
+name: Set up Go
+description: >-
+  Installs Go and restores the module and build caches saved by the last main
+  run of the same job. setup-go's built-in cache is keyed on go.sum alone, so a
+  single snapshot is shared by every job and never refreshed once saved; keying
+  per job with the commit SHA as suffix keeps each job's build cache warm.
+  Pair with an actions/cache/save step at the end of the job.
+
+inputs:
+  cache-name:
+    description: Cache namespace; defaults to the job id.
+    required: false
+    default: ${{ github.job }}
+
+outputs:
+  cache-key:
+    description: Primary key to pass to actions/cache/save.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+  cache-path:
+    description: Paths to pass to actions/cache/save.
+    value: ${{ steps.paths.outputs.paths }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - id: paths
+      shell: bash
+      run: |
+        {
+          echo "paths<<EOF"
+          go env GOMODCACHE
+          go env GOCACHE
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.paths }}
+        key: go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
+          go-${{ runner.os }}-${{ inputs.cache-name }}-
