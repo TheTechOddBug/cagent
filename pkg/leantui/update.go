@@ -434,6 +434,13 @@ func (m *model) resumeSession(ctx context.Context, sessionID string) {
 	m.addNotice("", "Resumed session: "+title, ui.StMuted())
 }
 
+func (m *model) loadInitialSessionTranscript() {
+	if m.app == nil || m.app.Session() == nil || len(m.app.Session().OwnMessages()) == 0 {
+		return
+	}
+	m.loadSessionTranscript(m.app.Session())
+}
+
 func (m *model) loadSessionTranscript(sess *session.Session) {
 	storedMessages := sess.OwnMessages()
 	toolResults := make(map[string]chat.Message)

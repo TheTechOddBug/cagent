@@ -9,6 +9,11 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
 
+const (
+	seqPromptStart = "\x1b]133;A;redraw=0\x07"
+	seqOutputStart = "\x1b]133;C\x07"
+)
+
 // RenderUserLines renders a submitted user message as committed scrollback,
 // echoing it with the same prompt marker used by the input box.
 func RenderUserLines(text string, width int) []string {
@@ -19,7 +24,11 @@ func RenderUserLines(text string, width int) []string {
 	innerWidth := max(width-boxStyle.GetHorizontalFrameSize(), 1)
 	textStyle := lipgloss.NewStyle().Foreground(styles.AgentBadgeFg)
 	content := strings.Join(RenderUserLinesWith(text, innerWidth, textStyle.Bold(true), textStyle), "\n")
-	return splitRenderedLines(styles.RenderComposite(boxStyle, content), width)
+	lines := splitRenderedLines(styles.RenderComposite(boxStyle, content), width)
+	if len(lines) > 0 {
+		lines[0] = seqPromptStart + lines[0] + seqOutputStart
+	}
+	return lines
 }
 
 func RenderPendingUserLines(msg PendingUserMessage, width int) []string {

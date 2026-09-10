@@ -67,6 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	m.status.Branch = branchWatcher.Current()
 	m.commitWelcome()
+	m.loadInitialSessionTranscript()
 	m.refreshCommands(loopCtx)
 
 	keys := make(chan ui.Key, 64)
