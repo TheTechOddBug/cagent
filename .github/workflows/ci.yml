@@ -2,7 +2,7 @@
 #
 # `gate` is the only check the main ruleset needs to require: it fails when any
 # job it needs failed or was cancelled and passes when they succeeded or were
-# skipped (fork PRs skip `image`, docs-only PRs skip every Go job). Add a job to
+# skipped (docs-only PRs skip every Go job). Add a job to
 # `gate.needs` to make it blocking; the ruleset never has to change.
 name: ci
 
@@ -217,19 +217,20 @@ jobs:
       - name: Test with the race detector
         run: task test-race
 
-  # Builds the image and the sandbox template on Build Cloud (both platforms
-  # natively, one runner). PRs from this repo and merge-queue runs build into
-  # the cache only; main, v* tags and `image_mode: auto` dispatches on main
-  # push by digest, untagged. Not gated on the test jobs: nothing user-visible
-  # moves until `publish`.
+  # Builds the image and the sandbox template, on Build Cloud whenever the run
+  # can authenticate to Docker Hub: both platforms natively on one runner.
+  # main, v* tags and `image_mode: auto` dispatches on main push by digest,
+  # untagged; every other run builds into the cache only. Runs that cannot
+  # authenticate (PRs from forks, PRs opened by Dependabot and other bots
+  # running with a read-only token, CI in a fork of this repo) fall back to a
+  # plain builder on the runner, linux/amd64 only, nothing pushed, so the
+  # Dockerfile is still exercised. Not gated on the test jobs: nothing
+  # user-visible moves until `publish`.
   image:
     needs: changes
     if: >-
-      needs.changes.outputs.code == 'true' &&
-      github.repository == 'docker/docker-agent' &&
-      !github.event.repository.fork && (
-        (github.event_name == 'pull_request' &&
-          github.event.pull_request.base.repo.full_name == github.repository) ||
+      needs.changes.outputs.code == 'true' && (
+        github.event_name == 'pull_request' ||
         github.event_name == 'push' ||
         github.event_name == 'merge_group' ||
         (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/'))
@@ -251,14 +252,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Decide whether to publish
+      - name: Decide build mode
         id: mode
         env:
           PUBLISH: >-
-            ${{ (github.event_name == 'push' ||
+            ${{ github.repository == 'docker/docker-agent' &&
+                (github.event_name == 'push' ||
                  (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
                   (inputs.image_mode == '' || inputs.image_mode == 'auto'))) && 'true' || 'false' }}
+          # Empty on fork PRs, Dependabot PRs and in forks of this repo.
+          CONNECTION_ID: ${{ vars.DOCKERHUB_OIDC_CONNECTION_ID }}
         run: |
+          # Build Cloud needs the Hub OIDC connection id and an OIDC token; the
+          # token endpoint is only exposed when id-token: write was granted.
+          if [[ -n "$CONNECTION_ID" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            builder=cloud
+          elif [[ "$PUBLISH" == true ]]; then
+            echo "publishing requires Build Cloud: DOCKERHUB_OIDC_CONNECTION_ID or the OIDC token is unavailable" >&2
+            exit 1
+          else
+            builder=local
+            echo "::notice::Build Cloud unavailable for this run; building linux/amd64 on the runner"
+          fi
+          echo "builder=$builder" >> "$GITHUB_OUTPUT"
+
           if [[ "$PUBLISH" == true ]]; then
             {
               echo "publish=true"
@@ -267,6 +284,8 @@ jobs:
               echo "provenance=mode=max"
               echo "git-tag=${GITHUB_REF_NAME}"
               echo "git-commit=${GITHUB_SHA}"
+              # Build records are useful on PRs; skip the upload for release builds.
+              echo "record-upload=false"
             } >> "$GITHUB_OUTPUT"
           else
             {
@@ -276,14 +295,28 @@ jobs:
               echo "provenance=false"
               echo "git-tag=pr"
               echo "git-commit=dev"
+              # A read-only token (the local case) cannot upload the record artifact.
+              echo "record-upload=$([[ "$builder" == cloud ]] && echo true || echo false)"
             } >> "$GITHUB_OUTPUT"
           fi
+          if [[ "$builder" == cloud ]]; then
+            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: $/.github/actions/setup-buildx
-        id: buildx
+      - if: steps.mode.outputs.builder == 'cloud'
+        uses: $/.github/actions/setup-buildx
+        id: cloud
         with:
           connection-id: ${{ vars.DOCKERHUB_OIDC_CONNECTION_ID }}
           expected-sha: ${{ inputs.expected_sha }}
+
+      - if: steps.mode.outputs.builder == 'local'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        id: local
+        with:
+          cache-binary: false
 
       - name: Docker metadata
         id: meta
@@ -295,13 +328,12 @@ jobs:
         id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         env:
-          # Build records are useful on PRs; skip the upload for release builds.
-          DOCKER_BUILD_RECORD_UPLOAD: ${{ steps.mode.outputs.publish != 'true' }}
-          DOCKER_BUILD_SUMMARY: ${{ steps.mode.outputs.publish != 'true' }}
+          DOCKER_BUILD_RECORD_UPLOAD: ${{ steps.mode.outputs.record-upload }}
+          DOCKER_BUILD_SUMMARY: ${{ steps.mode.outputs.record-upload }}
         with:
-          builder: ${{ steps.buildx.outputs.builder }}
+          builder: ${{ steps.cloud.outputs.builder || steps.local.outputs.name }}
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.mode.outputs.platforms }}
           labels: ${{ steps.meta.outputs.labels }}
           load: false
           github-token: ''
@@ -318,13 +350,13 @@ jobs:
         id: template
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         env:
-          DOCKER_BUILD_RECORD_UPLOAD: ${{ steps.mode.outputs.publish != 'true' }}
-          DOCKER_BUILD_SUMMARY: ${{ steps.mode.outputs.publish != 'true' }}
+          DOCKER_BUILD_RECORD_UPLOAD: ${{ steps.mode.outputs.record-upload }}
+          DOCKER_BUILD_SUMMARY: ${{ steps.mode.outputs.record-upload }}
         with:
-          builder: ${{ steps.buildx.outputs.builder }}
+          builder: ${{ steps.cloud.outputs.builder || steps.local.outputs.name }}
           context: .
           target: template
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.mode.outputs.platforms }}
           load: false
           github-token: ''
           sbom: ${{ steps.mode.outputs.publish }}
