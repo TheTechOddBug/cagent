@@ -152,8 +152,8 @@ jobs:
     env:
       DOCKER_BUILD_CLOUD_ENDPOINT: docker/docker-agent
       DOCKERHUB_OIDC_CONNECTION_ID: ${{ vars.DOCKERHUB_OIDC_CONNECTION_ID }}
-      DOCKER_BUILD_RECORD_UPLOAD: 'false'
-      DOCKER_BUILD_SUMMARY: 'false'
+      DOCKER_BUILD_RECORD_UPLOAD: 'true'
+      DOCKER_BUILD_SUMMARY: 'true'
     # Cloud workers compile each native platform in parallel; GitHub runners
     # only orchestrate the builds.
     strategy:
