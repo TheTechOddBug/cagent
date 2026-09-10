@@ -19,10 +19,14 @@ inputs:
     description: Build Cloud endpoint (cloud driver only).
     required: false
     default: docker/docker-agent
+  builder:
+    description: Create a builder. Set false for registry-only work such as imagetools.
+    required: false
+    default: 'true'
 
 outputs:
   builder:
-    description: Builder name to pass to build-push-action.
+    description: Builder name to pass to build-push-action (empty when builder is false).
     value: ${{ steps.buildx.outputs.name }}
 
 runs:
@@ -65,6 +69,7 @@ runs:
         password: ${{ steps.oidc.outputs.token }}
 
     - id: buildx
+      if: inputs.builder == 'true'
       uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       with:
         driver: ${{ inputs.driver }}
