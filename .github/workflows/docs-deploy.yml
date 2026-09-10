@@ -5,8 +5,6 @@ name: docs-deploy
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -23,11 +21,14 @@ on:
 
 jobs:
   build:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: ./.github/actions/setup-hugo
+      - uses: $/.github/actions/setup-hugo
 
       - name: Configure Pages
         id: pages
@@ -45,7 +46,11 @@ jobs:
           path: docs/public
 
   deploy:
+    timeout-minutes: 10
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-latest
     environment:
       name: github-pages

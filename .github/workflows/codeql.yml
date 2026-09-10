@@ -20,6 +20,7 @@ on:
 
 jobs:
   analyze:
+    timeout-minutes: 30
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     strategy:
@@ -34,12 +35,15 @@ jobs:
             build-mode: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - if: matrix.language == 'go'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: $/.github/actions/setup-go
         with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache-name: test-linux
+          save: 'false'
+          task: 'false'
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0

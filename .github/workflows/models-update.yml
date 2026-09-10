@@ -15,6 +15,7 @@ on:
 
 jobs:
   refresh-snapshot:
+    timeout-minutes: 20
     if: github.repository == 'docker/docker-agent'
     runs-on: ubuntu-latest
     permissions:
@@ -26,7 +27,7 @@ jobs:
           persist-credentials: false
 
       # Restore-only: reuses the cache ci's test-linux job saves on main.
-      - uses: ./.github/actions/setup-go
+      - uses: $/.github/actions/setup-go
         with:
           cache-name: test-linux
 
