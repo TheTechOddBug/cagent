@@ -1,9 +1,9 @@
-name: PR Review
+name: pr-review
 on:
   issue_comment:
     types: [created]
   workflow_run:
-    workflows: ["PR Review - Trigger"]
+    workflows: [pr-review-trigger]
     types: [completed]
 
 concurrency:
