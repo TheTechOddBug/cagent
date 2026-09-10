@@ -297,6 +297,52 @@ func runSession(t *testing.T, sess *session.Session, stream *mockStream) []Event
 	return events
 }
 
+func TestImageGenerationTextOnlyWarning(t *testing.T) {
+	t.Parallel()
+
+	warningFor := func(t *testing.T, prompt string, stream *mockStream) *WarningEvent {
+		t.Helper()
+		events := runSession(t, session.New(session.WithUserMessage(prompt)), stream)
+		for _, event := range events {
+			if warning, ok := event.(*WarningEvent); ok && warning.Message == missingGeneratedImageWarning {
+				return warning
+			}
+		}
+		return nil
+	}
+
+	t.Run("text-only image request", func(t *testing.T) {
+		t.Parallel()
+		sess := session.New(session.WithUserMessage("draw an image of Docker and friends"))
+		events := runSession(t, sess, newStreamBuilder().AddContent("Here's an image of Docker and its friends.").AddStopWithUsage(10, 8).Build())
+
+		var warning *WarningEvent
+		for _, event := range events {
+			if candidate, ok := event.(*WarningEvent); ok && candidate.Message == missingGeneratedImageWarning {
+				warning = candidate
+			}
+		}
+		require.NotNil(t, warning)
+		assert.Equal(t, "root", warning.AgentName)
+		assert.Equal(t, "Here's an image of Docker and its friends.", sess.GetLastAssistantMessageContent())
+	})
+
+	t.Run("ordinary text", func(t *testing.T) {
+		t.Parallel()
+		assert.Nil(t, warningFor(t, "Explain how image generation works", newStreamBuilder().AddContent("Image generation works by...").AddStopWithUsage(6, 8).Build()))
+	})
+
+	t.Run("text and media", func(t *testing.T) {
+		t.Parallel()
+		assert.Nil(t, warningFor(t, "create an image of a whale", newStreamBuilder().AddContent("Done").AddMedia([]byte("image"), "image/png", "whale.png").AddStopWithUsage(6, 8).Build()))
+	})
+
+	t.Run("media only", func(t *testing.T) {
+		t.Parallel()
+		assert.Nil(t, warningFor(t, "create an image of a whale", newStreamBuilder().AddMedia([]byte("image"), "image/png", "whale.png").AddStopWithUsage(6, 8).Build()))
+	})
+}
+
 func hasEventType(t *testing.T, events []Event, target Event) bool {
 	t.Helper()
 
@@ -4685,6 +4731,22 @@ func TestRunAgentPersistsSubSessionOnError(t *testing.T) {
 	}
 	assert.Equal(t, 1, subSessionItems,
 		"parent session must record the sub-session even when the background agent errored")
+}
+
+func TestImageGenerationProviderErrorDoesNotEmitWarning(t *testing.T) {
+	t.Parallel()
+
+	prov := &mockProviderWithError{id: "test/mock-model"}
+	a := agent.New("root", "test agent", agent.WithModel(prov))
+	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(a)), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+
+	events := runAndCollect(t, rt, session.New(session.WithUserMessage("generate an image")))
+	for _, event := range events {
+		if warning, ok := event.(*WarningEvent); ok {
+			assert.NotEqual(t, missingGeneratedImageWarning, warning.Message)
+		}
+	}
 }
 
 // TestRunAgentImmediateFailureEmitsNoZeroUsageEvent guards runCollecting's
