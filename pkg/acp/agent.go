@@ -635,11 +635,11 @@ func (a *Agent) readResourceLink(ctx context.Context, sessionID string, rl *acp.
 }
 
 func resourceLinkName(rl *acp.ContentBlockResourceLink) string {
-	if rl.Name != "" {
-		return rl.Name
+	if name := chat.SanitizeDisplayName(rl.Name); name != "" {
+		return name
 	}
 	if path, ok := resourceLinkPath(rl.Uri); ok {
-		if base := filepath.Base(path); base != "." && base != string(filepath.Separator) {
+		if base := chat.SanitizeDisplayName(filepath.Base(path)); base != "" && base != "." && base != string(filepath.Separator) {
 			return base
 		}
 	}

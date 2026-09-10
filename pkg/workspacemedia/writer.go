@@ -50,8 +50,8 @@ var ErrPathEscape = errors.New("path escapes the workspace or has invalid segmen
 
 // Result describes a completed write.
 type Result struct {
-	// RelPath is the exact final path written, relative to the workspace
-	// root and slash-separated. Persist this verbatim.
+	// RelPath is the exact final path written, relative to the workspace root
+	// and slash-separated. Persist this verbatim.
 	RelPath string
 
 	// ExtensionCorrected reports that the requested filename's extension

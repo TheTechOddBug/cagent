@@ -8,8 +8,7 @@ package chat
 // deprecated but remain supported for backward compatibility.
 const MessagePartTypeDocument MessagePartType = "document"
 
-// ArtifactRootKind identifies which root a DocumentSource.ArtifactPath is
-// relative to.
+// ArtifactRootKind identifies which root a DocumentSource.ArtifactPath is relative to.
 type ArtifactRootKind string
 
 // ArtifactRootWorkspace means ArtifactPath is relative to the OWNING
