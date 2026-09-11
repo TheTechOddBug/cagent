@@ -2,6 +2,7 @@ package sidebar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -160,6 +161,31 @@ type Model interface {
 }
 
 type gitBranchChangedMsg string
+
+// Seams for the process state the sidebar reads at construction. Unit tests
+// run inside the repository checkout, so without them the checkout's branch
+// name (60 characters in a merge queue) leaks into every rendered layout.
+var (
+	getwd         = os.Getwd
+	currentBranch = gitbranch.Current
+	watchBranch   = gitbranch.Watch
+)
+
+var errBranchWatcherDisabled = errors.New("sidebar: git branch watcher disabled for testing")
+
+// SetWorkingDirectoryForTesting makes every sidebar created afterwards report
+// dir and branch instead of the process's working directory and its git
+// branch, with no branch watcher, and returns a function restoring the
+// defaults. Call it from TestMain: it is not safe alongside running tests.
+func SetWorkingDirectoryForTesting(dir, branch string) (restore func()) {
+	prevGetwd, prevCurrent, prevWatch := getwd, currentBranch, watchBranch
+	getwd = func() (string, error) { return dir, nil }
+	currentBranch = func(string) string { return branch }
+	watchBranch = func(context.Context, string) (*gitbranch.Watcher, error) {
+		return nil, errBranchWatcherDisabled
+	}
+	return func() { getwd, currentBranch, watchBranch = prevGetwd, prevCurrent, prevWatch }
+}
 
 func waitForGitBranch(watcher *gitbranch.Watcher) tea.Cmd {
 	if watcher == nil {
@@ -397,9 +423,9 @@ func New(ar *animation.Runtime, ctx context.Context, sessionState *service.Sessi
 	ti.CharLimit = 50
 	ti.Prompt = "" // No prompt to maximize usable width in collapsed sidebar
 
-	rawDir, _ := os.Getwd()
+	rawDir, _ := getwd()
 	wd, branch := formatWorkingDirectory(rawDir)
-	branchWatcher, _ := gitbranch.Watch(ctx, rawDir)
+	branchWatcher, _ := watchBranch(ctx, rawDir)
 
 	m := &model{
 		ctx:               func() context.Context { return context.WithoutCancel(ctx) },
@@ -1024,7 +1050,7 @@ func (m *model) LoadFromSession(sess *session.Session) {
 		if m.gitBranchWatcher != nil {
 			m.gitBranchName = m.gitBranchWatcher.SetDir(sess.WorkingDir)
 		} else {
-			m.gitBranchName = gitbranch.Current(sess.WorkingDir)
+			m.gitBranchName = currentBranch(sess.WorkingDir)
 		}
 	}
 
@@ -1156,7 +1182,7 @@ func formatWorkingDirectory(rawDir string) (display, branch string) {
 	if rawDir == "" {
 		return "", ""
 	}
-	return pathx.ShortenHome(rawDir), gitbranch.Current(rawDir)
+	return pathx.ShortenHome(rawDir), currentBranch(rawDir)
 }
 
 // workingDirWithBranch returns the working directory path with the git branch
