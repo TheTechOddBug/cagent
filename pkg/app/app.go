@@ -161,11 +161,15 @@ func (a *App) Start(ctx context.Context) {
 		// Emit startup info (agent, team, tools) through the events channel.
 		// This runs in the background so the TUI can start immediately while
 		// slow operations (like MCP tool loading) complete asynchronously.
+		// Snapshot the session on this goroutine: ReplaceSession may swap
+		// a.session concurrently, and it re-emits startup info for the new
+		// session itself.
+		sess := a.session
 		go func() {
 			startupEvents := make(chan runtime.Event, 10)
 			go func() {
 				defer close(startupEvents)
-				a.runtime.EmitStartupInfo(ctx, a.session, runtime.NewChannelSink(startupEvents))
+				a.runtime.EmitStartupInfo(ctx, sess, runtime.NewChannelSink(startupEvents))
 			}()
 			for event := range startupEvents {
 				select {
@@ -415,6 +419,9 @@ func (a *App) SkillCommandFork(_ context.Context, input string) (skillName, task
 // SKILL.md body. Companion of SkillCommandFork.
 func (a *App) RunSkillFork(ctx context.Context, cancel context.CancelFunc, skillName, task string, _ []messages.Attachment) {
 	a.cancel = cancel
+	// Snapshot the session like Run does: the goroutines below outlive any
+	// concurrent ReplaceSession and must keep working against this session.
+	sess := a.session
 
 	// Mirrors App.Run's drain loop: forward events to the App bus and
 	// always let StreamStoppedEvent through, even after ctx cancellation,
@@ -424,7 +431,7 @@ func (a *App) RunSkillFork(ctx context.Context, cancel context.CancelFunc, skill
 		var failed atomic.Bool
 		go func() {
 			defer close(events)
-			result, err := a.runtime.RunSkillFork(ctx, a.session, skillstool.RunSkillArgs{
+			result, err := a.runtime.RunSkillFork(ctx, sess, skillstool.RunSkillArgs{
 				Name: skillName,
 				Task: task,
 			}, runtime.NewChannelSink(events))
@@ -478,7 +485,7 @@ func (a *App) RunSkillFork(ctx context.Context, cancel context.CancelFunc, skill
 		}
 
 		if !sawStop {
-			a.synthesizeStreamStopped(ctx, cmp.Or(lastSessionID, a.session.ID), agentName, failed.Load())
+			a.synthesizeStreamStopped(ctx, cmp.Or(lastSessionID, sess.ID), agentName, failed.Load())
 		}
 	}()
 }
@@ -1229,8 +1236,11 @@ func (a *App) NewSession() {
 // through the events channel so the sidebar updates.
 func (a *App) reEmitStartupInfo(ctx context.Context) {
 	a.runtime.ResetStartupInfo()
+	// Snapshot before handing off to the background goroutine so a later
+	// ReplaceSession cannot race with this read.
+	sess := a.session
 	a.pumpToEvents(ctx, func(sink runtime.EventSink) {
-		a.runtime.EmitStartupInfo(ctx, a.session, sink)
+		a.runtime.EmitStartupInfo(ctx, sess, sink)
 	})
 }
 
