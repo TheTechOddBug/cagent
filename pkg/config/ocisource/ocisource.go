@@ -208,7 +208,14 @@ func (a ociSource) loadArtifact(store *content.Store, storeKey string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.verifyKey.VerifyAnnotations(meta.Annotations, data); err != nil {
+	verified, err := a.verifyKey.VerifyAnnotations(meta.Annotations, data)
+	if err != nil {
+		return nil, fmt.Errorf("verifying %s: %w", a.reference, err)
+	}
+	// Reject an artifact signed for another location even though its signature
+	// is valid: an embedder asking for this reference must not be served a copy
+	// published elsewhere.
+	if err := verified.CheckSubject(a.reference); err != nil {
 		return nil, fmt.Errorf("verifying %s: %w", a.reference, err)
 	}
 	return data, nil

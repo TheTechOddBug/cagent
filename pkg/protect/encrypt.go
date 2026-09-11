@@ -69,7 +69,7 @@ func (k *Key) Encrypt(data []byte) ([]byte, error) {
 	if !k.CanEncrypt() {
 		return nil, ErrCannotEncrypt
 	}
-	aad := domainInput("encrypt", k.EncryptAlgorithm(), nil)
+	aad := encryptAAD(k.EncryptAlgorithm())
 	switch {
 	case k.Symmetric():
 		key, err := deriveKey(k.secret, "docker-agent/"+AlgAESGCM)
@@ -93,7 +93,7 @@ func (k *Key) Decrypt(blob []byte) ([]byte, error) {
 	if !k.CanDecrypt() {
 		return nil, ErrCannotDecrypt
 	}
-	aad := domainInput("encrypt", k.EncryptAlgorithm(), nil)
+	aad := encryptAAD(k.EncryptAlgorithm())
 	switch p := k.priv.(type) {
 	case nil:
 		key, err := deriveKey(k.secret, "docker-agent/"+AlgAESGCM)

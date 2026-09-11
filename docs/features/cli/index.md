@@ -462,6 +462,16 @@ $ docker agent share pull docker.io/username/my-agent:latest --key file://~/.ssh
 | `--key`     | both       | Key (inline, or `file://<path>`) used to sign/encrypt the agent on push, or verify it on pull     |
 | `--encrypt` | `push`     | Also embed an encrypted copy of the agent in the manifest annotations (needs `--key`)             |
 
+Signing records a DSSE envelope over an in-toto Statement v1 in the `io.docker.agent.attestation` annotation, so the attestation interoperates with cosign and in-toto tooling. On pull, the attested reference is checked against the one requested — a signed artifact copied to another repository or tag is rejected — and the verified metadata is printed:
+
+```console
+$ docker agent share pull docker.io/username/my-agent:latest --key file://~/.ssh/id_ed25519.pub
+Verified signature (ed25519)
+  image:   index.docker.io/username/my-agent:latest
+  digest:  sha256:889871ef…
+  created: 2026-09-11T08:30:00Z
+```
+
 See [Signing and encrypting agents](../../concepts/distribution/index.md#signing-and-encrypting-agents) for key formats and the security model.
 
 See [Agent Distribution](../../concepts/distribution/index.md) for full registry workflow details.
