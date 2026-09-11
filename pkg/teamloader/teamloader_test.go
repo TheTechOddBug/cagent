@@ -1696,9 +1696,14 @@ func TestLoadCapturesEncryptedConfigFromSource(t *testing.T) {
 `)
 	src := encConfigSource{name: "agent.yaml", data: data, enc: "ENCRYPTED-FROM-HEADER"}
 
-	result, err := LoadWithConfig(t.Context(), src, &config.RuntimeConfig{}, withTestProviderRegistry()...)
+	rc := &config.RuntimeConfig{}
+	result, err := LoadWithConfig(t.Context(), src, rc, withTestProviderRegistry()...)
 	require.NoError(t, err)
 	assert.Equal(t, "ENCRYPTED-FROM-HEADER", result.EncryptedConfig)
+	assert.Empty(t, rc.EncryptedConfig)
+	assert.Nil(t, rc.Models)
+	assert.Nil(t, rc.Providers)
+	assert.Nil(t, rc.ProviderRegistry)
 }
 
 // TestLoadExplicitEncryptedConfigWins verifies an explicit
