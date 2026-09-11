@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 )
 
 const (
@@ -47,14 +48,15 @@ func (k *Key) CanSign() bool { return k.SignAlgorithm() != "" && k.Private() }
 // CanVerify reports whether the key can verify signatures.
 func (k *Key) CanVerify() bool { return k.SignAlgorithm() != "" }
 
-// Sign returns the raw signature (or MAC) of data. The signed message is
-// domain-separated (see domainInput) so a signature cannot be reused in
-// another protocol or under another algorithm label.
+// Sign returns the raw signature (or MAC) of data. data is a DSSE
+// SERIALIZED_BODY: what is actually signed is its pre-authentication encoding
+// (see paeEncode), which binds the payload type and so keeps a signature from
+// being reused over a body of another type.
 func (k *Key) Sign(data []byte) ([]byte, error) {
 	if !k.CanSign() {
 		return nil, ErrCannotSign
 	}
-	msg := domainInput("sign", k.SignAlgorithm(), data)
+	msg := paeEncode(PayloadType, data)
 	switch p := k.priv.(type) {
 	case nil:
 		mac := hmac.New(sha256.New, k.secret)
@@ -73,12 +75,13 @@ func (k *Key) Sign(data []byte) ([]byte, error) {
 	}
 }
 
-// Verify checks that sig is a valid signature of data for this key.
+// Verify checks that sig is a valid signature over the DSSE
+// pre-authentication encoding of data for this key.
 func (k *Key) Verify(data, sig []byte) error {
 	if !k.CanVerify() {
 		return ErrCannotVerify
 	}
-	msg := domainInput("sign", k.SignAlgorithm(), data)
+	msg := paeEncode(PayloadType, data)
 	var ok bool
 	switch p := k.pub.(type) {
 	case nil:
@@ -102,11 +105,24 @@ func (k *Key) Verify(data, sig []byte) error {
 	return nil
 }
 
-// domainInput prefixes data with a protocol/purpose/algorithm header. NUL
+// paeEncode is the DSSE pre-authentication encoding:
+//
+//	"DSSEv1" SP LEN(type) SP type SP LEN(body) SP body
+//
+// Length-prefixing every field makes the encoding unambiguous, so no body can
+// be read as a different (type, body) pair. Verifiers outside this repo
+// (cosign, in-toto tooling) compute the same bytes.
+func paeEncode(payloadType string, body []byte) []byte {
+	header := fmt.Sprintf("DSSEv1 %d %s %d ", len(payloadType), payloadType, len(body))
+	return append([]byte(header), body...)
+}
+
+// encryptAAD is the AEAD additional data binding a ciphertext to this
+// protocol and to its algorithm label, so a relabeled blob fails to open. NUL
 // separators keep the header unambiguous since none of the fields contain NUL.
-func domainInput(purpose, alg string, data []byte) []byte {
-	header := "docker-agent/agent-yaml/v1\x00" + purpose + "\x00" + alg + "\x00"
-	return append([]byte(header), data...)
+// Signatures use the DSSE PAE instead (see paeEncode).
+func encryptAAD(alg string) []byte {
+	return []byte("docker-agent/agent-yaml/v1\x00encrypt\x00" + alg + "\x00")
 }
 
 func rsaPSSOptions() *rsa.PSSOptions {

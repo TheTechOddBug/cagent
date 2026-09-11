@@ -10,6 +10,23 @@
 // (MAC or digital signature) and optionally an authenticated encrypted copy
 // of the whole YAML that key holders can decrypt.
 //
+// # Attestation format
+//
+// Signatures are carried in a DSSE envelope ([Envelope]) whose payload is an
+// in-toto Statement v1 ([Statement]): the artifact's subject (the reference it
+// was published as, plus the sha256 digest of the agent YAML) and a predicate
+// holding the publication metadata ([Predicate]). The envelope is stored in
+// clear in [AnnotationAttestation], so any DSSE/in-toto consumer can read and
+// check it, and only a key holder can have produced it.
+//
+// The statement half is parsed strictly: `_type`, the subjects and their
+// digests, and `predicateType` are what bind an artifact to its bytes and its
+// location, so unknown fields there are refused. The predicate half is
+// deliberately lenient — unknown fields are surfaced as opaque values
+// ([Predicate].Unknown) and an unknown predicateType yields "signature valid,
+// predicate not understood" rather than a failure. Adding metadata must never
+// break a deployed verifier; predicateType URIs are the version.
+//
 // # Security model
 //
 // Verification answers "was this produced by a holder of the key?". For a
@@ -21,9 +38,21 @@
 // verification with an asymmetric key always requires a signature. This also
 // rules out downgrading a signed artifact to an encrypted-only one.
 //
-// Signatures cover the layer bytes only. Re-tagging a signed artifact or
-// serving an older signed version under a tag is not detected; pin digests
+// Signatures cover the DSSE pre-authentication encoding of the statement, and
+// the statement carries the digest of the YAML, so the two are bound together:
+// neither a swapped layer nor a swapped statement verifies. Because the subject
+// records the publication reference, a signed artifact copied to another
+// repository or tag is detected via [Verification.CheckSubject]. Serving an
+// older signed version under the same tag is still not detected; pin digests
 // when that matters.
+//
+// Only the agent YAML and the statement's own contents are authenticated. The
+// subject digest covers the YAML layer, not the manifest, so the other manifest
+// annotations (author, licenses, revision, tags, the advertised creation date)
+// are unauthenticated: a party who can push to the repository can rewrite them
+// while the signature still verifies. Callers must not base decisions on them;
+// use [Verification.Statement] instead. Authenticating the whole manifest would
+// require publishing the envelope as a referring artifact (OCI Referrers API).
 package protect
 
 import (

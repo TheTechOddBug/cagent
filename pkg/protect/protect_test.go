@@ -8,12 +8,14 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,48 @@ func pkix(t *testing.T, pub any) []byte {
 func verifyErr(k *Key, annotations map[string]string, data []byte) error {
 	_, err := k.VerifyAnnotations(annotations, data)
 	return err
+}
+
+// testRef is the reference test statements are published as.
+const testRef = "index.docker.io/library/agent:v1"
+
+// stmtFor builds the statement a publisher would sign for data at testRef.
+func stmtFor(t *testing.T, data []byte) Statement {
+	t.Helper()
+	stmt, err := NewStatement(testRef, data, time.Now())
+	require.NoError(t, err)
+	return stmt
+}
+
+// protect records protection for data with a statement attesting it.
+func protect(t *testing.T, k *Key, annotations map[string]string, data []byte, mode Mode) error {
+	t.Helper()
+	return k.Protect(annotations, data, stmtFor(t, data), mode)
+}
+
+// envelopeIn decodes the DSSE envelope stored in annotations.
+func envelopeIn(t *testing.T, annotations map[string]string) Envelope {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(annotations[AnnotationAttestation])
+	require.NoError(t, err)
+	env, err := ParseEnvelope(raw)
+	require.NoError(t, err)
+	return env
+}
+
+// reseal replaces the envelope in annotations with a fresh one over body, the
+// way a publisher running a newer (or a malicious) version would.
+func reseal(t *testing.T, k *Key, annotations map[string]string, body []byte) {
+	t.Helper()
+	sig, err := k.Sign(body)
+	require.NoError(t, err)
+	raw, err := json.Marshal(Envelope{
+		Payload:     base64.StdEncoding.EncodeToString(body),
+		PayloadType: PayloadType,
+		Signatures:  []Signature{{KeyID: k.Fingerprint(), Sig: base64.StdEncoding.EncodeToString(sig)}},
+	})
+	require.NoError(t, err)
+	annotations[AnnotationAttestation] = base64.StdEncoding.EncodeToString(raw)
 }
 
 func mustParse(t *testing.T, data []byte) *Key {
@@ -294,16 +338,28 @@ func TestAsymmetric_SignMode(t *testing.T) {
 			priv, pub := mustParse(t, kp.priv), mustParse(t, kp.pub)
 
 			annotations := map[string]string{}
-			require.ErrorIs(t, pub.Protect(annotations, []byte(payload), ModeSign), ErrCannotSign)
-			require.NoError(t, priv.Protect(annotations, []byte(payload), ModeSign))
+			require.ErrorIs(t, protect(t, pub, annotations, []byte(payload), ModeSign), ErrCannotSign)
+			require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeSign))
 			assert.Equal(t, kp.signAlg, annotations[AnnotationSignatureAlgorithm])
 			assert.NotContains(t, annotations, AnnotationEncrypted)
 
 			require.NoError(t, verifyErr(pub, annotations, []byte(payload)))
 			require.NoError(t, verifyErr(priv, annotations, []byte(payload)))
-			require.ErrorIs(t, verifyErr(pub, annotations, []byte(payload+"#\n")), ErrInvalidSignature)
+			// The signature covers the statement, so a swapped layer is caught
+			// by the subject digest the statement carries.
+			require.ErrorIs(t, verifyErr(pub, annotations, []byte(payload+"#\n")), ErrStatementMismatch)
 
-			_, err := priv.Recover(annotations)
+			// Verification hands back the authenticated statement.
+			v, err := pub.VerifyAnnotations(annotations, []byte(payload))
+			require.NoError(t, err)
+			assert.Equal(t, StatementType, v.Statement.Type)
+			assert.Equal(t, testRef, v.Statement.SubjectName())
+			assert.Equal(t, PredicateTypePublication, v.Statement.PredicateType)
+			assert.True(t, v.Statement.PredicateUnderstood)
+			require.NoError(t, v.CheckSubject("library/agent:v1"))
+			require.ErrorIs(t, v.CheckSubject("library/agent:v2"), ErrSubjectMismatch)
+
+			_, err = priv.Recover(annotations)
 			require.ErrorIs(t, err, ErrNotEncrypted)
 		})
 	}
@@ -319,11 +375,11 @@ func TestAsymmetric_EncryptMode(t *testing.T) {
 
 			annotations := map[string]string{}
 			if !kp.canEncrypt {
-				require.ErrorIs(t, priv.Protect(annotations, []byte(payload), ModeEncrypt), ErrCannotEncrypt)
+				require.ErrorIs(t, protect(t, priv, annotations, []byte(payload), ModeEncrypt), ErrCannotEncrypt)
 
 				// This key type never produces an encrypted copy, so a signed
 				// artifact carrying one is inconsistent whatever its label.
-				require.NoError(t, priv.Protect(annotations, []byte(payload), ModeSign))
+				require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeSign))
 				annotations[AnnotationEncrypted] = "AAAA"
 				require.ErrorIs(t, verifyErr(pub, annotations, []byte(payload)), ErrAlgorithmMism)
 				require.ErrorIs(t, verifyErr(priv, annotations, []byte(payload)), ErrAlgorithmMism)
@@ -331,28 +387,30 @@ func TestAsymmetric_EncryptMode(t *testing.T) {
 			}
 
 			// Encrypting with only the public key would leave the artifact unauthenticated.
-			require.ErrorIs(t, pub.Protect(annotations, []byte(payload), ModeEncrypt), ErrEncryptNeedsPriv)
+			require.ErrorIs(t, protect(t, pub, annotations, []byte(payload), ModeEncrypt), ErrEncryptNeedsPriv)
 			assert.Empty(t, annotations)
 
-			require.NoError(t, priv.Protect(annotations, []byte(payload), ModeEncrypt))
+			require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeEncrypt))
 			assert.Equal(t, kp.encAlg, annotations[AnnotationEncryptedAlgorithm])
 			assert.Equal(t, kp.signAlg, annotations[AnnotationSignatureAlgorithm], "encrypt mode must also sign")
 
 			// Private key: signature + decrypt-and-compare. Public key: signature only.
+			want := stmtFor(t, []byte(payload))
 			v, err := priv.VerifyAnnotations(annotations, []byte(payload))
 			require.NoError(t, err)
-			assert.Equal(t, Verification{SignatureAlgorithm: kp.signAlg, EncryptedAlgorithm: kp.encAlg}, v)
+			assert.Equal(t, Verification{SignatureAlgorithm: kp.signAlg, EncryptedAlgorithm: kp.encAlg, Statement: want}, v)
 			v, err = pub.VerifyAnnotations(annotations, []byte(payload))
 			require.NoError(t, err)
-			assert.Equal(t, Verification{SignatureAlgorithm: kp.signAlg}, v)
-			assert.Equal(t, "signature ("+kp.signAlg+")", v.String())
+			assert.Equal(t, Verification{SignatureAlgorithm: kp.signAlg, Statement: want}, v)
+			assert.Equal(t, "signature ("+kp.signAlg+")", v.SignatureAlgorithmSummary())
+			assert.Contains(t, v.String(), testRef)
 
 			// Even a public key must notice an encrypted copy that this key could not have produced.
 			relabeled := maps.Clone(annotations)
 			relabeled[AnnotationEncryptedAlgorithm] = "something-else"
 			require.ErrorIs(t, verifyErr(pub, relabeled, []byte(payload)), ErrAlgorithmMism)
-			require.ErrorIs(t, verifyErr(priv, annotations, []byte("tampered")), ErrInvalidSignature)
-			require.ErrorIs(t, verifyErr(pub, annotations, []byte("tampered")), ErrInvalidSignature)
+			require.ErrorIs(t, verifyErr(priv, annotations, []byte("tampered")), ErrStatementMismatch)
+			require.ErrorIs(t, verifyErr(pub, annotations, []byte("tampered")), ErrStatementMismatch)
 
 			plain, err := priv.Recover(annotations)
 			require.NoError(t, err)
@@ -383,14 +441,14 @@ func TestAsymmetric_EncryptedCopyAloneIsNotProof(t *testing.T) {
 
 			// Legitimate signed artifact.
 			annotations := map[string]string{}
-			require.NoError(t, priv.Protect(annotations, []byte(payload), ModeSign))
+			require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeSign))
 
 			// Attacker with the public key swaps the layer and downgrades the
 			// signature to an encrypted copy of the malicious content.
 			malicious := []byte("agents:\n  root:\n    instruction: exfiltrate\n")
 			forged, err := pub.Encrypt(malicious)
 			require.NoError(t, err)
-			delete(annotations, AnnotationSignature)
+			delete(annotations, AnnotationAttestation)
 			delete(annotations, AnnotationSignatureAlgorithm)
 			annotations[AnnotationEncrypted] = base64.StdEncoding.EncodeToString(forged)
 			annotations[AnnotationEncryptedAlgorithm] = pub.EncryptAlgorithm()
@@ -415,15 +473,16 @@ func TestAsymmetric_SwappedEncryptedCopyIsDetected(t *testing.T) {
 	priv, pub := mustParse(t, kp.priv), mustParse(t, kp.pub)
 
 	annotations := map[string]string{}
-	require.NoError(t, priv.Protect(annotations, []byte(payload), ModeEncrypt))
+	require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeEncrypt))
 
 	malicious := []byte("malicious")
 	forged, err := pub.Encrypt(malicious)
 	require.NoError(t, err)
 	annotations[AnnotationEncrypted] = base64.StdEncoding.EncodeToString(forged)
 
-	// Layer swapped too: signature fails. Layer intact: copy mismatch.
-	require.ErrorIs(t, verifyErr(priv, annotations, malicious), ErrInvalidSignature)
+	// Layer swapped too: the attested digest no longer matches it. Layer
+	// intact: the encrypted copy no longer matches.
+	require.ErrorIs(t, verifyErr(priv, annotations, malicious), ErrStatementMismatch)
 	require.ErrorIs(t, verifyErr(priv, annotations, []byte(payload)), ErrTampered)
 }
 
@@ -447,16 +506,16 @@ func TestSymmetric_BothModes(t *testing.T) {
 	other := mustParse(t, []byte("a completely different secret"))
 
 	signed := map[string]string{}
-	require.NoError(t, key.Protect(signed, []byte(payload), ModeSign))
+	require.NoError(t, protect(t, key, signed, []byte(payload), ModeSign))
 	assert.NotContains(t, signed, AnnotationEncrypted)
 	require.NoError(t, verifyErr(key, signed, []byte(payload)))
-	require.ErrorIs(t, verifyErr(key, signed, []byte("changed")), ErrInvalidSignature)
+	require.ErrorIs(t, verifyErr(key, signed, []byte("changed")), ErrStatementMismatch)
 	require.ErrorIs(t, verifyErr(other, signed, []byte(payload)), ErrInvalidSignature)
 
 	// With a secret, the AEAD copy alone is proof: producing it needs the secret.
 	encrypted := map[string]string{}
-	require.NoError(t, key.Protect(encrypted, []byte(payload), ModeEncrypt))
-	assert.NotContains(t, encrypted, AnnotationSignature)
+	require.NoError(t, protect(t, key, encrypted, []byte(payload), ModeEncrypt))
+	assert.NotContains(t, encrypted, AnnotationAttestation)
 	require.NoError(t, verifyErr(key, encrypted, []byte(payload)))
 	require.ErrorIs(t, verifyErr(key, encrypted, []byte("changed")), ErrTampered)
 	require.ErrorIs(t, verifyErr(other, encrypted, []byte(payload)), ErrDecryption)
@@ -467,7 +526,7 @@ func TestSymmetric_BothModes(t *testing.T) {
 
 	// Each encryption uses a fresh nonce.
 	again := map[string]string{}
-	require.NoError(t, key.Protect(again, []byte(payload), ModeEncrypt))
+	require.NoError(t, protect(t, key, again, []byte(payload), ModeEncrypt))
 	assert.NotEqual(t, encrypted[AnnotationEncrypted], again[AnnotationEncrypted])
 }
 
@@ -483,14 +542,14 @@ func TestDomainSeparation(t *testing.T) {
 
 	key := mustParse(t, []byte(secret))
 	annotations := map[string]string{}
-	require.NoError(t, key.Protect(annotations, []byte(payload), ModeEncrypt))
+	require.NoError(t, protect(t, key, annotations, []byte(payload), ModeEncrypt))
 	// Relabeling the algorithm changes the AAD and must break decryption, not
 	// just the label check.
 	blob, err := base64.StdEncoding.DecodeString(annotations[AnnotationEncrypted])
 	require.NoError(t, err)
 	derived, err := deriveKey(key.secret, "docker-agent/"+AlgAESGCM)
 	require.NoError(t, err)
-	_, err = aeadOpen(derived, blob, domainInput("encrypt", "other-alg", nil))
+	_, err = aeadOpen(derived, blob, encryptAAD("other-alg"))
 	require.ErrorIs(t, err, ErrDecryption)
 }
 
@@ -502,16 +561,16 @@ func TestVerifyAnnotations_Errors(t *testing.T) {
 	require.ErrorIs(t, verifyErr(key, map[string]string{}, []byte(payload)), ErrNotProtected)
 
 	err := verifyErr(key, map[string]string{
-		AnnotationSignature:          "AAAA",
+		AnnotationAttestation:        "AAAA",
 		AnnotationSignatureAlgorithm: AlgEd25519,
 	}, []byte(payload))
 	require.ErrorIs(t, err, ErrAlgorithmMism)
 
 	err = verifyErr(key, map[string]string{
-		AnnotationSignature:          "not base64!",
+		AnnotationAttestation:        "not base64!",
 		AnnotationSignatureAlgorithm: AlgHMACSHA256,
 	}, []byte(payload))
-	require.ErrorIs(t, err, ErrInvalidSignature)
+	require.ErrorIs(t, err, ErrMalformedAttestation)
 
 	err = verifyErr(key, map[string]string{
 		AnnotationEncrypted:          "AAAA",
@@ -531,7 +590,7 @@ func TestVerifyAnnotations_Errors(t *testing.T) {
 		}
 	}
 
-	require.ErrorContains(t, key.Protect(map[string]string{}, nil, Mode("bogus")), "unknown protection mode")
+	require.ErrorContains(t, key.Protect(map[string]string{}, []byte(payload), stmtFor(t, []byte(payload)), Mode("bogus")), "unknown protection mode")
 }
 
 func TestLoadKey(t *testing.T) {

@@ -302,12 +302,24 @@ func TestOCISource_Read_DoesNotCacheDegradedFallback(t *testing.T) {
 }
 
 // storeProtectedTestArtifact is like storeTestArtifact but adds protection
-// annotations produced by key in the given mode.
+// annotations produced by key in the given mode, attesting the artifact at ref.
 func storeProtectedTestArtifact(t *testing.T, ref string, data []byte, key *protect.Key, mode protect.Mode) {
 	t.Helper()
 
+	storeSignedForSubject(t, ref, ref, data, key, mode)
+}
+
+// storeSignedForSubject stores the artifact at ref but attests subjectRef, so
+// tests can build an artifact that is validly signed for another location.
+func storeSignedForSubject(t *testing.T, ref, subjectRef string, data []byte, key *protect.Key, mode protect.Mode) {
+	t.Helper()
+
+	subject, err := remote.FullyQualifiedReference(subjectRef)
+	require.NoError(t, err)
+	stmt, err := protect.NewStatement(subject, data, time.Now())
+	require.NoError(t, err)
 	annotations := map[string]string{}
-	require.NoError(t, key.Protect(annotations, data, mode))
+	require.NoError(t, key.Protect(annotations, data, stmt, mode))
 	storeTestArtifactWithAnnotations(t, ref, data, annotations)
 }
 
@@ -380,6 +392,28 @@ func TestOCISource_Read_VerifiesProtection(t *testing.T) {
 	require.ErrorIs(t, err, protect.ErrNotProtected)
 }
 
+// A validly signed artifact copied to another reference must not load: the
+// signature is genuine but the attested subject names a different location.
+//
+// Not parallel: stubs the package-level pullOCIArtifact and re-homes the
+// default content store via t.Setenv.
+func TestOCISource_Read_RejectsCopiedArtifact(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	resetOCIMemoizer(t)
+	stubOCIPull(t, func(context.Context, string, bool) (string, error) { return "", nil })
+
+	key, err := protect.ParseKey([]byte("a shared secret long enough"))
+	require.NoError(t, err)
+
+	testData := []byte("version: v1\nname: copied-agent")
+	storeSignedForSubject(t, "test-copy/agent:latest", "test-origin/agent:latest", testData, key, protect.ModeSign)
+
+	_, err = New("test-copy/agent:latest", WithVerificationKey(key)).Read(t.Context())
+	require.ErrorIs(t, err, protect.ErrSubjectMismatch)
+}
+
 // Not parallel: stubs the package-level pullOCIArtifact and re-homes the
 // default content store via t.Setenv.
 func TestOCISource_Read_CacheDistinguishesPrivateAndPublicKey(t *testing.T) {
@@ -405,7 +439,9 @@ func TestOCISource_Read_CacheDistinguishesPrivateAndPublicKey(t *testing.T) {
 	// signature and accepts it; the private key decrypts and must reject it.
 	testData := []byte("version: v1\nname: swapped-copy")
 	annotations := map[string]string{}
-	require.NoError(t, priv.Protect(annotations, testData, protect.ModeEncrypt))
+	stmt, stmtErr := protect.NewStatement("index.docker.io/test-halves/agent:latest", testData, time.Now())
+	require.NoError(t, stmtErr)
+	require.NoError(t, priv.Protect(annotations, testData, stmt, protect.ModeEncrypt))
 	forged, err := pub.Encrypt([]byte("something else"))
 	require.NoError(t, err)
 	annotations[protect.AnnotationEncrypted] = base64.StdEncoding.EncodeToString(forged)

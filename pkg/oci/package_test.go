@@ -2,10 +2,12 @@ package oci
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,10 +307,63 @@ agents:
 			// The protection covers the exact bytes stored in the layer.
 			yamlData, err := store.GetArtifact(tag)
 			require.NoError(t, err)
-			_, err = key.VerifyAnnotations(metadata.Annotations, []byte(yamlData))
+			verified, err := key.VerifyAnnotations(metadata.Annotations, []byte(yamlData))
 			require.NoError(t, err)
 			_, err = other.VerifyAnnotations(metadata.Annotations, []byte(yamlData))
 			require.Error(t, err)
+
+			// A symmetric secret in encrypt mode records the AEAD copy only (it
+			// is proof by itself), so there is no signature and no attestation.
+			if verified.SignatureAlgorithm == "" {
+				assert.Empty(t, metadata.Annotations[protect.AnnotationAttestation])
+				assert.NotContains(t, metadata.Annotations, protect.AnnotationPredicateType)
+				assert.Empty(t, verified.Statement.SubjectName())
+				require.NoError(t, verified.CheckSubject("anything/at:all"))
+				return
+			}
+
+			// The in-toto statement attests the artifact: the reference it was
+			// published as and the digest of the YAML as stored.
+			stmt := verified.Statement
+			assert.Equal(t, protect.StatementType, stmt.Type)
+			assert.Equal(t, protect.PredicateTypePublication, stmt.PredicateType)
+			// Advertised in clear alongside the envelope, matching the signed value.
+			assert.Equal(t, protect.PredicateTypePublication, metadata.Annotations[protect.AnnotationPredicateType])
+			assert.True(t, stmt.PredicateUnderstood)
+			assert.Equal(t, "index.docker.io/library/test-protected:"+string(mode), stmt.SubjectName())
+			assert.Equal(t, "index.docker.io", stmt.Predicate.Registry)
+			assert.Equal(t, "library/test-protected", stmt.Predicate.Repository)
+			assert.Equal(t, string(mode), stmt.Predicate.Tag)
+			assert.Equal(t, "sha256:"+protect.SubjectDigest([]byte(yamlData))["sha256"], stmt.Digest())
+
+			// The attested creation date is the one advertised in the standard
+			// OCI annotation, so the two cannot disagree.
+			advertised, err := time.Parse(time.RFC3339, metadata.Annotations["org.opencontainers.image.created"])
+			require.NoError(t, err)
+			signedAt, err := time.Parse(time.RFC3339, stmt.Predicate.Created)
+			require.NoError(t, err)
+			assert.True(t, advertised.Equal(signedAt))
+
+			// The annotation is a plain DSSE envelope: any in-toto tool can read
+			// the metadata out of it without a key.
+			raw, err := base64.StdEncoding.DecodeString(metadata.Annotations[protect.AnnotationAttestation])
+			require.NoError(t, err)
+			env, err := protect.ParseEnvelope(raw)
+			require.NoError(t, err)
+			assert.Equal(t, protect.PayloadType, env.PayloadType)
+			body, err := base64.StdEncoding.DecodeString(env.Payload)
+			require.NoError(t, err)
+			fromAnnotation, err := protect.ParseStatement(body)
+			require.NoError(t, err)
+			assert.Equal(t, stmt, fromAnnotation)
+
+			// A swapped layer is detected via the attested subject digest.
+			_, err = key.VerifyAnnotations(metadata.Annotations, []byte("version: \"2\"\n"))
+			require.ErrorIs(t, err, protect.ErrStatementMismatch)
+
+			// The subject is checked against the reference actually read.
+			require.NoError(t, verified.CheckSubject(tag))
+			require.ErrorIs(t, verified.CheckSubject("other/test-protected:"+string(mode)), protect.ErrSubjectMismatch)
 
 			if mode == protect.ModeEncrypt {
 				// The clear YAML is recoverable, byte-for-byte, from the annotations alone.

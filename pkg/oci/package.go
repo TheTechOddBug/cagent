@@ -83,11 +83,13 @@ func PackageFileAsOCIToStore(ctx context.Context, agentSource config.Source, art
 		}
 	}
 
-	// Prepare OCI annotations
+	// Prepare OCI annotations. createdAt is shared with the signed statement
+	// below so the advertised creation date and the attested one cannot drift.
+	createdAt := time.Now()
 	annotations := map[string]string{
 		"io.docker.cagent.version":             version.Version,
 		"io.docker.agent.version":              version.Version,
-		"org.opencontainers.image.created":     time.Now().Format(time.RFC3339),
+		"org.opencontainers.image.created":     createdAt.Format(time.RFC3339),
 		"org.opencontainers.image.description": "OCI artifact containing " + filepath.Base(agentSource.Name()),
 	}
 	if author := cfg.Metadata.Author; author != "" {
@@ -103,7 +105,15 @@ func PackageFileAsOCIToStore(ctx context.Context, agentSource config.Source, art
 		annotations["io.docker.agent.tags"] = strings.Join(cfg.Metadata.Tags, ",")
 	}
 	if o.key != nil {
-		if err := o.key.Protect(annotations, data, o.mode); err != nil {
+		// The in-toto statement is the metadata the signature covers: the
+		// reference this artifact is published as and the digest of the YAML,
+		// so a verifier can detect both a swapped layer and a copy served
+		// under another reference.
+		stmt, err := protect.NewStatement(artifactRef, data, createdAt)
+		if err != nil {
+			return "", fmt.Errorf("building attestation: %w", err)
+		}
+		if err := o.key.Protect(annotations, data, stmt, o.mode); err != nil {
 			return "", fmt.Errorf("protecting config: %w", err)
 		}
 	}
