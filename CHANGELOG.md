@@ -3,6 +3,45 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.138.1] - 2026-09-11
+
+This release adds kubectl and AWS CLI to sandbox templates, introduces secure HTTP relay packages and improved share signing, fixes session and race condition bugs, and includes several CI pipeline improvements.
+
+## What's New
+- Adds `kubectl` and AWS CLI to the `sbx-templates` image, making them available in sandboxes without manual installation
+- Adds secure HTTP relay packages (`pkg/config/httprelay` and `pkg/modelsgateway/relay`) for agent configuration fetching and model-API forwarding
+- Changes `share push --key` to sign a DSSE-wrapped in-toto statement instead of raw YAML bytes, adding metadata about where and when the artifact was published
+
+## Bug Fixes
+- Fixes the starred flag being silently dropped when forking a starred session (the `AddSession` insert omitted the `starred` column)
+- Fixes a production data race in `App` where `ReplaceSession` wrote `a.session` from the update loop while background goroutines started by `App.Start` read it concurrently
+- Fixes a data race in evaluation tests where container stderr was read without going through `exec.Cmd`
+- Fixes HCL examples not being decoded through the HCL loader during the live models check in `TestExamplesAgainstLiveModelsDev`
+
+## Technical Changes
+- Consolidates CI workflows: single gate job, merged image job, shared composite actions, merged docs workflows, shared module/build caches, and checksum-verified tools
+- Adds race detector job (`go test -race -shuffle=on`) on pushes to `main`
+- Skips Go CI jobs on docs-only PRs and skips redundant lint/license checks on main push (already verified in merge queue)
+- Stops sidebar tests from reading the checkout's git branch to avoid environment-dependent failures in CI
+- Tears down bubbletea programs in `t.Cleanup` and freezes animation clock in exact-frame TUI tests to eliminate test flakiness
+- Stops parallel tests from mutating `version.Version` to prevent race conditions
+### Pull Requests
+
+- [#4182](https://github.com/docker/docker-agent/pull/4182) - fix(session): preserve the starred flag in AddSession
+- [#4218](https://github.com/docker/docker-agent/pull/4218) - feat(sandbox): add kubectl and aws cli to sbx-templates image
+- [#4221](https://github.com/docker/docker-agent/pull/4221) - ci: single gate, merged image job, shared composite actions, docs workflow merge
+- [#4222](https://github.com/docker/docker-agent/pull/4222) - revert: remove foreign-OS path rejection from filesystem tool
+- [#4226](https://github.com/docker/docker-agent/pull/4226) - docs: update CHANGELOG.md for v1.138.0
+- [#4228](https://github.com/docker/docker-agent/pull/4228) - ci: fix the failures in the new test-race job
+- [#4230](https://github.com/docker/docker-agent/pull/4230) - fix(app): snapshot the session before spawning background goroutines
+- [#4231](https://github.com/docker/docker-agent/pull/4231) - test(tui): stop sidebar tests from reading the checkout's git branch
+- [#4234](https://github.com/docker/docker-agent/pull/4234) - docs: auto-update for merged PRs (2026-09-11)
+- [#4235](https://github.com/docker/docker-agent/pull/4235) - feat: add secure HTTP relay packages
+- [#4236](https://github.com/docker/docker-agent/pull/4236) - fix(test): load HCL examples in live models check
+- [#4237](https://github.com/docker/docker-agent/pull/4237) - ci: skip redundant main push checks
+- [#4238](https://github.com/docker/docker-agent/pull/4238) - feat(share): sign a DSSE-wrapped in-toto statement, not just the YAML bytes
+
+
 ## [v1.138.0] - 2026-09-10
 
 This release introduces generated image output support with workspace-safe storage and portable session blobs, a new tool hook execution model with mandatory phases, and several other feature additions and fixes.
@@ -6132,3 +6171,5 @@ This release improves the terminal user interface with better error handling and
 [v1.137.0]: https://github.com/docker/docker-agent/releases/tag/v1.137.0
 
 [v1.138.0]: https://github.com/docker/docker-agent/releases/tag/v1.138.0
+
+[v1.138.1]: https://github.com/docker/docker-agent/releases/tag/v1.138.1
