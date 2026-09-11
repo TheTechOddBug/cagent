@@ -167,7 +167,7 @@ func TestExamplesAgainstLiveModelsDev(t *testing.T) {
 
 	var drifted []string
 	for _, file := range collectExamples(t) {
-		cfg, err := Load(t.Context(), NewFileSource(file))
+		cfg, err := Load(t.Context(), hcl.NewSource(NewFileSource(file)))
 		require.NoError(t, err)
 
 		for _, id := range catalogModelRefs(cfg) {
