@@ -18,15 +18,12 @@ The filesystem tool gives agents the ability to explore codebases, read and edit
 Paths are resolved relative to the **working directory** (the directory where the agent session started, or the directory specified with `--working-dir`):
 
 - **Relative paths** (e.g., `src/main.go`, `../README.md`) are joined with the working directory.
-- **Absolute paths** must match the host operating system:
+- **Absolute paths** are used as-is, in the host operating system's own syntax:
   - Unix/Linux/macOS: `/home/user/project/file.txt`
   - Windows: `C:\Users\user\project\file.txt` or `C:/Users/user/project/file.txt`
 - **Home directory expansion**: paths starting with `~` or `~/` expand to the user's home directory.
 
-When a file is not found, error messages include the resolved absolute path to help diagnose incorrect base directories or path formats.
-
-> [!IMPORTANT]
-> Agents must use paths appropriate for the host OS. A Windows absolute path like `C:\file.txt` on a Unix system (or vice versa) is rejected with a clear error message.
+When a file is not found, the tool reports "not found" without further detail.
 
 ### Empty directory detection
 
