@@ -120,7 +120,7 @@ jobs:
       # `npx --yes`; a pinned Chrome via PUPPETEER_EXECUTABLE_PATH sidesteps it.
       - name: Install Chrome
         id: chrome
-        uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
         with:
           chrome-version: stable
 
@@ -177,6 +177,6 @@ jobs:
   # this commit and runs htmltest on the output. A no-op until docker/docs
   # imports github.com/docker/docker-agent (issue #3371, Phase 2.1).
   upstream:
-    uses: docker/docs/.github/workflows/validate-upstream.yml@9955a341f1720b8923172e2b099f71d75c3e8570 # main
+    uses: docker/docs/.github/workflows/validate-upstream.yml@920ee0bb1e638c6a39d7c2a1075fa2b1d8f451a7 # main
     with:
       module-name: docker/docker-agent
