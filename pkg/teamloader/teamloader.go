@@ -254,7 +254,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		}
 	}
 
-	// Loading resolves per-agent state into RuntimeConfig for toolset creators.
+	// Loading resolves per-load state into RuntimeConfig for toolset creators.
 	// Keep it isolated from the caller so concurrent loads can safely share a
 	// RuntimeConfig.
 	runConfig = runConfig.Clone()

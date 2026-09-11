@@ -1669,6 +1669,39 @@ func TestLoadWithConfig_WithWorkingDirIsConcurrencySafe(t *testing.T) {
 		"the shared RuntimeConfig must never be mutated")
 }
 
+func TestLoadWithConfig_SharedRuntimeConfigIsConcurrencySafe(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "dummy")
+
+	data := []byte(`agents:
+  root:
+    model: openai/gpt-4o
+    instruction: test
+`)
+	runConfig := &config.RuntimeConfig{}
+
+	const loads = 8
+	var wg sync.WaitGroup
+	errs := make([]error, loads)
+	for i := range loads {
+		wg.Go(func() {
+			_, errs[i] = LoadWithConfig(
+				t.Context(),
+				config.NewBytesSource("t.yaml", data),
+				runConfig,
+				withTestProviderRegistry()...,
+			)
+		})
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoErrorf(t, err, "load %d", i)
+	}
+	assert.Nil(t, runConfig.Models)
+	assert.Nil(t, runConfig.Providers)
+	assert.Nil(t, runConfig.ProviderRegistry)
+}
+
 // encConfigSource is a config.Source that also implements
 // config.EncryptedConfigSource, standing in for a trusted Docker URL that
 // returned the X-Cagent-Encrypted-Config response header.
