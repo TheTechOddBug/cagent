@@ -36,10 +36,7 @@ func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
 
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	writer := &wallClockCountingWriter{}
-	program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(writer), tea.WithWindowSize(120, 40))
-	done := make(chan error, 1)
-	go func() { _, err := program.Run(); done <- err }()
-	<-model.ready
+	program := startStreamingMotionProgram(t, model, tea.WithOutput(writer))
 	waitForProgramQuiescence(t, model, writer)
 	baselineWrites := writer.writes.Load()
 	baselineCompositions := model.compositions.Load()
@@ -85,7 +82,4 @@ func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
 	content = make(chan string)
 	program.Send(streamingMotionRead{content: content})
 	require.Contains(t, <-content, "offscreen", "End must reveal exact content finalized at stream stop")
-	root.ar.Stop()
-	program.Quit()
-	require.NoError(t, <-done)
 }

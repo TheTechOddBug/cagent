@@ -3,6 +3,7 @@ package evaluation
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -495,19 +496,16 @@ func (r *Runner) runDockerAgentInContainer(ctx context.Context, imageID string, 
 	if err != nil {
 		return nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("creating stderr pipe: %w", err)
-	}
+	// Let exec.Cmd own the stderr copy: Wait blocks until its own copying
+	// goroutine finishes (bounded by WaitDelay), so stderrBuf is safe to read
+	// after Wait returns. A hand-rolled StderrPipe+goroutine has no such
+	// guarantee and races with the reads below.
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting %s run: %w", containerRuntime, err)
 	}
-
-	var stderrData []byte
-	go func() {
-		stderrData, _ = io.ReadAll(stderr)
-	}()
 
 	var events []map[string]any
 	scanner := bufio.NewScanner(stdout)
@@ -533,11 +531,11 @@ func (r *Runner) runDockerAgentInContainer(ctx context.Context, imageID string, 
 
 	waitErr := cmd.Wait()
 	if waitErr != nil {
-		slog.DebugContext(ctx, "Container exited with error", "stderr", string(stderrData), "error", waitErr)
+		slog.DebugContext(ctx, "Container exited with error", "stderr", stderrBuf.String(), "error", waitErr)
 	}
 
 	if len(events) == 0 {
-		stderrStr := strings.TrimSpace(string(stderrData))
+		stderrStr := strings.TrimSpace(stderrBuf.String())
 		if waitErr != nil {
 			return nil, fmt.Errorf("container failed: %w (stderr: %s)", waitErr, stderrStr)
 		}

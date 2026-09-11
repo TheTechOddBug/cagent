@@ -341,8 +341,6 @@ func TestSaveRunSessionsJSONContainerRuntime(t *testing.T) {
 func TestSaveRunSessionsJSONAgentImage(t *testing.T) {
 	t.Parallel()
 
-	withVersion(t, "v1.133.0")
-
 	save := func(t *testing.T, cfg Config) []byte {
 		t.Helper()
 		run := &EvalRun{
@@ -366,7 +364,7 @@ func TestSaveRunSessionsJSONAgentImage(t *testing.T) {
 
 		var output RunOutput
 		require.NoError(t, json.Unmarshal(data, &output))
-		assert.Equal(t, "docker/docker-agent:1.133.0", output.Config.AgentImage)
+		assert.Equal(t, DefaultAgentImage(), output.Config.AgentImage)
 	})
 
 	t.Run("records an explicit override", func(t *testing.T) {

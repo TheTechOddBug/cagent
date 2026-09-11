@@ -4,22 +4,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/docker/docker-agent/pkg/version"
 )
 
-// withVersion temporarily overrides version.Version for the duration of the
-// test, restoring it afterwards. version.Version is a package-level var (set
-// via -ldflags at release build time), so tests mutate it directly rather
-// than plumbing it through as a parameter.
-func withVersion(t *testing.T, v string) {
-	t.Helper()
-	original := version.Version
-	version.Version = v
-	t.Cleanup(func() { version.Version = original })
-}
-
 func TestDefaultAgentImage(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		version string
@@ -35,21 +24,21 @@ func TestDefaultAgentImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			withVersion(t, tt.version)
-			assert.Equal(t, tt.want, DefaultAgentImage())
+			t.Parallel()
+			assert.Equal(t, tt.want, defaultAgentImageFor(tt.version))
 		})
 	}
 }
 
 func TestResolvedAgentImage(t *testing.T) {
-	withVersion(t, "v1.133.0")
+	t.Parallel()
 
 	tests := []struct {
 		name       string
 		agentImage string
 		want       string
 	}{
-		{name: "default", agentImage: "", want: "docker/docker-agent:1.133.0"},
+		{name: "default", agentImage: "", want: DefaultAgentImage()},
 		{name: "skip injection", agentImage: NoAgentImage, want: ""},
 		{name: "explicit override", agentImage: "docker/docker-agent:1.100.0", want: "docker/docker-agent:1.100.0"},
 		{name: "explicit override, different registry", agentImage: "myregistry.example.com/docker-agent:custom", want: "myregistry.example.com/docker-agent:custom"},
@@ -57,6 +46,7 @@ func TestResolvedAgentImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cfg := Config{AgentImage: tt.agentImage}
 			assert.Equal(t, tt.want, ResolvedAgentImage(cfg))
 		})
