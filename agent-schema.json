@@ -1197,6 +1197,16 @@
       "type": "object",
       "description": "Lifecycle hooks configuration for an agent. Hooks allow running shell commands at various points in the agent's execution lifecycle.",
       "properties": {
+        "prompt_file_guard": {
+          "type": "array",
+          "description": "Checks loaded and retained prompt-file instructions before storage or use. Every hook must explicitly approve; failures stop the turn in every safety mode.",
+          "items": { "$ref": "#/definitions/HookDefinition" }
+        },
+        "skill_content_guard": {
+          "type": "array",
+          "description": "Checks raw skill text before expansion or delivery. Every hook must explicitly approve; denials and failures reject the load in every safety mode.",
+          "items": { "$ref": "#/definitions/HookDefinition" }
+        },
         "pre_tool_use": {
           "type": "array",
           "description": "Hooks that run before a tool is executed. Can allow/deny/modify tool calls.",
@@ -1431,6 +1441,10 @@
       "type": "object",
       "description": "Definition of a single hook command",
       "properties": {
+        "system_prompt": {
+          "type": "string",
+          "description": "Literal system message for a model hook. Overrides the default; not templated."
+        },
         "name": {
           "type": "string",
           "description": "Optional friendly hook name used in logs and runtime hook events."

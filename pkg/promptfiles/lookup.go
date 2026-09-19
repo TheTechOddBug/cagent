@@ -22,6 +22,9 @@ import (
 	"github.com/docker/docker-agent/pkg/skills"
 )
 
+// InstructionGroup identifies prompt-file sources in persisted instruction context.
+const InstructionGroup = "core/prompt-files"
+
 // KitSubdir is the subdirectory inside a docker-agent kit that holds
 // staged prompt files. The host writes to it; the in-sandbox lookup
 // reads from it.

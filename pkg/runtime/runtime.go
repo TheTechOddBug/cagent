@@ -107,6 +107,9 @@ type Runtime interface {
 	// Returns nil if no permissions are configured.
 	PermissionsInfo() *PermissionsInfo
 
+	// ReadSkillContent loads a skill for sess without executing embedded commands.
+	ReadSkillContent(ctx context.Context, sess *session.Session, name string) (string, error)
+
 	// CurrentAgentSkillsToolset returns the skills toolset for the current agent, or nil if skills are not enabled.
 	CurrentAgentSkillsToolset() *skills.ToolSet
 
@@ -884,10 +887,15 @@ func (r *LocalRuntime) CurrentAgentCommands(context.Context) types.Commands {
 }
 
 // CurrentAgentTools returns the tools available to the current agent.
-// This starts the toolsets if needed and returns all available tools.
+// This starts toolsets if needed; returned handlers enforce this agent's skill
+// policy without permitting embedded commands outside a tool call.
 func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
 	a := r.CurrentAgent()
-	return a.Tools(ctx)
+	agentTools, err := a.Tools(ctx)
+	if err != nil {
+		return agentTools, err
+	}
+	return bindSkillRuntime(agentTools, skillRuntime{runtime: r, agent: a}), nil
 }
 
 // ToolsetState is the coarse lifecycle bucket the agent inspector renders as a

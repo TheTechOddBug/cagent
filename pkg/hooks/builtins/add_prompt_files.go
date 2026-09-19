@@ -16,8 +16,6 @@ import (
 // AddPromptFiles is the registered name of the add_prompt_files builtin.
 const AddPromptFiles = "add_prompt_files"
 
-const promptFilesGroup = "core/prompt-files"
-
 // promptFilesIndexKey identifies the listing of nested prompt files. Fixed
 // (unlike the per-path keys) so the listing is diffed as a whole.
 const promptFilesIndexKey = "core/prompt-file-index"
@@ -46,14 +44,15 @@ func addPromptFiles(ctx context.Context, in *hooks.Input, args []string) (*hooks
 			if err != nil {
 				slog.WarnContext(ctx, "reading prompt file", "path", path, "error", err)
 				return instructionContextOutput(hooks.InstructionContext{
-					Group: promptFilesGroup, Unavailable: true, SetMarker: true,
+					Group: promptfiles.InstructionGroup, Unavailable: true, SetMarker: true,
 				}), nil
 			}
 			loaded = append(loaded, path)
 			rendered := "Instructions from: " + path + "\n" + string(content)
 			sources = append(sources, hooks.InstructionContext{
 				Key:            promptFileKey(path),
-				Group:          promptFilesGroup,
+				Path:           path,
+				Group:          promptfiles.InstructionGroup,
 				Label:          "instructions from " + path,
 				Content:        rendered,
 				ChangedContent: "The instructions from " + path + " have changed and replace the previous instructions from that file.\n\n" + rendered,
@@ -64,7 +63,7 @@ func addPromptFiles(ctx context.Context, in *hooks.Input, args []string) (*hooks
 	if note := promptfiles.Index(ctx, in.Cwd, names, depth, loaded); note != "" {
 		sources = append(sources, hooks.InstructionContext{
 			Key:            promptFilesIndexKey,
-			Group:          promptFilesGroup,
+			Group:          promptfiles.InstructionGroup,
 			Label:          "prompt files below " + in.Cwd,
 			Content:        note,
 			ChangedContent: "The list of prompt files below " + in.Cwd + " has changed and replaces the previous list.\n\n" + note,
@@ -73,7 +72,7 @@ func addPromptFiles(ctx context.Context, in *hooks.Input, args []string) (*hooks
 	}
 	if len(sources) == 0 {
 		sources = append(sources, hooks.InstructionContext{
-			Group: promptFilesGroup, CompleteGroup: true, SetMarker: true,
+			Group: promptfiles.InstructionGroup, CompleteGroup: true, SetMarker: true,
 		})
 	} else {
 		sources[0].CompleteGroup = true

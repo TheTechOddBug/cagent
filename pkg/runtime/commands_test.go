@@ -745,3 +745,7 @@ func TestResolveCommand_AgentWithInstruction(t *testing.T) {
 	result := ResolveCommand(t.Context(), rt, "/plan add login")
 	assert.Equal(t, "Plan the work for: add login", result)
 }
+
+func (m *mockRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

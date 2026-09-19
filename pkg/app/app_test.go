@@ -1452,3 +1452,7 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 		})
 	}
 }
+
+func (m *mockRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

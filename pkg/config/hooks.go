@@ -62,6 +62,8 @@ func MergeHooks(base, cli *latest.HooksConfig) *latest.HooksConfig {
 	}
 
 	merged := &latest.HooksConfig{
+		PromptFileGuard:            slices.Concat(base.PromptFileGuard, cli.PromptFileGuard),
+		SkillContentGuard:          slices.Concat(base.SkillContentGuard, cli.SkillContentGuard),
 		PreToolUse:                 slices.Concat(base.PreToolUse, cli.PreToolUse),
 		PostToolUse:                slices.Concat(base.PostToolUse, cli.PostToolUse),
 		PermissionRequest:          slices.Concat(base.PermissionRequest, cli.PermissionRequest),

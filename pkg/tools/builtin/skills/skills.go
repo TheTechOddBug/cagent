@@ -150,6 +150,10 @@ func (s *ToolSet) ReadSkillContent(ctx context.Context, name string, rt tools.Ru
 		}
 	}
 
+	if err := checkContent(ctx, rt, skill, skill.FilePath, content); err != nil {
+		return "", err
+	}
+
 	if !skill.ExpandsCommands() {
 		return content, nil
 	}
@@ -185,7 +189,7 @@ func (s *ToolSet) confirmedRunner(rt tools.Runtime, skillName string) skills.Run
 
 // ReadSkillFile returns the content of a supporting file within a skill.
 // The path is relative to the skill's base directory (e.g. "references/FORMS.md").
-func (s *ToolSet) ReadSkillFile(skillName, relativePath string) (string, error) {
+func (s *ToolSet) ReadSkillFile(ctx context.Context, skillName, relativePath string, rt tools.Runtime) (string, error) {
 	skill := s.findSkill(skillName)
 	if skill == nil {
 		return "", fmt.Errorf("skill %q not found", skillName)
@@ -217,7 +221,26 @@ func (s *ToolSet) ReadSkillFile(skillName, relativePath string) (string, error) 
 		return "", err
 	}
 
+	if err := checkContent(ctx, rt, skill, absPath, content); err != nil {
+		return "", err
+	}
 	return content, nil
+}
+
+func checkContent(ctx context.Context, rt tools.Runtime, skill *skills.Skill, path, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if rt == nil {
+		rt = tools.NopRuntime{}
+	}
+	source := "remote"
+	if skill.IsInline() {
+		source = "inline"
+	} else if skill.Local {
+		source = "local"
+	}
+	return rt.CheckSkillContent(ctx, skills.Content{Name: skill.Name, Source: source, Path: path, Content: content})
 }
 
 func readFileContent(path string) (string, error) {
@@ -258,8 +281,8 @@ func (s *ToolSet) handleReadSkill(ctx context.Context, args readSkillArgs, rt to
 	return tools.ResultSuccess(content), nil
 }
 
-func (s *ToolSet) handleReadSkillFile(_ context.Context, args readSkillFileArgs) (*tools.ToolCallResult, error) {
-	content, err := s.ReadSkillFile(args.SkillName, args.Path)
+func (s *ToolSet) handleReadSkillFile(ctx context.Context, args readSkillFileArgs, rt tools.Runtime) (*tools.ToolCallResult, error) {
+	content, err := s.ReadSkillFile(ctx, args.SkillName, args.Path, rt)
 	if err != nil {
 		return tools.ResultError(err.Error()), nil
 	}
@@ -446,7 +469,7 @@ func (s *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 			Description:  "Read a supporting file from a skill (e.g. references, scripts, assets). Use when skill instructions reference additional files.",
 			Parameters:   tools.MustSchemaFor[readSkillFileArgs](),
 			OutputSchema: tools.MustSchemaFor[string](),
-			Handler:      tools.NewHandler(s.handleReadSkillFile),
+			Handler:      tools.NewRuntimeHandler(s.handleReadSkillFile),
 			Annotations: tools.ToolAnnotations{
 				Title:        "Read Skill File",
 				ReadOnlyHint: true,

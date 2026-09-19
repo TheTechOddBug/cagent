@@ -34,7 +34,6 @@ import (
 	"github.com/docker/docker-agent/pkg/tools/builtin/modelpicker"
 	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tools/builtin/sessioncontext"
-	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 	"github.com/docker/docker-agent/pkg/userconfig"
 	"github.com/docker/docker-agent/pkg/workspacemedia"
@@ -47,7 +46,6 @@ func (r *LocalRuntime) registerDefaultTools() {
 	r.toolMap[handoff.ToolNameHandoff] = r.handleHandoff
 	r.toolMap[modelpicker.ToolNameChangeModel] = r.handleChangeModel
 	r.toolMap[modelpicker.ToolNameRevertModel] = r.handleRevertModel
-	r.toolMap[skills.ToolNameRunSkill] = r.handleRunSkill
 	r.toolMap[sessioncontext.ToolNameListSessions] = r.handleListSessions
 	r.toolMap[sessioncontext.ToolNameReadSession] = r.handleReadSession
 
@@ -810,7 +808,16 @@ func (r *LocalRuntime) runTurn(
 	legacyExtras := slices.Concat(ls.sessionStartLegacyMsgs, ls.userPromptMsgs, turnStartMsgs.legacyMessages(), reminderMsgs)
 	sources := instructionSources(ls.sessionStartMsgs, ls.userPromptMsgs, turnStartMsgs, ls.sessionStartSources...)
 	sources = append(sources, instructionSource("runtime/structured-output", "structured-output reminder", reminderMsgs))
-	messages := r.messagesWithDynamicContext(ctx, sess, a, sources, legacyExtras)
+	messages, err := r.messagesWithDynamicContext(ctx, sess, a, sources, legacyExtras)
+	if err != nil {
+		if ctx.Err() != nil {
+			endReason = turnEndReasonCanceled
+			return turnExit
+		}
+		r.emitHookDrivenShutdown(ctx, a, sess, err.Error(), events)
+		endReason = turnEndReasonHookBlocked
+		return turnExit
+	}
 	slog.DebugContext(ctx, "Retrieved messages for processing", "agent", a.Name(), "message_count", len(messages))
 
 	// before_llm_call hooks fire just before the model is invoked.

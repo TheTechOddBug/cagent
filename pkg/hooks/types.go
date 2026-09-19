@@ -9,12 +9,17 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelinfo"
+	"github.com/docker/docker-agent/pkg/skills"
 )
 
 // EventType identifies a hook event.
 type EventType string
 
 const (
+	// EventSkillContentGuard checks raw skill text before expansion or delivery.
+	EventSkillContentGuard EventType = "skill_content_guard"
+	// EventPromptFileGuard checks prompt-file instructions before storage or use.
+	EventPromptFileGuard EventType = "prompt_file_guard"
 	// EventPreToolUse fires before a tool call. Can allow/deny/modify it.
 	EventPreToolUse EventType = "pre_tool_use"
 	// EventPostToolUse fires after a tool completes — both success and
@@ -257,8 +262,18 @@ const (
 // references this name when consulting the preempt lane.
 var EventPreToolUsePreYolo EventType = "pre_tool_use_pre_yolo"
 
+// PromptFile carries rendered file instructions, including change/removal narration.
+// Path is empty for historical merged updates and older persisted instructions.
+type PromptFile struct {
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content"`
+}
+
 // Input is the JSON-serializable payload passed to hooks via stdin.
 type Input struct {
+	PromptFile *PromptFile     `json:"prompt_file,omitempty"`
+	Skill      *skills.Content `json:"skill,omitempty"`
+
 	SessionID     string    `json:"session_id"`
 	Cwd           string    `json:"cwd"`
 	HookEventName EventType `json:"hook_event_name"`
@@ -526,6 +541,7 @@ func NewInstructionContextOutput(event EventType, source InstructionContext) *Ou
 
 // InstructionContext describes independently changing trusted context.
 type InstructionContext struct {
+	Path           string `json:"path,omitempty"`
 	Key            string `json:"key"`
 	Group          string `json:"group,omitempty"`
 	Label          string `json:"label,omitempty"`
@@ -621,6 +637,9 @@ type HookSpecificOutput struct {
 
 // Result is the aggregated outcome of dispatching one event.
 type Result struct {
+	// FailedHooks identifies loaders whose output was lost to execution or protocol failures.
+	FailedHooks []Hook
+
 	// Allowed indicates if the operation should proceed.
 	Allowed bool
 	// PermissionAllowed is set when a [EventPermissionRequest] hook

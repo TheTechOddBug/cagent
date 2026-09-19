@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
 )
 
 // processToolCalls builds a per-stream [toolexec.Dispatcher] and delegates
@@ -33,18 +34,23 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 	// Bind runtime-managed handlers (transfer_task, handoff, change_model, ...)
 	// to the current events channel: r.toolMap entries take chan Event,
 	// toolexec.ToolHandler doesn't.
-	handlers := make(map[string]toolexec.ToolHandler, len(r.toolMap))
+	caller := r.resolveSessionAgent(sess)
+	handlers := make(map[string]toolexec.ToolHandler, len(r.toolMap)+1)
 	for name, h := range r.toolMap {
 		handlers[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, rt tools.Runtime) (*tools.ToolCallResult, error) {
 			return h(ctx, sess, tc, events, rt)
 		}
 	}
 
+	handlers[skills.ToolNameRunSkill] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, rt tools.Runtime) (*tools.ToolCallResult, error) {
+		return r.handleRunSkill(ctx, sess, tc, events, rt, caller)
+	}
+
 	d := &toolexec.Dispatcher{
 		Tracer:      r.tracer,
 		Hooks:       &hookDispatcher{r: r, events: events},
 		Resume:      r.resumeChan,
-		AgentFor:    r.resolveSessionAgent,
+		AgentFor:    func(*session.Session) *agent.Agent { return caller },
 		Permissions: r.permissionCheckers,
 		Handlers:    handlers,
 		Recall: func(ctx context.Context, _ *session.Session, _ *agent.Agent, message string) error {

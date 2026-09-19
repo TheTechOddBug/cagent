@@ -1209,3 +1209,7 @@ func TestRunAgent_ContextCancellationStopsEventLoop(t *testing.T) {
 	requireAvailableCommands(t, updates[0])
 	assert.Empty(t, rt.resumeRequests())
 }
+
+func (f *fakeRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

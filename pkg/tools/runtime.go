@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"errors"
+
+	"github.com/docker/docker-agent/pkg/skills"
 )
 
 // Capability identifies an optional runtime facility a tool can probe for
@@ -42,6 +44,8 @@ type ConfirmedRun struct {
 //
 // Hosts without an agent loop pass [NopRuntime].
 type Runtime interface {
+	// CheckSkillContent applies the host's mandatory skill policy before use.
+	CheckSkillContent(ctx context.Context, content skills.Content) error
 	// EmitOutput streams incremental output for the current tool call.
 	EmitOutput(ctx context.Context, output string)
 	// Recall injects a message into the agent loop, waking it if idle.
@@ -93,3 +97,6 @@ func (NopRuntime) ConfirmAndRun(context.Context, ConfirmedRun, func(context.Cont
 }
 
 func (NopRuntime) Supports(Capability) bool { return false }
+
+// CheckSkillContent allows reads in hosts without an agent configuration.
+func (NopRuntime) CheckSkillContent(context.Context, skills.Content) error { return nil }

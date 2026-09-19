@@ -651,3 +651,7 @@ func TestNonOAuthElicitationDeclinedAndStreamDrained(t *testing.T) {
 	assert.Check(t, strings.Contains(buf.String(), "Continuing without deployment."),
 		"the assistant response must still be printed: %q", buf.String())
 }
+
+func (m *mockRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

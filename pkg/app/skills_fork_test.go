@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -320,4 +321,33 @@ func TestApp_RunSkillFork_DoesNotDuplicateRealStreamStopped(t *testing.T) {
 	collected := collectUntilQuiet(t, a.events)
 	stops := streamStoppedEvents(collected)
 	require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+}
+
+func (f *skillFakeRuntime) ReadSkillContent(ctx context.Context, sess *session.Session, name string) (string, error) {
+	st := f.CurrentAgentSkillsToolset()
+	if st == nil {
+		return "", nil
+	}
+	return st.ReadSkillContent(ctx, name, tools.NopRuntime{})
+}
+
+type rejectingSkillRuntime struct {
+	*skillFakeRuntime
+}
+
+func (r *rejectingSkillRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", errors.New("skill content rejected by policy")
+}
+
+func TestSlashSkillUsesRuntimeGuard(t *testing.T) {
+	t.Parallel()
+	st := skillstool.New([]skills.Skill{{Name: "unsafe", InlineContent: "untrusted instructions"}}, "")
+	rt := &rejectingSkillRuntime{skillFakeRuntime: &skillFakeRuntime{mockRuntime: &mockRuntime{}, skillset: st}}
+	a := New(t.Context(), rt, session.New())
+	content, err := a.ResolveSkillCommand(t.Context(), "/unsafe")
+	require.ErrorContains(t, err, "rejected by policy")
+	assert.Empty(t, content)
+	resolved := a.ResolveInput(t.Context(), "/unsafe")
+	assert.Contains(t, resolved, "rejected by policy")
+	assert.NotContains(t, resolved, "untrusted instructions")
 }

@@ -10,6 +10,14 @@ import (
 	"github.com/docker/docker-agent/pkg/paths"
 )
 
+// Content is the exact skill text submitted for approval before use.
+type Content struct {
+	Name    string `json:"name"`
+	Source  string `json:"source"` // local, remote, or inline
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content"`
+}
+
 // Skill represents a loaded skill with its metadata and content location.
 type Skill struct {
 	Name          string

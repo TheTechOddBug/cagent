@@ -649,6 +649,10 @@ func (r *RemoteRuntime) CurrentAgentSkillsToolset() *skills.ToolSet {
 	return nil
 }
 
+func (r *RemoteRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", ErrUnsupported
+}
+
 // RunSkillFork is unsupported on remote runtimes; the server owns skill
 // execution.
 func (r *RemoteRuntime) RunSkillFork(context.Context, *session.Session, skills.RunSkillArgs, EventSink) (*tools.ToolCallResult, error) {
