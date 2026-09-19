@@ -115,3 +115,62 @@ func TestSkillGuardTimeout(t *testing.T) {
 		assert.Equal(t, time.Second, time.Since(start))
 	})
 }
+
+func TestGuardDecisionRejectsAmbiguousJSON(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"decision":"deny","decision":"allow","reason":"safe"}`,
+		`{"decision":"deny","Decision":"allow","reason":"safe"}`,
+		`{"Decision":"allow","Reason":"safe"}`,
+		`{"decision":"allow","reason":"unsafe","reason":"safe"}`,
+		`{"decision":"allow","reason":null}`,
+		`{"decision":"allow","reason":{}}`,
+		`{"decision":"allow","reason":1}`,
+		`{"decision":"allow","reason":true}`,
+		`{"decision":"allow","reason":"safe"} trailing`,
+		`[]`, `null`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			for _, event := range []EventType{EventSkillContentGuard, EventPromptFileGuard} {
+				out, err := guardDecisionShape(raw, &Input{HookEventName: event})
+				require.Error(t, err)
+				assert.Nil(t, out)
+			}
+		})
+	}
+}
+
+func TestContentGuardCommandRejectsAmbiguousJSON(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"continue":false,"continue":true}`,
+		`{"continue":false,"Continue":true}`,
+		`{"Continue":true}`,
+		`{"continue":true,"decision":"block","decision":""}`,
+		`{"continue":true,"Decision":"block"}`,
+		`{"continue":true,"hook_specific_output":{"HookEventName":"skill_content_guard"}}`,
+		`{"continue":true,"hook_specific_output":{"hook_event_name":"wrong","hook_event_name":"skill_content_guard"}}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			for _, event := range []EventType{EventSkillContentGuard, EventPromptFileGuard} {
+				cfg := &Config{}
+				defs := []Hook{{Type: "fail", OnError: "ignore"}}
+				if event == EventSkillContentGuard {
+					cfg.SkillContentGuard = defs
+				} else {
+					cfg.PromptFileGuard = defs
+				}
+				exec := NewExecutorWithRegistry(cfg, "", nil, failingHandlerRegistry(HandlerResult{Stdout: raw}, nil))
+				result, err := exec.Dispatch(t.Context(), event, &Input{})
+				require.NoError(t, err)
+				assert.False(t, result.Allowed)
+			}
+		})
+	}
+	// This stricter protocol does not change unrelated legacy hooks.
+	out, err := parseStdoutJSON(`{"continue":false,"Continue":true}`, false)
+	require.NoError(t, err)
+	assert.True(t, out.ShouldContinue())
+}

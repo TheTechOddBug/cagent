@@ -30,11 +30,8 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	bgagent "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 	"github.com/docker/docker-agent/pkg/tools/builtin/backgroundjobs"
-	"github.com/docker/docker-agent/pkg/tools/builtin/handoff"
-	"github.com/docker/docker-agent/pkg/tools/builtin/modelpicker"
 	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tools/builtin/sessioncontext"
-	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 	"github.com/docker/docker-agent/pkg/userconfig"
 	"github.com/docker/docker-agent/pkg/workspacemedia"
 )
@@ -42,10 +39,6 @@ import (
 // registerDefaultTools wires up the built-in tool handlers (delegation,
 // background agents, model switching) into the runtime's tool dispatch map.
 func (r *LocalRuntime) registerDefaultTools() {
-	r.toolMap[transfertask.ToolNameTransferTask] = r.handleTaskTransfer
-	r.toolMap[handoff.ToolNameHandoff] = r.handleHandoff
-	r.toolMap[modelpicker.ToolNameChangeModel] = r.handleChangeModel
-	r.toolMap[modelpicker.ToolNameRevertModel] = r.handleRevertModel
 	r.toolMap[sessioncontext.ToolNameListSessions] = r.handleListSessions
 	r.toolMap[sessioncontext.ToolNameReadSession] = r.handleReadSession
 
@@ -989,7 +982,7 @@ func (r *LocalRuntime) runTurn(
 	// the validated JSON).
 	dispatchCalls, soFinalized := r.handleStructuredOutputCalls(ctx, sess, a, &res, agentTools, modelID.String(), events)
 
-	stopRun, stopMsg := r.processToolCalls(ctx, sess, dispatchCalls, agentTools, events)
+	stopRun, stopMsg := r.processToolCalls(ctx, sess, a, dispatchCalls, agentTools, events)
 
 	// Re-probe toolsets after tool calls: an install/setup tool call may
 	// have made a previously-unavailable LSP or MCP connectable. reprobe()
@@ -1097,11 +1090,9 @@ func (r *LocalRuntime) runTurn(
 		// --- FORCED HANDOFF: deterministic routing on natural stop ---
 		// When the agent's config names a force_handoff target, the
 		// runtime intercepts the finish state and routes the conversation
-		// to that agent without involving the LLM. Skipped for pinned
-		// sessions (background agents): resolveSessionAgent would keep
-		// returning the pinned agent, turning the forced switch into an
-		// infinite stop/handoff loop.
-		if next := a.ForceHandoff(); next != nil && sess.AgentName == "" {
+		// to that agent without involving the LLM. Hard-pinned background
+		// tasks stay put; skill forks route handoffs within their own session.
+		if next := a.ForceHandoff(); next != nil && (sess.AgentName == "" || sess.AllowsAgentHandoffs()) {
 			r.applyForceHandoff(ctx, sess, a, next)
 			endReason = turnEndReasonForceHandoff
 			return turnContinue

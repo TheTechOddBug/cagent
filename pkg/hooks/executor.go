@@ -374,7 +374,11 @@ func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inpu
 
 	// Fall back to the legacy "parse JSON from stdout" protocol.
 	if r.Output == nil && r.ExitCode == 0 {
-		r.Output, err = parseStdoutJSON(r.Stdout, hook.StrictOutput || contentGuard)
+		if contentGuard {
+			r.Output, err = parseContentGuardOutput(r.Stdout)
+		} else {
+			r.Output, err = parseStdoutJSON(r.Stdout, hook.StrictOutput)
+		}
 		if err != nil {
 			return markFailed(err)
 		}

@@ -11,7 +11,10 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/handoff"
+	"github.com/docker/docker-agent/pkg/tools/builtin/modelpicker"
 	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
+	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 )
 
 // processToolCalls builds a per-stream [toolexec.Dispatcher] and delegates
@@ -30,18 +33,29 @@ import (
 // (false, "") in every other path — including user cancellation, which
 // halts the *batch* but keeps the loop alive so the synthesised tool
 // error responses can be sent back to the model on the next turn.
-func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, events EventSink) (stopRun bool, stopMessage string) {
+func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, caller *agent.Agent, calls []tools.ToolCall, agentTools []tools.Tool, events EventSink) (stopRun bool, stopMessage string) {
 	// Bind runtime-managed handlers (transfer_task, handoff, change_model, ...)
 	// to the current events channel: r.toolMap entries take chan Event,
 	// toolexec.ToolHandler doesn't.
-	caller := r.resolveSessionAgent(sess)
-	handlers := make(map[string]toolexec.ToolHandler, len(r.toolMap)+1)
+	handlers := make(map[string]toolexec.ToolHandler, len(r.toolMap)+5)
 	for name, h := range r.toolMap {
 		handlers[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, rt tools.Runtime) (*tools.ToolCallResult, error) {
 			return h(ctx, sess, tc, events, rt)
 		}
 	}
 
+	handlers[modelpicker.ToolNameChangeModel] = func(ctx context.Context, _ *session.Session, tc tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		return r.handleChangeModel(ctx, caller, tc, events)
+	}
+	handlers[modelpicker.ToolNameRevertModel] = func(ctx context.Context, _ *session.Session, _ tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		return r.handleRevertModel(ctx, caller, events)
+	}
+	handlers[transfertask.ToolNameTransferTask] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		return r.handleTaskTransfer(ctx, sess, tc, events, caller)
+	}
+	handlers[handoff.ToolNameHandoff] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		return r.handleHandoff(ctx, sess, tc, caller)
+	}
 	handlers[skills.ToolNameRunSkill] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, rt tools.Runtime) (*tools.ToolCallResult, error) {
 		return r.handleRunSkill(ctx, sess, tc, events, rt, caller)
 	}

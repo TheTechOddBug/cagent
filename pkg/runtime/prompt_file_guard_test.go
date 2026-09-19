@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -384,4 +385,58 @@ func TestPromptFileGuardUsesResolvedAgentPolicy(t *testing.T) {
 	rt.agents.Set("missing")
 	err := rt.checkPromptFiles(t.Context(), session.New(session.WithAgentName("root")), owner, []session.InstructionSource{promptSource("data")}, true)
 	require.ErrorIs(t, err, errPromptFileRejected)
+}
+
+func TestPromptFileGuardDiscoveryFailure(t *testing.T) {
+	for _, stable := range []bool{false, true} {
+		for _, guarded := range []bool{false, true} {
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("stable=%t/guarded=%t/explicit=%t", stable, guarded, explicit), func(t *testing.T) {
+					promptGuardMode(t, stable)
+					parent := t.TempDir()
+					require.NoError(t, os.WriteFile(filepath.Join(parent, "GUARDED.md"), []byte("ancestor instructions"), 0o600))
+					work := filepath.Join(parent, "project")
+					require.NoError(t, os.Mkdir(work, 0o700))
+					broken := filepath.Join(work, "GUARDED.md")
+					if err := os.Symlink(broken, broken); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+					model := &handoffRecordingProvider{mockProvider: mockProvider{id: "test/model", stream: newStreamBuilder().AddContent("done").AddStopWithUsage(1, 1).Build()}}
+					cfg := &latest.HooksConfig{}
+					reg := hooks.NewRegistry()
+					if guarded {
+						cfg.PromptFileGuard = []latest.HookDefinition{{Type: "builtin", Command: "judge"}}
+						require.NoError(t, reg.RegisterBuiltin("judge", func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
+							return &hooks.Output{Continue: new(true)}, nil
+						}))
+					}
+					opts := []agent.Opt{agent.WithModel(model), agent.WithHooks(cfg)}
+					if explicit {
+						cfg.SessionStart = []latest.HookDefinition{{Type: "builtin", Command: builtins.AddPromptFiles, Args: []string{"GUARDED.md"}}}
+					} else {
+						opts = append(opts, agent.WithAddPromptFiles([]string{"GUARDED.md"}))
+					}
+					root := agent.New("root", "", opts...)
+					rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)), WithWorkingDir(work), WithHooksRegistry(reg), WithModelStore(mockModelStore{}), WithSessionCompaction(false))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, rt.Close()) })
+					sess := session.New(session.WithUserMessage("hello"))
+					for range rt.RunStream(t.Context(), sess) {
+					}
+					if guarded {
+						assert.Zero(t, model.handoffCallCount())
+						assert.Nil(t, sess.InstructionContextSnapshot())
+					} else {
+						assert.Equal(t, 1, model.handoffCallCount())
+						data, err := json.Marshal(model.lastMessages())
+						require.NoError(t, err)
+						assert.Contains(t, string(data), "ancestor instructions")
+						if stable {
+							assert.NotNil(t, sess.InstructionContextSnapshot())
+						}
+					}
+				})
+			}
+		}
+	}
 }

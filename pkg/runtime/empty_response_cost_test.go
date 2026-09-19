@@ -179,7 +179,7 @@ func TestDelegationRetainsOutputAfterBilledEmptyStop(t *testing.T) {
 				require.Empty(t, result.ErrMsg)
 				assert.Equal(t, "task result", result.Result)
 			} else {
-				result, err := rt.runForwarding(t.Context(), parent, EventSinkFunc(func(Event) {}), delegationRequest{
+				result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(Event) {}), delegationRequest{
 					SubSessionConfig:   SubSessionConfig{AgentName: "worker", Task: "do the task", ToolsApproved: true},
 					SwitchCurrentAgent: true,
 				})

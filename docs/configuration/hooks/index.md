@@ -1268,7 +1268,8 @@ No hook configured means no content check. `--yolo` and permission allow-rules
 never skip configured checks. A denial rejects only this load, not the whole run.
 
 Model hooks require `schema: guard_decision`: exactly one JSON object containing
-`decision` (`allow` or `deny`) and a string `reason`. This schema is also usable
+`decision` (`allow` or `deny`) and a string `reason`. Field names are case-sensitive; duplicate members are rejected.
+This schema is also usable
 on other blocking hook events. It does not auto-approve tools or support `ask`.
 The optional literal `system_prompt` overrides the default model-hook system
 message; it is not templated, keeping policy separate from untrusted input.
@@ -1335,7 +1336,8 @@ from memory; the loader does not reread an approved path.
 Every configured hook must explicitly approve, using the same protocol as
 [`skill_content_guard`](#skill-content-guard). Timeouts, invalid/empty verdicts,
 unsupported output fields, and execution failures block even with
-`on_error: ignore`. Unavailable prompt-file reads also stop the turn. Missing
+`on_error: ignore`. Unavailable prompt-file reads and non-missing discovery errors (such as permission
+errors or symlink loops) also stop the turn. Missing
 files retain the loader's normal discovery behavior, but any old instructions
 still retained in cache-stable context are checked before reuse.
 

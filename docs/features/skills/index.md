@@ -414,3 +414,9 @@ forked skills, slash commands, and supporting-file reads. Model judges use the
 built-in `guard_decision` schema; failures reject the load in every safety mode.
 This checks skill-loader reads, not arbitrary filesystem access or skill
 metadata, and does not replace tool permissions or sandboxing.
+
+
+Handoffs inside a forked skill stay within that fork: explicit `handoff` and
+configured `force_handoff` can select another agent without changing the parent
+conversation's active agent. Background sessions remain hard-pinned and reject
+explicit handoffs.

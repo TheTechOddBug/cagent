@@ -124,7 +124,7 @@ func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, 
 	// runtime's currentAgent stays put and the delegation lineage is
 	// inherited unchanged (no DelegationLineage: not a delegation edge).
 	// Pin the child so a concurrent agent switch cannot change which agent consumes the skill.
-	return r.runForwarding(ctx, sess, evts, delegationRequest{
+	return r.runForwarding(ctx, sess, caller, evts, delegationRequest{
 		Task:                prepared.Task,
 		SystemMessage:       skills.BuildSkillSystemMessage(prepared, sess.AttachedFilesSnapshot()),
 		ImplicitUserMessage: skills.BuildSkillUserMessage(prepared),
@@ -135,6 +135,7 @@ func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, 
 		Permissions:         sess.ClonePermissions(),
 		NonInteractive:      sess.NonInteractive,
 		PinAgent:            true,
+		AllowHandoffs:       true,
 		ExcludedTools:       []string{skills.ToolNameRunSkill},
 		AllowedTools:        prepared.AllowedTools,
 		ExtraToolSets:       prepared.ToolSets,

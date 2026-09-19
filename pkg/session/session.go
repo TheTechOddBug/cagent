@@ -425,6 +425,10 @@ type Session struct {
 	// concurrently on different agents.
 	AgentName string `json:"-"`
 
+	// Skill forks route handoffs locally without changing their immutable initial pin.
+	allowAgentHandoffs bool
+	handoffAgent       string
+
 	// ParentID indicates this is a sub-session created by task transfer.
 	// Sub-sessions are not persisted as standalone entries; they are embedded
 	// within the parent session's Messages array.
@@ -1609,6 +1613,36 @@ func WithPermissions(perms *PermissionsConfig) Opt {
 	return func(s *Session) {
 		s.Permissions = perms.Clone()
 	}
+}
+
+// WithAgentHandoffs permits in-session routing for an otherwise pinned skill fork.
+func WithAgentHandoffs() Opt {
+	return func(s *Session) { s.allowAgentHandoffs = true }
+}
+
+// AllowsAgentHandoffs distinguishes routing-enabled forks from hard-pinned background tasks.
+func (s *Session) AllowsAgentHandoffs() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.allowAgentHandoffs
+}
+
+// HandoffAgent returns the session-local agent selected by an intentional handoff.
+func (s *Session) HandoffAgent() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.handoffAgent
+}
+
+// TryAgentHandoff changes only opted-in session routing, never the initial pin.
+func (s *Session) TryAgentHandoff(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.allowAgentHandoffs || name == "" {
+		return false
+	}
+	s.handoffAgent = name
+	return true
 }
 
 // WithAgentName pins this session to a specific agent. When set, RunStream

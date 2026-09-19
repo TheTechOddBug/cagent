@@ -79,7 +79,7 @@ func TestSkillGuardEntryPoints(t *testing.T) {
 				if entry == "read_skill_file" {
 					args = `{"skill_name":"test","path":"SKILL.md"}`
 				}
-				stopped, _ := rt.processToolCalls(t.Context(), sess, []tools.ToolCall{{ID: "skill-call", Type: "function", Function: tools.FunctionCall{Name: entry, Arguments: args}}}, ts, sink)
+				stopped, _ := rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: "skill-call", Type: "function", Function: tools.FunctionCall{Name: entry, Arguments: args}}}, ts, sink)
 				assert.False(t, stopped)
 				assert.Nil(t, firstSubSession(sess))
 				assert.Equal(t, 1, sess.MessageCount())
@@ -213,7 +213,7 @@ func TestRunSkillPolicyPinnedBeforeHandler(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		rt.processToolCalls(t.Context(), sess, []tools.ToolCall{{ID: "fork", Type: "function", Function: tools.FunctionCall{Name: "run_skill", Arguments: `{"name":"test"}`}}}, ts, NewChannelSink(make(chan Event, 128)))
+		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: "fork", Type: "function", Function: tools.FunctionCall{Name: "run_skill", Arguments: `{"name":"test"}`}}}, ts, NewChannelSink(make(chan Event, 128)))
 	}()
 	<-entered
 	require.NoError(t, rt.SetCurrentAgent(t.Context(), "other"))
@@ -230,8 +230,8 @@ func TestAllowedSkillForkKeepsCallerAfterAgentSwitch(t *testing.T) {
 	rootModel := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{
 		newStreamBuilder().AddContent("root finished").AddStopWithUsage(1, 1).Build(),
 	}}
-	root := agent.New("root", "", agent.WithModel(rootModel), agent.WithToolSets(st), agent.WithHooks(&latest.HooksConfig{SkillContentGuard: []latest.HookDefinition{{Type: "builtin", Command: "switch"}}}))
-	other := agent.New("other", "", agent.WithModel(&mockProvider{id: "test/mock-model"}))
+	root := agent.New("root", "", agent.WithModel(rootModel), agent.WithToolSets(st), agent.WithHooks(&latest.HooksConfig{SkillContentGuard: []latest.HookDefinition{{Type: "builtin", Command: "switch"}}, SubagentStop: []latest.HookDefinition{{Type: "builtin", Command: "root-completed"}}}))
+	other := agent.New("other", "", agent.WithModel(&mockProvider{id: "test/mock-model"}), agent.WithHooks(&latest.HooksConfig{SubagentStop: []latest.HookDefinition{{Type: "builtin", Command: "other-completed"}}}))
 	reg := hooks.NewRegistry()
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, other)), WithHooksRegistry(reg), WithModelStore(mockModelStore{}), WithSessionCompaction(false))
 	require.NoError(t, err)
@@ -241,6 +241,13 @@ func TestAllowedSkillForkKeepsCallerAfterAgentSwitch(t *testing.T) {
 		assert.NoError(t, rt.SetCurrentAgent(ctx, "other"))
 		return &hooks.Output{Continue: new(true)}, nil
 	}))
+	var completed []string
+	for _, name := range []string{"root-completed", "other-completed"} {
+		require.NoError(t, reg.RegisterBuiltin(name, func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
+			completed = append(completed, name)
+			return nil, nil
+		}))
+	}
 	sess := session.New(session.WithUserMessage("run the skill"))
 	result, err := rt.RunSkillFork(t.Context(), sess, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 128)))
 	require.NoError(t, err)
@@ -251,4 +258,53 @@ func TestAllowedSkillForkKeepsCallerAfterAgentSwitch(t *testing.T) {
 	require.NotNil(t, child)
 	assert.Equal(t, "root", child.AgentName)
 	assert.Equal(t, "other", rt.CurrentAgent().Name())
+	assert.Equal(t, []string{"root-completed"}, completed)
+}
+
+func TestSkillGuardUsesAgentThatRequestedTool(t *testing.T) {
+	t.Parallel()
+	for _, toolName := range []string{"read_skill", "read_skill_file", "run_skill"} {
+		t.Run(toolName, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			body := "UNTRUSTED_ORIGINAL_AGENT_SKILL"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600))
+			st := skillstool.New([]skills.Skill{{Name: "test", FilePath: filepath.Join(dir, "SKILL.md"), BaseDir: dir, Files: []string{"SKILL.md", "resource.md"}, Context: "fork"}}, dir)
+			args := `{"name":"test"}`
+			if toolName == "read_skill_file" {
+				args = `{"skill_name":"test","path":"SKILL.md"}`
+			}
+			request := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{newStreamBuilder().AddToolCallWithStop("load", toolName, args).Build()}}
+			otherModel := &handoffRecordingProvider{mockProvider: mockProvider{id: "test/other", stream: newStreamBuilder().AddContent("done").AddStopWithUsage(1, 1).Build()}}
+			root := agent.New("root", "", agent.WithModel(request), agent.WithToolSets(st), agent.WithHooks(&latest.HooksConfig{
+				AfterLLMCall:      []latest.HookDefinition{{Type: "builtin", Command: "switch"}},
+				SkillContentGuard: []latest.HookDefinition{{Type: "builtin", Command: "deny"}},
+			}))
+			other := agent.New("other", "", agent.WithModel(otherModel))
+			rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, other)), WithModelStore(mockModelStore{}), WithSessionCompaction(false))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rt.Close()) })
+			checks := 0
+			require.NoError(t, rt.hooksRegistry.RegisterBuiltin("switch", func(ctx context.Context, _ *hooks.Input, _ []string) (*hooks.Output, error) {
+				return nil, rt.SetCurrentAgent(ctx, "other")
+			}))
+			require.NoError(t, rt.hooksRegistry.RegisterBuiltin("deny", func(_ context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
+				checks++
+				assert.Equal(t, "root", in.AgentName)
+				assert.Equal(t, body, in.Skill.Content)
+				return &hooks.Output{Decision: "block"}, nil
+			}))
+			sess := session.New(session.WithUserMessage("load skill"), session.WithToolsApproved(true))
+			for ev := range rt.RunStream(t.Context(), sess) {
+				encoded, err := json.Marshal(ev)
+				require.NoError(t, err)
+				assert.NotContains(t, string(encoded), body)
+			}
+			assert.Equal(t, 1, checks)
+			assert.Nil(t, firstSubSession(sess))
+			encoded, err := json.Marshal(sess.MessagesSnapshot())
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), body)
+		})
+	}
 }

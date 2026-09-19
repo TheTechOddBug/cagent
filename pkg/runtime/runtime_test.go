@@ -656,7 +656,7 @@ func TestProcessToolCallsRecallEnqueuesSteeringMessage(t *testing.T) {
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	events := make(chan Event, 16)
-	stopRun, stopMsg := rt.processToolCalls(t.Context(), sess, []tools.ToolCall{{
+	stopRun, stopMsg := rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{
 		ID:       "call_1",
 		Type:     "function",
 		Function: tools.FunctionCall{Name: "recall_tool", Arguments: "{}"},
@@ -1185,7 +1185,7 @@ func TestProcessToolCalls_UnknownTool_ReturnsErrorResponse(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, nil, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, nil, NewChannelSink(events))
 	close(events)
 	for range events {
 	}
@@ -2347,7 +2347,7 @@ func TestPermissions_DenyBlocksToolExecution(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied, look for a ToolCallResponseEvent with error
@@ -2405,7 +2405,7 @@ func TestPermissions_AllowAutoApprovesTool(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should have been executed due to allow pattern
@@ -2448,7 +2448,7 @@ func TestPermissions_DenyTakesPriorityOverAllow(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied despite wildcard allow
@@ -2498,7 +2498,7 @@ func TestSessionPermissions_DenyBlocksToolExecution(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	var toolResponse *ToolCallResponseEvent
@@ -2553,7 +2553,7 @@ func TestSessionPermissions_AllowAutoApprovesTool(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	require.True(t, executed, "expected tool to be auto-approved by session permissions")
@@ -2601,7 +2601,7 @@ func TestSessionPermissions_TakePriorityOverTeamPermissions(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// Session deny should take priority over team allow
@@ -2653,7 +2653,7 @@ func TestToolRejectionWithReason(t *testing.T) {
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
-		rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 		close(events)
 	}()
 
@@ -2711,7 +2711,7 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
-		rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 		close(events)
 	}()
 
@@ -2763,7 +2763,7 @@ func TestTransferTaskRejectsNonSubAgent(t *testing.T) {
 		},
 	}
 
-	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), tools.NopRuntime{})
+	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), rt.resolveSessionAgent(sess))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "transfer to non-sub-agent should return an error result")
@@ -2803,7 +2803,7 @@ func TestTransferTaskAllowsSubAgent(t *testing.T) {
 		},
 	}
 
-	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), tools.NopRuntime{})
+	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), rt.resolveSessionAgent(sess))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError, "transfer to valid sub-agent should succeed")
@@ -2851,7 +2851,7 @@ func TestTransferTaskPersistsSubSessionOnError(t *testing.T) {
 
 	// runForwarding returns an error because the child emitted an ErrorEvent,
 	// but only *after* persisting the sub-session.
-	_, err = rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), tools.NopRuntime{})
+	_, err = rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts), rt.resolveSessionAgent(sess))
 	require.Error(t, err, "transfer should surface the sub-session error to the caller")
 
 	// The parent session must now hold a sub-session item — without the fix
@@ -2933,7 +2933,7 @@ func TestDenyOverridesYoloMode(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// With --yolo and Deny/ForceAsk precedence, the tool should NOT execute.
@@ -2983,7 +2983,7 @@ func TestYoloMode_OverridesForceAsk(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// YOLO overrides ForceAsk: the checker's ForceAsk verdict is bypassed
@@ -3032,7 +3032,7 @@ func TestSessionDenyOverridesYoloMode(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// With --yolo and Deny/ForceAsk precedence, the tool should NOT execute.
@@ -3386,7 +3386,7 @@ func TestProcessToolCalls_UsesPinnedAgent(t *testing.T) {
 	}}
 
 	events := make(chan Event, 32)
-	rt.processToolCalls(t.Context(), sess, calls, []tools.Tool{workerTool}, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, []tools.Tool{workerTool}, NewChannelSink(events))
 	close(events)
 
 	assert.True(t, executed, "worker_tool handler should have been called")
@@ -4482,7 +4482,7 @@ func TestPostToolHookReceivesToolResult(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 
 	require.NotNil(t, got)
 	assert.Equal(t, hooks.EventPostToolUse, got.HookEventName)
@@ -4536,7 +4536,7 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
+	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 
 	var started *HookStartedEvent
 	var finished *HookFinishedEvent

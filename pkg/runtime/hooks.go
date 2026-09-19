@@ -44,6 +44,7 @@ func (r *LocalRuntime) buildHooksExecutors() {
 		})
 		cfg = applyAutoInjectors(cfg, r.autoInjectors)
 		cfg = applyCacheDefault(cfg, a)
+		cfg = builtins.GuardPromptFiles(cfg)
 		if cfg == nil {
 			continue
 		}

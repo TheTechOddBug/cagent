@@ -41,23 +41,42 @@ func guardDecisionShape(raw string, in *Input) (*Output, error) {
 	if in == nil || !EventContract(in.HookEventName).CanBlock {
 		return nil, errors.New("guard_decision requires a blocking event")
 	}
-	var verdict struct {
-		Decision string  `json:"decision"`
-		Reason   *string `json:"reason"`
-	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&verdict); err != nil {
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
 		return nil, errors.New("invalid guard verdict")
 	}
-	if decoder.Decode(new(any)) != io.EOF || verdict.Reason == nil {
+	fields := make(map[string]string, 2)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, errors.New("invalid guard verdict")
+		}
+		key, ok := token.(string)
+		if !ok || (key != "decision" && key != "reason") {
+			return nil, errors.New("invalid guard verdict field")
+		}
+		if _, exists := fields[key]; exists {
+			return nil, errors.New("duplicate guard verdict field")
+		}
+		token, err = decoder.Token()
+		value, ok := token.(string)
+		if err != nil || !ok {
+			return nil, errors.New("invalid guard verdict value")
+		}
+		fields[key] = value
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
 		return nil, errors.New("invalid guard verdict")
 	}
-	switch verdict.Decision {
+	if decoder.Decode(new(any)) != io.EOF || len(fields) != 2 {
+		return nil, errors.New("invalid guard verdict")
+	}
+	switch fields["decision"] {
 	case "allow":
 		return &Output{Continue: new(true)}, nil
 	case "deny":
-		return &Output{Decision: DecisionBlockValue, Reason: *verdict.Reason}, nil
+		return &Output{Decision: DecisionBlockValue, Reason: fields["reason"]}, nil
 	default:
 		return nil, errors.New("guard verdict must be allow or deny")
 	}
