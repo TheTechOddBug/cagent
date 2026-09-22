@@ -491,41 +491,6 @@ func (a *Agent) CloseSession(ctx context.Context, params acp.CloseSessionRequest
 	return acp.CloseSessionResponse{}, lifecycle.err
 }
 
-// ListSessions implements [acp.Agent].
-func (a *Agent) ListSessions(ctx context.Context, _ acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
-	slog.DebugContext(ctx, "ACP ListSessions called")
-
-	ctx, op, err := a.beginOperation(ctx)
-	if err != nil {
-		return acp.ListSessionsResponse{}, err
-	}
-	defer a.finishOperation(op)
-	summaries, err := a.sessionStore.GetSessionSummaries(ctx)
-	if err != nil {
-		return acp.ListSessionsResponse{}, fmt.Errorf("failed to list sessions: %w", err)
-	}
-
-	sessions := make([]acp.SessionInfo, 0, len(summaries))
-	for _, s := range summaries {
-		cwd, additionalDirs := a.sessionListPaths(ctx, s.ID)
-		info := acp.SessionInfo{
-			SessionId:             acp.SessionId(s.ID),
-			Title:                 &s.Title,
-			Cwd:                   cwd,
-			AdditionalDirectories: additionalDirs,
-		}
-		if !s.CreatedAt.IsZero() {
-			// We don't track session updates yet, so report CreatedAt in
-			// the ACP UpdatedAt field as our best-effort timestamp.
-			createdAt := s.CreatedAt.UTC().Format(time.RFC3339)
-			info.UpdatedAt = &createdAt
-		}
-		sessions = append(sessions, info)
-	}
-
-	return acp.ListSessionsResponse{Sessions: sessions}, nil
-}
-
 // ResumeSession implements [acp.Agent].
 func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (_ acp.ResumeSessionResponse, retErr error) {
 	sid := string(params.SessionId)
@@ -1086,24 +1051,6 @@ func (a *Agent) resolveSessionPath(sessionID, userPath string) (string, error) {
 
 	workingDir, roots := acpSess.pathRoots(a.defaultWorkingDir())
 	return resolvePathInRoots(userPath, workingDir, roots)
-}
-
-func (a *Agent) sessionListPaths(ctx context.Context, sessionID string) (string, []string) {
-	a.mu.Lock()
-	acpSess := a.sessions[sessionID]
-	a.mu.Unlock()
-	if acpSess != nil {
-		cwd, additionalDirs := acpSess.workspaceSnapshot()
-		return cmp.Or(cwd, a.defaultWorkingDir()), additionalDirs
-	}
-
-	cwd := a.defaultWorkingDir()
-	if a.sessionStore != nil {
-		if sess, err := a.sessionStore.GetSession(ctx, sessionID); err == nil && sess.WorkingDir != "" {
-			cwd = sess.WorkingDir
-		}
-	}
-	return cwd, nil
 }
 
 func (a *Agent) defaultWorkingDir() string {
