@@ -372,7 +372,7 @@ func TestExecutePreToolUseWithEchoCommand(t *testing.T) {
 			{
 				Matcher: "*",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "echo 'test'", Timeout: 5},
+					{Type: HookTypeCommand, Command: "echo 'test'"},
 				},
 			},
 		},
@@ -398,7 +398,7 @@ func TestExecutePreToolUseBlockingExitCode(t *testing.T) {
 			{
 				Matcher: "*",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "exit 2", Timeout: 5},
+					{Type: HookTypeCommand, Command: "exit 2"},
 				},
 			},
 		},
@@ -425,7 +425,7 @@ func TestExecutePreToolUseNoMatchingHooks(t *testing.T) {
 			{
 				Matcher: "edit_file",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "exit 2", Timeout: 5},
+					{Type: HookTypeCommand, Command: "exit 2"},
 				},
 			},
 		},
@@ -452,7 +452,7 @@ func TestExecutePreToolUseWithJSONOutput(t *testing.T) {
 			{
 				Matcher: "*",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "echo '" + jsonOutput + "'", Timeout: 5},
+					{Type: HookTypeCommand, Command: "echo '" + jsonOutput + "'"},
 				},
 			},
 		},
@@ -479,7 +479,7 @@ func TestExecutePostToolUse(t *testing.T) {
 			{
 				Matcher: "shell",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "echo 'post-hook'", Timeout: 5},
+					{Type: HookTypeCommand, Command: "echo 'post-hook'"},
 				},
 			},
 		},
@@ -503,7 +503,7 @@ func TestExecuteSessionStart(t *testing.T) {
 
 	config := &Config{
 		SessionStart: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'session starting'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'session starting'"},
 		},
 	}
 
@@ -524,7 +524,7 @@ func TestExecuteSessionEnd(t *testing.T) {
 
 	config := &Config{
 		SessionEnd: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'session ending'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'session ending'"},
 		},
 	}
 
@@ -544,7 +544,7 @@ func TestExecuteOnUserInput(t *testing.T) {
 
 	config := &Config{
 		OnUserInput: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'user input needed'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'user input needed'"},
 		},
 	}
 
@@ -563,7 +563,7 @@ func TestExecuteStop(t *testing.T) {
 
 	config := &Config{
 		Stop: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'model stopped'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'model stopped'"},
 		},
 	}
 
@@ -598,7 +598,7 @@ func TestExecuteNotification(t *testing.T) {
 
 	config := &Config{
 		Notification: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'notification received'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'notification received'"},
 		},
 	}
 
@@ -617,22 +617,20 @@ func TestExecuteNotification(t *testing.T) {
 func TestExecuteNotificationReceivesLevel(t *testing.T) {
 	t.Parallel()
 
-	config := &Config{
-		Notification: []Hook{
-			{Type: HookTypeCommand, Command: "cat | jq -r '.notification_level'", Timeout: 5},
-		},
-	}
-
-	exec := NewExecutor(config, t.TempDir(), nil)
-	input := &Input{
-		SessionID:           "test-session",
-		NotificationLevel:   "warning",
-		NotificationMessage: "Watch out",
-	}
-
-	result, err := exec.Dispatch(t.Context(), EventNotification, input)
+	// Notification stdout is observational; inspect the process protocol directly.
+	factory, ok := NewRegistry().Lookup(HookTypeCommand)
+	require.True(t, ok)
+	handler, err := factory(HandlerEnv{WorkingDir: t.TempDir()}, Hook{Command: printStdinJSONFieldCmd("notification_level")})
 	require.NoError(t, err)
-	assert.True(t, result.Allowed)
+	input, err := (&Input{
+		HookEventName:     EventNotification,
+		NotificationLevel: "warning",
+	}).ToJSON()
+	require.NoError(t, err)
+	result, err := handler.Run(t.Context(), input)
+	require.NoError(t, err)
+	assert.Zero(t, result.ExitCode)
+	assert.Contains(t, result.Stdout, "warning")
 }
 
 func TestExecuteHooksWithContextCancellation(t *testing.T) {
@@ -678,7 +676,7 @@ func TestExecutePreToolUseFailsClosedOnNonzeroExit(t *testing.T) {
 			{
 				Matcher: "*",
 				Hooks: []Hook{
-					{Type: HookTypeCommand, Command: "exit 1", Timeout: 5},
+					{Type: HookTypeCommand, Command: "exit 1"},
 				},
 			},
 		},
@@ -723,7 +721,7 @@ func TestPlainStdoutBecomesAdditionalContext(t *testing.T) {
 	for _, ev := range contextEvents {
 		t.Run(string(ev), func(t *testing.T) {
 			t.Parallel()
-			cfg := configWithFlatHook(ev, Hook{Type: HookTypeCommand, Command: "echo plain-text-context", Timeout: 5})
+			cfg := configWithFlatHook(ev, Hook{Type: HookTypeCommand, Command: "echo plain-text-context"})
 			exec := NewExecutor(cfg, t.TempDir(), nil)
 			res, err := exec.Dispatch(t.Context(), ev, &Input{SessionID: "s", ToolName: "shell"})
 			require.NoError(t, err)
@@ -736,7 +734,7 @@ func TestPlainStdoutBecomesAdditionalContext(t *testing.T) {
 	for _, ev := range observationalEvents {
 		t.Run(string(ev), func(t *testing.T) {
 			t.Parallel()
-			cfg := configWithFlatHook(ev, Hook{Type: HookTypeCommand, Command: "echo would-be-dropped", Timeout: 5})
+			cfg := configWithFlatHook(ev, Hook{Type: HookTypeCommand, Command: "echo would-be-dropped"})
 			exec := NewExecutor(cfg, t.TempDir(), nil)
 			res, err := exec.Dispatch(t.Context(), ev, &Input{SessionID: "s", ToolName: "shell"})
 			require.NoError(t, err)
@@ -827,7 +825,7 @@ func TestExecuteBeforeCompactionAllowedByDefault(t *testing.T) {
 
 	config := &Config{
 		BeforeCompaction: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'about to compact'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'about to compact'"},
 		},
 	}
 
@@ -853,7 +851,7 @@ func TestExecuteBeforeCompactionBlocksWithExitCode2(t *testing.T) {
 
 	config := &Config{
 		BeforeCompaction: []Hook{
-			{Type: HookTypeCommand, Command: stderrExit2Cmd("no compaction please"), Timeout: 5},
+			{Type: HookTypeCommand, Command: stderrExit2Cmd("no compaction please")},
 		},
 	}
 
@@ -867,6 +865,8 @@ func TestExecuteBeforeCompactionBlocksWithExitCode2(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Allowed)
 	assert.Equal(t, 2, result.ExitCode)
+	assert.Contains(t, result.Stderr, "no compaction please")
+	assert.Equal(t, "no compaction please", result.Message)
 }
 
 // TestExecuteBeforeCompactionSurfacesSummary checks that a before_compaction
@@ -878,7 +878,7 @@ func TestExecuteBeforeCompactionSurfacesSummary(t *testing.T) {
 	jsonOutput := `{"hook_specific_output":{"hook_event_name":"before_compaction","summary":"hook-supplied summary"}}`
 	config := &Config{
 		BeforeCompaction: []Hook{
-			{Type: HookTypeCommand, Command: "echo '" + jsonOutput + "'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo '" + jsonOutput + "'"},
 		},
 	}
 
@@ -904,8 +904,8 @@ func TestExecuteBeforeCompactionFirstSummaryWins(t *testing.T) {
 	second := `{"hook_specific_output":{"hook_event_name":"before_compaction","summary":"second"}}`
 	config := &Config{
 		BeforeCompaction: []Hook{
-			{Type: HookTypeCommand, Command: "echo '" + first + "'", Timeout: 5},
-			{Type: HookTypeCommand, Command: "echo '" + second + "'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo '" + first + "'"},
+			{Type: HookTypeCommand, Command: "echo '" + second + "'"},
 		},
 	}
 
@@ -934,7 +934,7 @@ func TestExecuteAfterCompactionIsObservational(t *testing.T) {
 
 	config := &Config{
 		AfterCompaction: []Hook{
-			{Type: HookTypeCommand, Command: "echo 'compaction done'", Timeout: 5},
+			{Type: HookTypeCommand, Command: "echo 'compaction done'"},
 		},
 	}
 

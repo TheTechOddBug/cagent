@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
+	"github.com/docker/docker-agent/pkg/evaluator"
 	"github.com/docker/docker-agent/pkg/harness"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
@@ -783,6 +784,16 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		return nil, fmt.Errorf("register builtin hooks: %w", err)
 	}
 	registerModelHook(r.hooksRegistry, r.providerRegistry)
+	r.hooksRegistry.Register(hooks.HookTypeEvaluator, hooks.NewEvaluatorFactory(func(agentName, name string) (evaluator.Evaluator, bool) {
+		a, err := r.team.Agent(agentName)
+		if err != nil {
+			return nil, false
+		}
+		if a.HasEvaluatorScope() {
+			return a.Evaluator(name)
+		}
+		return r.team.Evaluator(name)
+	}))
 
 	// cache_response is registered here (not in pkg/hooks/builtins)
 	// because it needs to capture the runtime to resolve the agent

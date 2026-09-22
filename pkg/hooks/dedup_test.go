@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
 // Identical definitions collapse; different builtin arguments remain distinct.
@@ -52,19 +54,21 @@ func TestHookIdentityIncludesEveryField(t *testing.T) {
 		OnError: "warn", Model: "test/first", Prompt: "first", Schema: "first",
 	}
 	changes := map[string]func(*Hook){
-		"Name":         func(h *Hook) { h.Name = "other" },
-		"Type":         func(h *Hook) { h.Type = HookTypeCommand },
-		"Command":      func(h *Hook) { h.Command = "other" },
-		"Args":         func(h *Hook) { h.Args = []string{"other"} },
-		"Timeout":      func(h *Hook) { h.Timeout = 10 },
-		"Env":          func(h *Hook) { h.Env = map[string]string{"PROFILE": "other"} },
-		"WorkingDir":   func(h *Hook) { h.WorkingDir = "other" },
-		"OnError":      func(h *Hook) { h.OnError = "block" },
-		"Model":        func(h *Hook) { h.Model = "test/other" },
-		"Prompt":       func(h *Hook) { h.Prompt = "other" },
-		"SystemPrompt": func(h *Hook) { h.SystemPrompt = "other" },
-		"Schema":       func(h *Hook) { h.Schema = "other" },
-		"StrictOutput": func(h *Hook) { h.StrictOutput = true },
+		"Evaluator":       func(h *Hook) { h.Evaluator = "other" },
+		"EvaluatorPolicy": func(h *Hook) { h.EvaluatorPolicy = &latest.EvaluatorPolicy{Fallback: "ask"} },
+		"Name":            func(h *Hook) { h.Name = "other" },
+		"Type":            func(h *Hook) { h.Type = HookTypeCommand },
+		"Command":         func(h *Hook) { h.Command = "other" },
+		"Args":            func(h *Hook) { h.Args = []string{"other"} },
+		"Timeout":         func(h *Hook) { h.Timeout = 10 },
+		"Env":             func(h *Hook) { h.Env = map[string]string{"PROFILE": "other"} },
+		"WorkingDir":      func(h *Hook) { h.WorkingDir = "other" },
+		"OnError":         func(h *Hook) { h.OnError = "block" },
+		"Model":           func(h *Hook) { h.Model = "test/other" },
+		"Prompt":          func(h *Hook) { h.Prompt = "other" },
+		"SystemPrompt":    func(h *Hook) { h.SystemPrompt = "other" },
+		"Schema":          func(h *Hook) { h.Schema = "other" },
+		"StrictOutput":    func(h *Hook) { h.StrictOutput = true },
 	}
 	// Adding a config field must also extend identity and its coverage.
 	for field := range reflect.TypeFor[Hook]().Fields() {

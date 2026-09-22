@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/evaluator"
 	"github.com/docker/docker-agent/pkg/permissions"
 )
 
 type Team struct {
 	agents      []*agent.Agent
+	evaluators  map[string]evaluator.Evaluator
 	permissions *permissions.Checker
 	// runtimeSafety is the config-wide safety-mode default declared under
 	// runtime.safety, retained so session constructors can apply it when
@@ -195,4 +198,15 @@ func (t *Team) RuntimeSafety() latest.SafetyMode {
 // permissions) into the team's checker after construction.
 func (t *Team) SetPermissions(checker *permissions.Checker) {
 	t.permissions = checker
+}
+
+// WithEvaluators installs reusable, provider-backed assessments for this team.
+func WithEvaluators(evaluators map[string]evaluator.Evaluator) Opt {
+	return func(t *Team) { t.evaluators = maps.Clone(evaluators) }
+}
+
+// Evaluator returns the named assessment shared by the team's agents.
+func (t *Team) Evaluator(name string) (evaluator.Evaluator, bool) {
+	e, ok := t.evaluators[name]
+	return e, ok
 }

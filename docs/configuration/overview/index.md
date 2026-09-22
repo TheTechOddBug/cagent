@@ -84,6 +84,10 @@ toolsets:
     type: filesystem
 ```
 
+Reusable [evaluators](../evaluators/index.md) can also be defined at the top level.
+They return typed assessments through providers such as TypeSafe Jev, independently
+of chat models and tool-approval policies.
+
 ## Minimal Config
 
 The simplest possible configuration — a single agent with an inline model:

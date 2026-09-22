@@ -38,6 +38,11 @@ func gatherMissingEnvVars(ctx context.Context, cfg *latest.Config, modelsGateway
 		modelEnv[e] = true
 	}
 
+	// Evaluators dial their own providers, never the models gateway.
+	for _, name := range GatherEnvVarsForEvaluators(cfg) {
+		requiredEnv[name] = true
+	}
+
 	// Tools
 	names, err := GatherEnvVarsForTools(ctx, cfg)
 	if err != nil {
@@ -333,4 +338,29 @@ func GatherEnvVarsForTools(ctx context.Context, cfg *latest.Config) ([]string, e
 
 func sortedKeys(requiredEnv map[string]bool) []string {
 	return slices.Sorted(maps.Keys(requiredEnv))
+}
+
+// GatherEnvVarsForEvaluators returns credentials needed by referenced evaluator hooks.
+func GatherEnvVarsForEvaluators(cfg *latest.Config) []string {
+	required := map[string]bool{}
+	for _, a := range cfg.Agents {
+		for _, matchers := range a.Hooks.Events() {
+			for _, matcher := range matchers {
+				for _, hook := range matcher.Hooks {
+					if hook.Type != "evaluator" {
+						continue
+					}
+					def, ok := cfg.Evaluators[hook.Evaluator]
+					if !ok {
+						continue
+					}
+					resolved, err := def.Resolve(cfg.Providers)
+					if err == nil {
+						required[resolved.TokenKey] = true
+					}
+				}
+			}
+		}
+	}
+	return sortedKeys(required)
 }

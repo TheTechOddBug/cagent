@@ -34,4 +34,6 @@ const (
 	// hook's native [Output] shape. It is registered by the runtime
 	// because it depends on the runtime's model provider stack.
 	HookTypeModel HookType = "model"
+	// HookTypeEvaluator applies a policy to a typed tool-guard assessment.
+	HookTypeEvaluator HookType = "evaluator"
 )

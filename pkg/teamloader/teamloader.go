@@ -22,6 +22,8 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/evaluator"
+	evaluatorprovider "github.com/docker/docker-agent/pkg/evaluator/provider"
 	"github.com/docker/docker-agent/pkg/gateway"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
@@ -291,6 +293,15 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	// `docker agent setup` resolve in every run, including inline
 	// `--model myprovider/mymodel` overrides. Agent-file definitions win.
 	config.MergeGlobalProviders(cfg, runConfig.Providers)
+	config.MergeAgentHooks(cfg, config.MergeHooks(runConfig.GlobalHooks, runConfig.CLIHooks()))
+	if err := cfg.ValidateEvaluators(); err != nil {
+		return nil, err
+	}
+	for _, a := range cfg.Agents {
+		if err := a.Hooks.Validate(); err != nil {
+			return nil, fmt.Errorf("agents.%s: %w", a.Name, err)
+		}
+	}
 
 	// Resolve model aliases (e.g., "claude-sonnet-4-5" -> "claude-sonnet-4-5-20250929")
 	// This ensures the API uses the pinned model version. The original name is preserved
@@ -369,6 +380,19 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		}
 	}
 
+	evaluators := make(map[string]evaluator.Evaluator, len(cfg.Evaluators))
+	for name, def := range cfg.Evaluators {
+		resolved, err := def.Resolve(cfg.Providers)
+		if err != nil {
+			return nil, fmt.Errorf("evaluator %q: %w", name, err)
+		}
+		client, err := evaluatorprovider.New(ctx, resolved, env)
+		if err != nil {
+			return nil, fmt.Errorf("evaluator %q: %w", name, err)
+		}
+		evaluators[name] = client
+	}
+
 	// Make model definitions available to toolset creators (e.g., RAG reranking)
 	runConfig.Models = cfg.Models
 	runConfig.Providers = cfg.Providers
@@ -384,9 +408,6 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	agentsByName := make(map[string]*agent.Agent)
 
 	expander := loadOpts.newExpander(env)
-
-	globalHooks := runConfig.GlobalHooks
-	cliHooks := runConfig.CLIHooks()
 
 	for _, agentConfig := range cfg.Agents {
 		// Merge CLI prompt files with agent config prompt files, deduplicating
@@ -422,7 +443,8 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			agent.WithNumHistoryItems(agentConfig.NumHistoryItems),
 			agent.WithSessionCompaction(agentConfig.SessionCompactionEnabled()),
 			agent.WithCommands(expander.ExpandCommands(ctx, agentConfig.Commands)),
-			agent.WithHooks(config.MergeHooks(config.MergeHooks(agentConfig.Hooks, globalHooks), cliHooks)),
+			agent.WithHooks(agentConfig.Hooks),
+			agent.WithEvaluators(evaluators),
 			agent.WithStructuredOutput(agentConfig.StructuredOutput),
 		}
 
@@ -622,6 +644,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	return &LoadResult{
 		Team: team.New(
 			team.WithAgents(agents...),
+			team.WithEvaluators(evaluators),
 			team.WithPermissions(permChecker),
 			team.WithAgentConfigs(agentConfigs),
 			team.WithRuntimeSafety(runtimeSafety),

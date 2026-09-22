@@ -108,3 +108,10 @@ func (runConfig *RuntimeConfig) CLIHooks() *latest.HooksConfig {
 		runConfig.HookStop,
 	)
 }
+
+// MergeAgentHooks appends inherited hooks to each agent before validation and preflight.
+func MergeAgentHooks(cfg *latest.Config, inherited *latest.HooksConfig) {
+	for i := range cfg.Agents {
+		cfg.Agents[i].Hooks = MergeHooks(cfg.Agents[i].Hooks, inherited)
+	}
+}

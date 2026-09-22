@@ -104,12 +104,14 @@ type doctorFlags struct {
 
 	// Test seams: sourcesForTests replaces the env-file + default secret-source
 	// chain, dmrLister replaces dmr.ListModels, loadUserConfig replaces
-	// userconfig.Load, and claudeProbe replaces the Claude Code CLI probe, so
+	// userconfig.Load, loadHookDropIns replaces hook drop-in discovery, and
+	// claudeProbe replaces the Claude Code CLI probe, so
 	// tests never exec `docker model`, `claude`, or credential helpers, and
 	// never read the developer's real configuration.
 	sourcesForTests []environment.Source
 	dmrLister       config.DMRModelLister
 	loadUserConfig  userConfigLoader
+	loadHookDropIns func() *latest.HooksConfig
 	claudeProbe     func(ctx context.Context) codingharness.ClaudeCLIStatus
 }
 
@@ -157,6 +159,9 @@ Exits with a non-zero status when an issue would prevent an agent from running.`
 	if loadUserConfig == nil {
 		loadUserConfig = userconfig.Load
 		flags.loadUserConfig = loadUserConfig
+	}
+	if flags.loadHookDropIns == nil {
+		flags.loadHookDropIns = config.LoadHookDropIns
 	}
 	addGatewayFlags(cmd, &flags.runConfig, loadUserConfig)
 
@@ -217,7 +222,8 @@ func (f *doctorFlags) buildReport(ctx context.Context, agentRef string) (*doctor
 	report := &doctorReport{ModelsGateway: f.runConfig.ModelsGateway}
 
 	report.UserConfig = doctorUserConfigStatus{Path: userconfig.Path(), Status: userConfigStatusOK}
-	if _, err := f.loadUserConfig(); err != nil {
+	userCfg, userErr := f.loadUserConfig()
+	if err := userErr; err != nil {
 		report.UserConfig.Status = userConfigStatusInvalid
 		report.UserConfig.Error = err.Error()
 		report.Issues = append(report.Issues, fmt.Sprintf(
@@ -264,6 +270,23 @@ func (f *doctorFlags) buildReport(ctx context.Context, agentRef string) (*doctor
 		}
 		if agentCfg, err = config.Load(ctx, agentSource); err != nil {
 			return nil, err
+		}
+	}
+	if agentCfg != nil {
+		if userErr == nil && userCfg != nil {
+			config.MergeGlobalProviders(agentCfg, userCfg.GetProviders())
+			config.MergeAgentHooks(agentCfg, userCfg.Settings.GlobalHooks())
+		}
+		config.MergeGlobalProviders(agentCfg, f.runConfig.Providers)
+		config.MergeAgentHooks(agentCfg, f.loadHookDropIns())
+		if err := agentCfg.ValidateEvaluators(); err != nil {
+			return nil, err
+		}
+		for _, name := range slices.Sorted(maps.Keys(agentCfg.Evaluators)) {
+			def := agentCfg.Evaluators[name]
+			if _, err := def.Resolve(agentCfg.Providers); err != nil {
+				report.Issues = append(report.Issues, fmt.Sprintf("evaluators.%s: %v", name, err))
+			}
 		}
 	}
 	harnessOnly := agentCfg != nil && allAgentsHarnessBacked(agentCfg)
@@ -364,6 +387,9 @@ func (f *doctorFlags) checkAgentFile(ctx context.Context, ref string, cfg *lates
 	requiredBy := map[string][]string{}
 	for _, name := range config.RequiredModelEnvVars(ctx, cfg, f.runConfig.ModelsGateway, env) {
 		requiredBy[name] = append(requiredBy[name], "models")
+	}
+	for _, name := range config.GatherEnvVarsForEvaluators(cfg) {
+		requiredBy[name] = append(requiredBy[name], "evaluators")
 	}
 	toolVars, toolErr := config.GatherEnvVarsForTools(ctx, cfg)
 	if toolErr != nil {

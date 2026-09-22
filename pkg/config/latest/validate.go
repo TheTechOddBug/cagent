@@ -19,6 +19,9 @@ func (t *Config) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func (t *Config) Validate() error {
+	if err := t.ValidateEvaluators(); err != nil {
+		return err
+	}
 	if err := t.Budget.validate(); err != nil {
 		return fmt.Errorf("budget: %w", err)
 	}

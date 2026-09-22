@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"maps"
 	"sync"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/cache"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/evaluator"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/structuredoutput"
@@ -267,6 +269,15 @@ func WithLoadTimeWarnings(warnings []string) Opt {
 func WithHooks(hooks *latest.HooksConfig) Opt {
 	return func(a *Agent) {
 		a.hooks = hooks
+	}
+}
+
+// WithEvaluators snapshots the agent's source-scoped evaluator bindings.
+// A nil or empty map binds an empty scope, disabling team-level fallback.
+func WithEvaluators(evaluators map[string]evaluator.Evaluator) Opt {
+	return func(a *Agent) {
+		a.evaluators = make(map[string]evaluator.Evaluator, len(evaluators))
+		maps.Copy(a.evaluators, evaluators)
 	}
 }
 
