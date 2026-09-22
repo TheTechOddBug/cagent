@@ -277,9 +277,9 @@ func TestResumeSessionCleansUpLosingTeam(t *testing.T) {
 	require.NoError(t, store.AddSession(t.Context(), sess))
 	a := NewAgent(nil, &config.RuntimeConfig{}, store)
 	a.team = team.New()
-	existing := &Session{id: sess.ID, sess: sess, rt: &fakeRuntime{}}
+	existing := &Session{id: sess.ID, sess: sess, rt: &fakeRuntime{}, additionalDirs: []string{t.TempDir()}}
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
-		stored, err := a.registerSessionIfAbsent(existing)
+		_, stored, err := a.registerSessionIfAbsent(existing)
 		require.NoError(t, err)
 		require.True(t, stored)
 		return loaded, nil
@@ -289,6 +289,8 @@ func TestResumeSessionCleansUpLosingTeam(t *testing.T) {
 	_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(sess.ID)})
 	require.NoError(t, err)
 	assert.Same(t, existing, a.sessions[sess.ID])
+	_, roots := existing.workspaceSnapshot()
+	assert.Empty(t, roots, "the losing resume must still apply its root revocation")
 	assert.Equal(t, int32(1), ts.stops.Load())
 }
 
