@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -178,15 +179,12 @@ func TestACPSessionPersistence(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	// Create the ACP agent with the session store
-	// Note: we set team directly to avoid Initialize requiring full config loading
-	acpAgent := &Agent{
-		agentSource:  nil, // Not needed since team is pre-set
-		runConfig:    &config.RuntimeConfig{},
-		sessionStore: sessStore,
-		sessions:     make(map[string]*Session),
-		team:         tm,
+	acpAgent := NewAgent(nil, &config.RuntimeConfig{}, sessStore)
+	acpAgent.team = team.New()
+	acpAgent.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
+		return &teamloader.LoadResult{Team: tm}, nil
 	}
+	defer acpAgent.Stop(ctx)
 
 	// Create a new session via ACP with a real temp directory
 	workingDir := t.TempDir()
