@@ -91,7 +91,7 @@ func TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveCon
 
 	done := make(chan struct{})
 	go func() {
-		rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, parent, events)
+		rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
 		close(done)
 	}()
 

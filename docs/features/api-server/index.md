@@ -150,6 +150,8 @@ data: {"type":"agent_choice","content":" you today?","agent":"root"}
 data: {"type":"stream_stopped","session_id":"...","agent":"root"}
 ```
 
+The `stream_stopped` event may include `finish_reason` with the terminal model result (such as `stop`, `length`, or `refusal`), even when that response has no content or usage. Its stream-level `reason` is `max_iterations` when execution stops at the iteration cap. These describe the root or sub-session identified by `session_id`; consumers should not combine child outcomes with the root result. Stream-stop delivery precedes session-end hooks, so draining the stream to closure remains the completion barrier.
+
 Event types include:
 
 - `stream_started` / `stream_stopped` — Agent execution lifecycle
