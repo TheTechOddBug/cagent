@@ -354,7 +354,10 @@ func (m *model) handleSlash(ctx context.Context, text string, mode busySubmitMod
 		return true
 	}
 
-	if resolved, err := m.app.ResolveSkillCommand(ctx, text); err == nil && resolved != "" {
+	if resolved, err := m.app.ResolveSkillCommand(ctx, text); err != nil {
+		m.addNotice("", err.Error(), ui.StMuted())
+		return true
+	} else if resolved != "" {
 		m.dispatchUserMessage(ctx, text, resolved, mode)
 		return true
 	}

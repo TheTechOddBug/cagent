@@ -62,6 +62,7 @@ func TestHookIdentityIncludesEveryField(t *testing.T) {
 		"OnError":      func(h *Hook) { h.OnError = "block" },
 		"Model":        func(h *Hook) { h.Model = "test/other" },
 		"Prompt":       func(h *Hook) { h.Prompt = "other" },
+		"SystemPrompt": func(h *Hook) { h.SystemPrompt = "other" },
 		"Schema":       func(h *Hook) { h.Schema = "other" },
 		"StrictOutput": func(h *Hook) { h.StrictOutput = true },
 	}

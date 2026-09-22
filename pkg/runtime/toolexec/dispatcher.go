@@ -1057,6 +1057,10 @@ func (r callRuntime) ConfirmAndRun(ctx context.Context, run tools.ConfirmedRun, 
 	return r.gate().ConfirmAndRun(ctx, run, exec)
 }
 
+func (r callRuntime) CheckSkillContent(ctx context.Context, content tools.SkillContent) error {
+	return CheckSkillContent(ctx, r.c.d.Hooks, r.c.a, r.c.sess.ID, content)
+}
+
 func (r callRuntime) gate() *Gate {
 	return &Gate{
 		Sess:        r.c.sess,

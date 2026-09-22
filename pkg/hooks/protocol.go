@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/hooks/events"
@@ -81,4 +82,49 @@ func validateOutput(event EventType, out *Output, strict bool) error {
 		}
 	}
 	return nil
+}
+
+// parseContentGuardOutput rejects ambiguous JSON before ordinary protocol decoding.
+func parseContentGuardOutput(stdout string) (*Output, error) {
+	fields, err := contentGuardFields(stdout, "continue", "stop_reason", "decision", "reason", "system_message", "suppress_output", "hook_specific_output")
+	if err != nil {
+		return nil, err
+	}
+	if nested, ok := fields["hook_specific_output"]; ok && string(nested) != "null" {
+		if _, err := contentGuardFields(string(nested), "hook_event_name"); err != nil {
+			return nil, err
+		}
+	}
+	return parseStdoutJSON(stdout, true)
+}
+
+func contentGuardFields(raw string, allowed ...string) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, errors.New("content guard requires a JSON object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || !slices.Contains(allowed, key) {
+			return nil, errors.New("unknown content guard field")
+		}
+		if _, exists := fields[key]; exists {
+			return nil, errors.New("duplicate content guard field")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, errors.New("invalid content guard field")
+		}
+		fields[key] = value
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, errors.New("invalid content guard output")
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, errors.New("content guard requires a single JSON object")
+	}
+	return fields, nil
 }

@@ -14,7 +14,10 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/handoff"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
+	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 )
 
 func TestRunSkillFork_SkipsEmbeddedCommandsWithoutParentToolCall(t *testing.T) {
@@ -150,4 +153,104 @@ func TestRunSkillFork_PinnedSessionRunsAsPinnedAgent(t *testing.T) {
 	require.NotNil(t, completed)
 	assert.Equal(t, "worker", completed.GetAgentName(),
 		"SubSessionCompleted must be attributed to the pinned caller")
+}
+
+func TestSkillForkHandoffsStaySessionLocal(t *testing.T) {
+	t.Parallel()
+	for _, forced := range []bool{false, true} {
+		name := "explicit"
+		if forced {
+			name = "forced"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := skillstool.New([]skills.Skill{{Name: "test", Context: "fork", InlineContent: "Complete the workflow."}}, "")
+			targetModel := &handoffRecordingProvider{mockProvider: mockProvider{id: "test/target", stream: newStreamBuilder().AddContent("target finished").AddStopWithUsage(1, 1).Build()}}
+			target := agent.New("target", "", agent.WithModel(targetModel))
+			rootStream := newStreamBuilder().AddToolCallWithStop("handoff", "handoff", `{"agent":"target"}`).Build()
+			if forced {
+				rootStream = newStreamBuilder().AddContent("root finished").AddStopWithUsage(1, 1).Build()
+			}
+			rootModel := &queueProvider{id: "test/root", streams: []chat.MessageStream{rootStream}}
+			opts := []agent.Opt{agent.WithModel(rootModel), agent.WithToolSets(st, handoff.New()), agent.WithHandoffs(target)}
+			if forced {
+				opts = append(opts, agent.WithForceHandoff(target))
+			}
+			root := agent.New("root", "", opts...)
+			rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, target)), WithModelStore(mockModelStore{}), WithSessionCompaction(false))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rt.Close()) })
+			parent := session.New(session.WithUserMessage("run workflow"), session.WithToolsApproved(true))
+			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 256)))
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.False(t, result.IsError)
+			assert.Equal(t, "target finished", result.Output)
+			assert.Equal(t, 1, targetModel.handoffCallCount())
+			assert.Equal(t, "root", rt.CurrentAgent().Name())
+			child := firstSubSession(parent)
+			require.NotNil(t, child)
+			assert.Equal(t, "root", child.AgentName)
+			assert.Equal(t, "target", child.HandoffAgent())
+		})
+	}
+}
+
+func TestHandoffPinnedBackgroundDoesNotSwitchGlobalAgent(t *testing.T) {
+	t.Parallel()
+	target := agent.New("target", "", agent.WithModel(&mockProvider{id: "test/target"}))
+	root := agent.New("root", "", agent.WithModel(&mockProvider{id: "test/root"}), agent.WithHandoffs(target))
+	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, target)), WithModelStore(mockModelStore{}))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rt.Close()) })
+	sess := session.New(session.WithAgentName("root"))
+	result, err := rt.handleHandoff(t.Context(), sess, tools.ToolCall{Function: tools.FunctionCall{Arguments: `{"agent":"target"}`}}, root)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Equal(t, "root", rt.CurrentAgent().Name())
+	assert.Empty(t, sess.HandoffAgent())
+}
+
+func TestSkillDelegatesKeepLocalHandoffs(t *testing.T) {
+	t.Parallel()
+	for _, forced := range []bool{false, true} {
+		name := "explicit"
+		if forced {
+			name = "forced"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			targetModel := &handoffRecordingProvider{mockProvider: mockProvider{id: "test/target", stream: newStreamBuilder().AddContent("target finished").AddStopWithUsage(1, 1).Build()}}
+			target := agent.New("target", "", agent.WithModel(targetModel))
+			delegateStream := newStreamBuilder().AddToolCallWithStop("handoff", "handoff", `{"agent":"target"}`).Build()
+			if forced {
+				delegateStream = newStreamBuilder().AddContent("delegate done").AddStopWithUsage(1, 1).Build()
+			}
+			opts := []agent.Opt{agent.WithModel(&queueProvider{id: "test/delegate", streams: []chat.MessageStream{delegateStream}}), agent.WithHandoffs(target), agent.WithToolSets(handoff.New())}
+			if forced {
+				opts = append(opts, agent.WithForceHandoff(target))
+			}
+			delegate := agent.New("delegate", "", opts...)
+			st := skillstool.New([]skills.Skill{{Name: "test", Context: "fork", InlineContent: "Delegate the task."}}, "")
+			root := agent.New("root", "", agent.WithModel(&queueProvider{id: "test/root", streams: []chat.MessageStream{
+				newStreamBuilder().AddToolCallWithStop("transfer", "transfer_task", `{"agent":"delegate","task":"help"}`).Build(),
+				newStreamBuilder().AddContent("root finished").AddStopWithUsage(1, 1).Build(),
+			}}), agent.WithSubAgents(delegate), agent.WithToolSets(st, transfertask.New()))
+			rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, delegate, target)), WithModelStore(mockModelStore{}), WithSessionCompaction(false))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rt.Close()) })
+			parent := session.New(session.WithUserMessage("run"), session.WithToolsApproved(true))
+			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 512)))
+			require.NoError(t, err)
+			assert.Equal(t, "root finished", result.Output)
+			assert.Equal(t, 1, targetModel.handoffCallCount())
+			assert.Equal(t, "root", rt.CurrentAgent().Name())
+			child := firstSubSession(parent)
+			require.NotNil(t, child)
+			nested := firstSubSession(child)
+			require.NotNil(t, nested)
+			assert.True(t, nested.AllowsAgentHandoffs())
+			assert.Equal(t, "target", nested.HandoffAgent())
+		})
+	}
 }

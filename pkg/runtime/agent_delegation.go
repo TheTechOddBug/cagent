@@ -143,6 +143,8 @@ type SubSessionConfig struct {
 	// session.WithAgentName. This is required for concurrent background
 	// tasks that must not share the runtime's mutable currentAgent field.
 	PinAgent bool
+	// AllowHandoffs permits intentional routing inside a pinned skill fork.
+	AllowHandoffs bool
 	// ImplicitUserMessage, when non-empty, overrides the default "Please proceed."
 	// user message sent to the child session. This allows callers like skill
 	// sub-agents to pass the task description as the user message.
@@ -257,6 +259,9 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		session.WithAttachedFiles(attachedFiles),
 		session.WithAttributes(parent.AttributesSnapshot()),
 	}
+	if cfg.AllowHandoffs {
+		opts = append(opts, session.WithAgentHandoffs())
+	}
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
 	}
@@ -343,14 +348,10 @@ func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, f
 // (if requested; downgraded to pinning the child when the parent session is
 // itself pinned), resolving the child agent, building the sub-session,
 // driving RunStream, and recording the sub-session on the parent.
-func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts EventSink, req delegationRequest) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, callerAgent *agent.Agent, evts EventSink, req delegationRequest) (*tools.ToolCallResult, error) {
 	span := trace.SpanFromContext(ctx)
 
-	// The caller resolves from the parent session, not the shared current
-	// agent: a nested transfer from a pinned background session must
-	// attribute events, hooks, and completion to the pinned agent, no
-	// matter where the concurrent foreground loop points (#3886).
-	callerAgent := r.resolveSessionAgent(parent)
+	// Retain the requesting agent for completion hooks, even if routing changed during preparation.
 	if callerAgent == nil {
 		return nil, errors.New("no agent resolved for the parent session")
 	}
@@ -369,6 +370,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 			// resolves pinned sessions directly, so the child still
 			// executes as the target agent, without switch events/hooks.
 			req.PinAgent = true
+			req.AllowHandoffs = parent.AllowsAgentHandoffs()
 		}
 	}
 
@@ -680,7 +682,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 	}, params.OnContent)
 }
 
-func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, a *agent.Agent) (*tools.ToolCallResult, error) {
 	var params struct {
 		Agent          string `json:"agent"`
 		Task           string `json:"task"`
@@ -690,10 +692,6 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Resolve the caller session-aware: nested transfer_task from a pinned
-	// background session must attribute the call to the pinned agent, not
-	// the shared current agent (#3886).
-	a := r.resolveSessionAgent(sess)
 	if a == nil {
 		return nil, errors.New("no agent resolved for the calling session")
 	}
@@ -738,7 +736,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	ctx, span := r.startSpan(ctx, "runtime.task_transfer", trace.WithAttributes(delegationAttrs...))
 	defer span.End()
 
-	return r.runForwarding(ctx, sess, evts, delegationRequest{
+	return r.runForwarding(ctx, sess, a, evts, delegationRequest{
 		Task:                 params.Task,
 		ExpectedOutput:       params.ExpectedOutput,
 		AgentName:            params.Agent,
@@ -753,16 +751,15 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	})
 }
 
-func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, currentAgent *agent.Agent) (*tools.ToolCallResult, error) {
 	var params handoff.Args
 	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	ca := r.currentAgentName()
-	currentAgent, err := r.team.Agent(ca)
-	if err != nil {
-		return nil, fmt.Errorf("current agent not found: %w", err)
+	ca := currentAgent.Name()
+	if sess.AgentName != "" && !sess.AllowsAgentHandoffs() {
+		return tools.ResultError("handoffs are disabled for this pinned session"), nil
 	}
 
 	if errResult := validateAgentInList(ca, params.Agent, "hand off to", "handoffs list", currentAgent.Handoffs()); errResult != nil {
@@ -795,7 +792,9 @@ func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session,
 	defer span.End()
 
 	r.executeOnAgentSwitchHooks(ctx, currentAgent, sess.ID, ca, next.Name(), agentSwitchKindHandoff)
-	r.setCurrentAgent(next.Name())
+	if !sess.TryAgentHandoff(next.Name()) && sess.AgentName == "" {
+		r.setCurrentAgent(next.Name())
+	}
 	handoffMessage := "The agent " + ca + " handed off the conversation to you. " +
 		"Your available handoff agents and tools are specified in the system messages that follow. " +
 		"Only use those capabilities - do not attempt to use tools or hand off to agents that you see " +
@@ -819,7 +818,9 @@ func (r *LocalRuntime) applyForceHandoff(ctx context.Context, sess *session.Sess
 	slog.InfoContext(ctx, "Forced handoff", "from_agent", from.Name(), "to_agent", to.Name(), "session_id", sess.ID)
 
 	r.executeOnAgentSwitchHooks(ctx, from, sess.ID, from.Name(), to.Name(), agentSwitchKindForceHandoff)
-	r.setCurrentAgent(to.Name())
+	if !sess.TryAgentHandoff(to.Name()) && sess.AgentName == "" {
+		r.setCurrentAgent(to.Name())
+	}
 
 	sess.AddMessage(session.ImplicitUserMessage(
 		"The agent " + from.Name() + " finished its response and the conversation was automatically " +

@@ -425,6 +425,10 @@ type Session struct {
 	// concurrently on different agents.
 	AgentName string `json:"-"`
 
+	// Skill forks route handoffs locally without changing their immutable initial pin.
+	allowAgentHandoffs bool
+	handoffAgent       string
+
 	// ParentID indicates this is a sub-session created by task transfer.
 	// Sub-sessions are not persisted as standalone entries; they are embedded
 	// within the parent session's Messages array.
@@ -450,6 +454,7 @@ type Session struct {
 
 // InstructionSource is one independently changing piece of trusted context.
 type InstructionSource struct {
+	Path           string
 	Key            string
 	Group          string
 	Label          string
@@ -464,6 +469,7 @@ type InstructionSource struct {
 
 // InstructionValue is a content-addressed instruction value.
 type InstructionValue struct {
+	Path           string `json:"path,omitempty"`
 	Hash           string `json:"hash"`
 	Group          string `json:"group,omitempty"`
 	Label          string `json:"label,omitempty"`
@@ -1098,6 +1104,7 @@ func instructionValue(source InstructionSource) InstructionValue {
 	sum := sha256.Sum256(encoded)
 	return InstructionValue{
 		Hash:           hex.EncodeToString(sum[:]),
+		Path:           source.Path,
 		Group:          source.Group,
 		Label:          sourceLabel(source),
 		Content:        source.Content,
@@ -1606,6 +1613,36 @@ func WithPermissions(perms *PermissionsConfig) Opt {
 	return func(s *Session) {
 		s.Permissions = perms.Clone()
 	}
+}
+
+// WithAgentHandoffs permits in-session routing for an otherwise pinned skill fork.
+func WithAgentHandoffs() Opt {
+	return func(s *Session) { s.allowAgentHandoffs = true }
+}
+
+// AllowsAgentHandoffs distinguishes routing-enabled forks from hard-pinned background tasks.
+func (s *Session) AllowsAgentHandoffs() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.allowAgentHandoffs
+}
+
+// HandoffAgent returns the session-local agent selected by an intentional handoff.
+func (s *Session) HandoffAgent() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.handoffAgent
+}
+
+// TryAgentHandoff changes only opted-in session routing, never the initial pin.
+func (s *Session) TryAgentHandoff(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.allowAgentHandoffs || name == "" {
+		return false
+	}
+	s.handoffAgent = name
+	return true
 }
 
 // WithAgentName pins this session to a specific agent. When set, RunStream
@@ -2299,33 +2336,38 @@ func (s *Session) ClearInstructionContext() bool {
 	return true
 }
 
-func (s *Session) instructionMessages() ([]chat.Message, []InstructionUpdate) {
+// InstructionContextSnapshot copies retained instructions without holding a lock during checks.
+func (s *Session) InstructionContextSnapshot() *InstructionContextState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.InstructionContext == nil {
+	return cloneInstructionContext(s.InstructionContext)
+}
+
+func instructionMessages(state *InstructionContextState) ([]chat.Message, []InstructionUpdate) {
+	if state == nil {
 		return nil, nil
 	}
 
-	initial := make([]chat.Message, 0, len(s.InstructionContext.Initial))
-	for _, key := range s.InstructionContext.Order {
-		value, ok := s.InstructionContext.Initial[key]
+	initial := make([]chat.Message, 0, len(state.Initial))
+	for _, key := range state.Order {
+		value, ok := state.Initial[key]
 		if !ok || strings.TrimSpace(value.Content) == "" {
 			continue
 		}
 		initial = append(initial, chat.Message{Role: chat.MessageRoleSystem, Content: value.Content})
 	}
-	return initial, slices.Clone(s.InstructionContext.Updates)
+	return initial, slices.Clone(state.Updates)
 }
 
 func (s *Session) GetMessages(a *agent.Agent, extraSystemMessages ...chat.Message) []chat.Message {
-	messages, _, _ := s.getMessages(a, true, extraSystemMessages...)
+	messages, _, _ := s.getMessages(a, s.InstructionContextSnapshot(), extraSystemMessages...)
 	return messages
 }
 
 // GetMessagesWithoutInstructionContext assembles the legacy prompt where
 // dynamic context is supplied directly as extra system messages.
 func (s *Session) GetMessagesWithoutInstructionContext(a *agent.Agent, extraSystemMessages ...chat.Message) []chat.Message {
-	messages, _, _ := s.getMessages(a, false, extraSystemMessages...)
+	messages, _, _ := s.getMessages(a, nil, extraSystemMessages...)
 	return messages
 }
 
@@ -2338,7 +2380,7 @@ func (s *Session) GetMessagesWithoutInstructionContext(a *agent.Agent, extraSyst
 // guarantee covers only the session-history snapshot, not the other state
 // read during assembly (instruction context, agent configuration).
 func (s *Session) GetMessagesAndLastSummary(a *agent.Agent, extraSystemMessages ...chat.Message) ([]chat.Message, string) {
-	messages, summary, _ := s.getMessages(a, true, extraSystemMessages...)
+	messages, summary, _ := s.getMessages(a, s.InstructionContextSnapshot(), extraSystemMessages...)
 	return messages, summary
 }
 
@@ -2348,11 +2390,16 @@ func (s *Session) GetMessagesAndLastSummary(a *agent.Agent, extraSystemMessages 
 // ItemCount(): the live count can already include an append that landed
 // after the snapshot, which the summary does not cover.
 func (s *Session) GetMessagesAndItemCount(a *agent.Agent) ([]chat.Message, int) {
-	messages, _, itemCount := s.getMessages(a, true)
+	return s.GetMessagesWithInstructionContext(a, s.InstructionContextSnapshot())
+}
+
+// GetMessagesWithInstructionContext assembles from an explicitly checked instruction snapshot.
+func (s *Session) GetMessagesWithInstructionContext(a *agent.Agent, state *InstructionContextState) ([]chat.Message, int) {
+	messages, _, itemCount := s.getMessages(a, state)
 	return messages, itemCount
 }
 
-func (s *Session) getMessages(a *agent.Agent, includeInstructionContext bool, extraSystemMessages ...chat.Message) ([]chat.Message, string, int) {
+func (s *Session) getMessages(a *agent.Agent, state *InstructionContextState, extraSystemMessages ...chat.Message) ([]chat.Message, string, int) {
 	slog.Debug("Getting messages for agent", "agent", a.Name(), "session_id", s.ID)
 
 	// Build invariant system messages (cacheable across sessions/users/projects)
@@ -2364,8 +2411,8 @@ func (s *Session) getMessages(a *agent.Agent, includeInstructionContext bool, ex
 	items := s.snapshotItems()
 	var instructionInitial []chat.Message
 	var instructionUpdates []InstructionUpdate
-	if includeInstructionContext {
-		instructionInitial, instructionUpdates = s.instructionMessages()
+	if state != nil {
+		instructionInitial, instructionUpdates = instructionMessages(state)
 	}
 
 	// Build session summary messages (vary per session)

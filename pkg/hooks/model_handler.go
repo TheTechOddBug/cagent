@@ -138,7 +138,12 @@ func NewModelFactory(client ModelClient) HandlerFactory {
 		if err != nil {
 			return nil, fmt.Errorf("model hook: parse prompt template: %w", err)
 		}
+		system := hook.SystemPrompt
+		if system == "" {
+			system = modelSystemPrompt
+		}
 		return &modelHandler{
+			system: system,
 			client: client,
 			model:  hook.Model,
 			tpl:    tpl,
@@ -185,6 +190,7 @@ as additional context.`
 type modelHandler struct {
 	client ModelClient
 	model  string
+	system string
 	tpl    *template.Template
 	schema *latest.StructuredOutput
 	shape  ResponseShape
@@ -202,7 +208,7 @@ func (h *modelHandler) Run(ctx context.Context, input []byte) (HandlerResult, er
 	if err := h.tpl.Execute(&buf, &in); err != nil {
 		return HandlerResult{ExitCode: -1}, fmt.Errorf("render prompt: %w", err)
 	}
-	raw, err := h.client.Ask(ctx, h.model, modelSystemPrompt, buf.String(), h.schema)
+	raw, err := h.client.Ask(ctx, h.model, h.system, buf.String(), h.schema)
 	if err != nil {
 		return HandlerResult{ExitCode: -1}, fmt.Errorf("model %s: %w", h.model, err)
 	}

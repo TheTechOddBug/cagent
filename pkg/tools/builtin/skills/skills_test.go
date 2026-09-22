@@ -56,7 +56,7 @@ func TestSkillsToolset_ReadSkillFile(t *testing.T) {
 		},
 	}, "")
 
-	content, err := st.ReadSkillFile("my-skill", "references/FORMS.md")
+	content, err := st.ReadSkillFile(t.Context(), "my-skill", "references/FORMS.md", tools.NopRuntime{})
 	require.NoError(t, err)
 	assert.Equal(t, "# Forms Reference", content)
 }
@@ -70,11 +70,11 @@ func TestSkillsToolset_ReadSkillFile_PathTraversal(t *testing.T) {
 		{Name: "my-skill", Description: "My skill", FilePath: filepath.Join(tmpDir, "SKILL.md"), BaseDir: tmpDir},
 	}, "")
 
-	_, err := st.ReadSkillFile("my-skill", "../../../etc/passwd")
+	_, err := st.ReadSkillFile(t.Context(), "my-skill", "../../../etc/passwd", tools.NopRuntime{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file path")
 
-	_, err = st.ReadSkillFile("my-skill", "/etc/passwd")
+	_, err = st.ReadSkillFile(t.Context(), "my-skill", "/etc/passwd", tools.NopRuntime{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file path")
 }
@@ -85,7 +85,7 @@ func TestSkillsToolset_ReadSkillFile_SkillNotFound(t *testing.T) {
 		{Name: "exists", Description: "Exists", FilePath: "/tmp/test"},
 	}, "")
 
-	_, err := st.ReadSkillFile("nonexistent", "SKILL.md")
+	_, err := st.ReadSkillFile(t.Context(), "nonexistent", "SKILL.md", tools.NopRuntime{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -239,7 +239,7 @@ func TestSkillsToolset_HandleReadSkillFile(t *testing.T) {
 		},
 	}, "")
 
-	result, err := st.handleReadSkillFile(t.Context(), readSkillFileArgs{SkillName: "my-skill", Path: "scripts/deploy.sh"})
+	result, err := st.handleReadSkillFile(t.Context(), readSkillFileArgs{SkillName: "my-skill", Path: "scripts/deploy.sh"}, tools.NopRuntime{})
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Output, "echo deploy")
@@ -254,7 +254,7 @@ func TestSkillsToolset_HandleReadSkillFile_PathTraversal(t *testing.T) {
 		{Name: "my-skill", Description: "My skill", FilePath: filepath.Join(tmpDir, "SKILL.md"), BaseDir: tmpDir},
 	}, "")
 
-	result, err := st.handleReadSkillFile(t.Context(), readSkillFileArgs{SkillName: "my-skill", Path: "../../../etc/passwd"})
+	result, err := st.handleReadSkillFile(t.Context(), readSkillFileArgs{SkillName: "my-skill", Path: "../../../etc/passwd"}, tools.NopRuntime{})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Output, "invalid file path")
@@ -527,7 +527,7 @@ func TestSkillsToolset_ReadSkillFile_InlineRejected(t *testing.T) {
 	}, "")
 
 	for _, p := range []string{"references/FORMS.md", ".", "SKILL.md"} {
-		_, err := st.ReadSkillFile("inline", p)
+		_, err := st.ReadSkillFile(t.Context(), "inline", p, tools.NopRuntime{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "defined inline")
 	}
