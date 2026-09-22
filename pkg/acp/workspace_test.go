@@ -48,7 +48,7 @@ func newWorkspaceAgent(t *testing.T, source config.Source, workingDir string) *A
 		}),
 	}
 	a := NewAgent(source, rc, session.NewInMemorySessionStore())
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 	_, err := a.Initialize(t.Context(), acpsdk.InitializeRequest{ProtocolVersion: acpsdk.ProtocolVersionNumber})
 	require.NoError(t, err)
 	return a
@@ -260,7 +260,7 @@ func TestNewSessionCleansUpAfterStoreFailure(t *testing.T) {
 	a := NewAgent(nil, &config.RuntimeConfig{}, failingAddStore{session.NewInMemorySessionStore()})
 	a.team = team.New()
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) { return loaded, nil }
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 
 	_, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{})
 	require.ErrorContains(t, err, "store failed")
@@ -279,12 +279,12 @@ func TestResumeSessionCleansUpLosingTeam(t *testing.T) {
 	a.team = team.New()
 	existing := &Session{id: sess.ID, sess: sess, rt: &fakeRuntime{}, additionalDirs: []string{t.TempDir()}}
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
-		_, stored, err := a.registerSessionIfAbsent(existing)
+		_, stored, err := registerTestSession(t.Context(), a, existing)
 		require.NoError(t, err)
 		require.True(t, stored)
 		return loaded, nil
 	}
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 
 	_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(sess.ID)})
 	require.NoError(t, err)
@@ -312,11 +312,8 @@ func TestStopWaitsForSessionConstruction(t *testing.T) {
 			created <- err
 		}()
 		<-loading
-		stopped := make(chan struct{})
-		go func() {
-			a.Stop(t.Context())
-			close(stopped)
-		}()
+		stopped := make(chan error, 1)
+		go func() { stopped <- a.Stop(t.Context()) }()
 		synctest.Wait()
 		select {
 		case <-stopped:
@@ -324,8 +321,8 @@ func TestStopWaitsForSessionConstruction(t *testing.T) {
 		default:
 		}
 		close(release)
-		require.ErrorContains(t, <-created, "agent stopped")
-		<-stopped
+		require.Error(t, <-created)
+		require.NoError(t, <-stopped)
 		assert.Equal(t, int32(1), ts.stops.Load())
 		assert.Empty(t, a.sessions)
 		assert.Empty(t, a.owned)
@@ -342,13 +339,9 @@ func TestCloseSessionDrainsBeforeStoppingToolsets(t *testing.T) {
 		a.owned = map[*Session]struct{}{s: {}}
 		done := promptAsync(a, t.Context(), promptRequest("first"))
 		<-rt.started
-		_, err := a.CloseSession(t.Context(), acpsdk.CloseSessionRequest{SessionId: testSessionID})
-		require.NoError(t, err)
-		stopped := make(chan struct{})
-		go func() {
-			a.Stop(t.Context())
-			close(stopped)
-		}()
+		closed := closeSessionAsync(a, t.Context(), testSessionID)
+		stopped := make(chan error, 1)
+		go func() { stopped <- a.Stop(t.Context()) }()
 		synctest.Wait()
 		assert.Zero(t, ts.stops.Load())
 		select {
@@ -358,7 +351,8 @@ func TestCloseSessionDrainsBeforeStoppingToolsets(t *testing.T) {
 		}
 		close(rt.release)
 		require.NoError(t, (<-done).err)
-		<-stopped
+		require.NoError(t, <-stopped)
+		require.NoError(t, <-closed)
 		<-s.close(t.Context())
 		assert.Equal(t, int32(1), ts.stops.Load())
 	})
@@ -379,7 +373,7 @@ func TestSessionWorkspaceUsesProcessDirectoryFallback(t *testing.T) {
 func TestInitializeRejectsInvalidConfig(t *testing.T) {
 	t.Parallel()
 	a := NewAgent(config.NewBytesSource("invalid.yaml", []byte("agents: [")), &config.RuntimeConfig{}, session.NewInMemorySessionStore())
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 	_, err := a.Initialize(t.Context(), acpsdk.InitializeRequest{})
 	require.Error(t, err)
 	_, err = a.NewSession(t.Context(), acpsdk.NewSessionRequest{})
@@ -399,7 +393,7 @@ func TestNewSessionCleansUpAfterRuntimeFailure(t *testing.T) {
 	a := NewAgent(nil, &config.RuntimeConfig{}, session.NewInMemorySessionStore())
 	a.team = team.New()
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) { return loaded, nil }
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 	_, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{})
 	require.ErrorContains(t, err, "no valid model")
 	assert.Equal(t, int32(1), ts.stops.Load())
@@ -454,9 +448,11 @@ func TestSessionTeamLoadsAreSerialized(t *testing.T) {
 	a.team = team.New()
 	var calls atomic.Int32
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
-		if a.loadMu.TryLock() {
-			a.loadMu.Unlock()
+		select {
+		case a.loadGate <- struct{}{}:
+			<-a.loadGate
 			t.Error("source load and metadata read must be serialized")
+		default:
 		}
 		n := calls.Add(1)
 		return loads[n-1], nil
@@ -472,5 +468,5 @@ func TestSessionTeamLoadsAreSerialized(t *testing.T) {
 		require.NoError(t, <-results)
 	}
 	assert.Equal(t, int32(2), calls.Load())
-	a.Stop(t.Context())
+	require.NoError(t, a.Stop(t.Context()))
 }

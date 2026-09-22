@@ -73,7 +73,15 @@ A resume must name the same directory as the saved workspace. Filesystem aliases
 
 Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
 
-Resuming a registered session while a foreground prompt is running, queued, or draining returns an error without canceling the prompt or changing roots. Retry after the prompt finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee. Closing and immediately reopening a session is likewise not a synchronization barrier for its old runtime.
+Resuming a registered session while a foreground prompt is running, queued, or draining returns an error without canceling the prompt or changing roots. Retry after the prompt finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
+
+## Closing Sessions
+
+A successful `session/close` response means the foreground turn has drained, the runtime has joined its background agents, and session toolset shutdown has completed through the existing toolset lifecycle. Close also cancels and joins in-flight resumes for that session so they cannot publish a replacement runtime after closure.
+
+Concurrent close requests join the same cleanup. Canceling a close request only stops that caller's wait: cleanup continues, and resume remains blocked until it succeeds. After a successful close, an explicit resume may reconstruct the session. Cleanup failures are returned and retained; the same session cannot reopen in that agent process when cleanup is uncertain.
+
+Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
 
 ## Filesystem Policies and Post-Edit Hooks
 

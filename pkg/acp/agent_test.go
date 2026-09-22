@@ -184,7 +184,7 @@ func TestACPSessionPersistence(t *testing.T) {
 	acpAgent.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
 		return &teamloader.LoadResult{Team: tm}, nil
 	}
-	defer acpAgent.Stop(ctx)
+	defer func() { require.NoError(t, acpAgent.Stop(ctx)) }()
 
 	// Create a new session via ACP with a real temp directory
 	workingDir := t.TempDir()
