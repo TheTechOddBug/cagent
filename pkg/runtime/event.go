@@ -562,6 +562,9 @@ func SessionCompactionCompleted(sessionID, outcome, agentName string) Event {
 
 func (e *SessionCompactionEvent) GetSessionID() string { return e.SessionID }
 
+// StreamStopReasonMaxIterations identifies a stream stopped at its iteration limit.
+const StreamStopReasonMaxIterations = "max_iterations"
+
 // StreamStoppedEvent reports that a RunStream loop has stopped. Reason carries
 // the turnEndReason* classification (normal, error, canceled) so consumers can
 // tell successful completion apart from crashes and user-initiated stops.
@@ -579,6 +582,8 @@ type StreamStoppedEvent struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+	// FinishReason is the terminal model result, independent of content or usage.
+	FinishReason chat.FinishReason `json:"finish_reason,omitempty"`
 }
 
 func StreamStopped(sessionID, agentName, reason string) Event {

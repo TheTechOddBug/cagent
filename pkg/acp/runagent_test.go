@@ -177,6 +177,7 @@ func newPromptTestAgent(t *testing.T, rt runtime.Runtime) (*Agent, *Session, *pe
 	fixture := newRunAgentFixture(t, &fakeRuntime{}, &captureWriter{})
 	fixture.agent.sessions = make(map[string]*Session)
 	sess := &Session{id: testSessionID, sess: session.New(), rt: rt}
+	sess.sess.ID = testSessionID
 	fixture.agent.sessions[testSessionID] = sess
 	return fixture.agent, sess, fixture.peer
 }
@@ -585,13 +586,20 @@ func newRunAgentFixtureWithPermissions(t *testing.T, rt *fakeRuntime, out *captu
 		}
 	})
 
+	sess := session.New()
+	sess.ID = testSessionID
 	return &runAgentFixture{
 		agent: acpAgent,
-		sess:  &Session{id: testSessionID, sess: session.New(), rt: rt},
+		sess:  &Session{id: testSessionID, sess: sess, rt: rt},
 		rt:    rt,
 		out:   out,
 		peer:  peer,
 	}
+}
+
+func (f *runAgentFixture) runAgent(ctx context.Context, s *Session) error {
+	_, err := f.agent.runAgent(ctx, s)
+	return err
 }
 
 // sessionUpdates parses the captured JSON-RPC notifications and returns the
@@ -642,7 +650,7 @@ func TestRunAgent_EmitsAvailableCommandsFirst(t *testing.T) {
 
 	f := newRunAgentFixture(t, &fakeRuntime{}, &captureWriter{})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	updates := f.sessionUpdates(t)
 	require.Len(t, updates, 1)
@@ -661,7 +669,7 @@ func TestRunAgent_StreamsAssistantAndDiagnosticEvents(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	updates := f.sessionUpdates(t)
 	require.Len(t, updates, 6)
@@ -688,7 +696,7 @@ func TestRunAgent_SessionTitleUpdate(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	updates := f.sessionUpdates(t)
 	require.Len(t, updates, 2)
@@ -712,7 +720,7 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 		updates := f.sessionUpdates(t)
 		require.Len(t, updates, 2)
@@ -734,7 +742,7 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 		updates := f.sessionUpdates(t)
 		require.Len(t, updates, 2)
@@ -752,7 +760,7 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 		updates := f.sessionUpdates(t)
 		require.Len(t, updates, 1)
@@ -786,7 +794,7 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	updates := f.sessionUpdates(t)
 	require.Len(t, updates, 7)
@@ -847,7 +855,7 @@ func TestRunAgent_ToolCallResponseWithoutStartFails(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	err := f.agent.runAgent(t.Context(), f.sess)
+	err := f.runAgent(t.Context(), f.sess)
 	require.EqualError(t, err, "missing tool call arguments for tool call ID orphan")
 
 	// The failure must stop the loop before later events are mapped.
@@ -872,7 +880,7 @@ func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 		return permissionSelected("allow")
 	})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	reqs := f.peer.recordedRequests()
 	require.Len(t, reqs, 1)
@@ -948,7 +956,7 @@ func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
 				return tt.result
 			})
 
-			require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 			assert.Equal(t, tt.wantResume, rt.resumeRequests())
 			assert.Len(t, f.peer.recordedRequests(), 1)
@@ -1020,7 +1028,7 @@ func TestRunAgent_AlwaysAllowKeepsOtherToolsGated(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, f.agent.runAgent(ctx, f.sess))
+	require.NoError(t, f.runAgent(ctx, f.sess))
 
 	assert.Equal(t, []string{"allowed_tool", "allowed_tool", "other_tool"}, executed)
 	reqs := f.peer.recordedRequests()
@@ -1071,7 +1079,7 @@ func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
 				return tt.result
 			})
 
-			err := f.agent.runAgent(t.Context(), f.sess)
+			err := f.runAgent(t.Context(), f.sess)
 			require.EqualError(t, err, tt.wantErr)
 
 			assert.Empty(t, rt.resumeRequests())
@@ -1093,7 +1101,7 @@ func TestRunAgent_MaxIterationsReachedRequestFields(t *testing.T) {
 		return permissionSelected("continue")
 	})
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	reqs := f.peer.recordedRequests()
 	require.Len(t, reqs, 1)
@@ -1176,7 +1184,7 @@ func TestRunAgent_MaxIterationsReachedOutcomes(t *testing.T) {
 				return tt.result
 			})
 
-			require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 			assert.Equal(t, tt.wantResume, rt.resumeRequests())
 			assert.Len(t, f.peer.recordedRequests(), 1)
@@ -1209,7 +1217,7 @@ func TestRunAgent_TodoToolEmitsPlanUpdate(t *testing.T) {
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 		updates := f.sessionUpdates(t)
 		require.Len(t, updates, 4)
@@ -1234,7 +1242,7 @@ func TestRunAgent_TodoToolEmitsPlanUpdate(t *testing.T) {
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 		updates := f.sessionUpdates(t)
 		require.Len(t, updates, 3)
@@ -1257,7 +1265,7 @@ func TestRunAgent_SendUpdateFailureStopsRun(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, out)
 
-	err := f.agent.runAgent(t.Context(), f.sess)
+	err := f.runAgent(t.Context(), f.sess)
 	require.ErrorContains(t, err, "peer gone")
 
 	updates := f.sessionUpdates(t)
@@ -1279,7 +1287,7 @@ func TestRunAgent_AvailableCommandsFailureIsNonFatal(t *testing.T) {
 	}}
 	f := newRunAgentFixture(t, rt, out)
 
-	require.NoError(t, f.agent.runAgent(t.Context(), f.sess))
+	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
 	updates := f.sessionUpdates(t)
 	require.Len(t, updates, 1)
@@ -1298,7 +1306,7 @@ func TestRunAgent_ContextCancellationStopsEventLoop(t *testing.T) {
 	rt.onRunStream = cancel
 	f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	err := f.agent.runAgent(ctx, f.sess)
+	err := f.runAgent(ctx, f.sess)
 	require.ErrorIs(t, err, context.Canceled)
 
 	updates := f.sessionUpdates(t)

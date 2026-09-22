@@ -192,7 +192,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 // is bounded rather than unbounded). Consumers must still rely on the channel
 // close, not on receiving StreamStopped, as the one guaranteed terminal
 // signal.
-func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, prevElicitationCh, events chan Event) {
+func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, finishReason chat.FinishReason, prevElicitationCh, events chan Event) {
 	a := r.resolveSessionAgent(sess)
 
 	if ctx.Err() != nil && reason == "" {
@@ -202,7 +202,9 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 	// Bounded, not unbounded: an abandoned consumer must not hang teardown
 	// forever (#3070), but a live one draining past cancellation must still
 	// get this event (#4136) — so this never selects on ctx.Done().
-	bounded(&channelSink{ch: events}, r.streamStoppedTimeout()).Emit(StreamStopped(sess.ID, a.Name(), reason))
+	stopped := StreamStopped(sess.ID, a.Name(), reason).(*StreamStoppedEvent)
+	stopped.FinishReason = finishReason
+	bounded(&channelSink{ch: events}, r.streamStoppedTimeout()).Emit(stopped)
 
 	// Execute session end hooks with a context that won't be cancelled so
 	// cleanup hooks run even when the stream was interrupted (e.g. Ctrl+C).
@@ -341,8 +343,9 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// consumer hangs forever, and the elicitation bridge is left pointing
 	// at this dead stream's channel.
 	var streamReason string
+	var streamFinishReason chat.FinishReason
 	defer func() {
-		r.finalizeEventChannel(ctx, sess, streamReason, prevElicitationCh, events)
+		r.finalizeEventChannel(ctx, sess, streamReason, streamFinishReason, prevElicitationCh, events)
 	}()
 
 	// Unregister from the live-session registry and execute any accepted
@@ -520,6 +523,10 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// Check iteration limit
 		newMax, decision := r.enforceMaxIterations(ctx, sess, a, ls.iteration, ls.maxIterations, sink)
 		if decision == iterationStop {
+			streamReason = StreamStopReasonMaxIterations
+			if ctx.Err() != nil {
+				streamReason = turnEndReasonCanceled
+			}
 			return
 		}
 		ls.maxIterations = newMax
@@ -624,6 +631,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		case turnContinue:
 			continue
 		case turnExit:
+			streamFinishReason = ls.finishReason
 			return
 		}
 	}
@@ -663,6 +671,7 @@ type loopState struct {
 	sessionStartSources    []session.InstructionSource
 	userPromptMsgs         []chat.Message
 	exitReason             string
+	finishReason           chat.FinishReason
 	// structuredOutputReminders counts the transient reminders injected
 	// after a tool-mode turn stopped without calling the internal output
 	// tool. Bounded by maxStructuredOutputReminders; reset on agent switch
@@ -742,6 +751,7 @@ func (r *LocalRuntime) runTurn(
 	ls *loopState,
 	events EventSink,
 ) turnControl {
+	ls.finishReason = ""
 	// turnStart bounds this turn's active time, attributed to the agent
 	// below so the run budget can show how long each agent spent working.
 	turnStart := r.now()
@@ -1142,6 +1152,10 @@ func (r *LocalRuntime) runTurn(
 		}
 
 		endReason = turnEndReasonNormal
+		ls.finishReason = res.FinishReason
+		if soFinalized {
+			ls.finishReason = chat.FinishReasonStop
+		}
 		return turnExit
 	}
 

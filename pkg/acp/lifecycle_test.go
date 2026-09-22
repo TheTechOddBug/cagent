@@ -337,7 +337,9 @@ func TestUnknownLifecycleRequestsDoNotAccumulate(t *testing.T) {
 		sid := strconv.Itoa(i)
 		require.NoError(t, <-closeSessionAsync(a, t.Context(), sid))
 		_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(sid)})
-		require.ErrorIs(t, err, session.ErrNotFound)
+		var rpcErr *acpsdk.RequestError
+		require.ErrorAs(t, err, &rpcErr)
+		assert.Equal(t, -32002, rpcErr.Code)
 	}
 	assert.Empty(t, a.lifecycles)
 	require.NoError(t, a.Stop(t.Context()))

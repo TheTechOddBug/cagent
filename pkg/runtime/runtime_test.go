@@ -435,7 +435,7 @@ func TestSimple(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root", "normal"),
+		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -481,7 +481,7 @@ func TestMultipleContentChunks(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root", "normal"),
+		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -523,7 +523,7 @@ func TestWithReasoning(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root", "normal"),
+		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -567,7 +567,7 @@ func TestMixedContentAndReasoning(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root", "normal"),
+		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
