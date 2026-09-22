@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/evaluator"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/structuredoutput"
@@ -56,6 +57,7 @@ type Agent struct {
 	commands                types.Commands
 	harness                 *latest.HarnessConfig
 	hooks                   *latest.HooksConfig
+	evaluators              map[string]evaluator.Evaluator
 	cache                   *cache.Cache
 	structuredOutput        *latest.StructuredOutput
 	// structuredOutputTool lazily compiles the tool-mode output tool once
@@ -405,6 +407,18 @@ func (a *Agent) HarnessType() string {
 // Hooks returns the hooks configuration for this agent.
 func (a *Agent) Hooks() *latest.HooksConfig {
 	return a.hooks
+}
+
+// Evaluator returns an evaluator from the agent's source configuration.
+func (a *Agent) Evaluator(name string) (evaluator.Evaluator, bool) {
+	e, ok := a.evaluators[name]
+	return e, ok
+}
+
+// HasEvaluatorScope distinguishes a bound (possibly empty) source scope from
+// a programmatic agent that may use team-level evaluators.
+func (a *Agent) HasEvaluatorScope() bool {
+	return a.evaluators != nil
 }
 
 // StructuredOutput returns the agent's structured-output configuration, or

@@ -308,6 +308,8 @@ func TestSchemaMatchesGoTypes(t *testing.T) {
 		"AgentConfig":           reflect.TypeFor[latest.AgentConfig](),
 		"FallbackConfig":        reflect.TypeFor[latest.FallbackConfig](),
 		"HarnessConfig":         reflect.TypeFor[latest.HarnessConfig](),
+		"EvaluatorConfig":       reflect.TypeFor[latest.EvaluatorConfig](),
+		"EvaluatorPolicy":       reflect.TypeFor[latest.EvaluatorPolicy](),
 		"ModelConfig":           reflect.TypeFor[latest.ModelConfig](),
 		"Metadata":              reflect.TypeFor[latest.Metadata](),
 		"ProviderConfig":        reflect.TypeFor[latest.ProviderConfig](),

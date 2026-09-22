@@ -214,7 +214,17 @@ func runInSandbox(ctx context.Context, cmd *cobra.Command, args []string, runCon
 	// Resolve env vars the agent needs and forward them into the sandbox.
 	// Docker Desktop proxies well-known API keys automatically; this handles
 	// any additional vars (e.g. MCP tool secrets).
-	envFlags, envVars := sandbox.EnvForAgent(ctx, agentRef, envProvider, runConfig.Flavors)
+	userCfg, err := userconfig.Load()
+	if err != nil {
+		return fmt.Errorf("loading user config: %w", err)
+	}
+	// Sandbox dispatch precedes runOrExec, which normally loads inherited hooks.
+	envConfig := &config.RuntimeConfig{Config: runConfig.Config}
+	envConfig.GlobalHooks = config.MergeHooks(
+		config.MergeHooks(userCfg.GetSettings().GlobalHooks(), config.LoadHookDropIns()),
+		runConfig.GlobalHooks,
+	)
+	envFlags, envVars := sandbox.EnvForAgent(ctx, agentRef, envProvider, runConfig.Flavors, envConfig)
 
 	// Forward the gateway by name so a URL with credentials never
 	// shows up in the slog'd `docker sandbox exec` argv.

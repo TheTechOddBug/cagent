@@ -60,6 +60,11 @@ func (h *HooksConfig) Validate() error {
 			}
 		}
 		for i, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Type == "evaluator" && event != "tool_guard" {
+					return fmt.Errorf("hooks.%s: evaluator hooks are only supported on tool_guard", event)
+				}
+			}
 			if contract.ToolMatched {
 				if err := matcher.validate(event, i); err != nil {
 					return err

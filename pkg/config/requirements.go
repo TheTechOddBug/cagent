@@ -29,6 +29,8 @@ const (
 	FeatureHarness Feature = "harness"
 	// FeatureHooks covers agent lifecycle hooks, which run host commands.
 	FeatureHooks Feature = "hooks"
+	// FeatureEvaluators permits outbound provider-backed assessments.
+	FeatureEvaluators Feature = "evaluators"
 	// FeatureSkills covers agents loading skills from disk or inline.
 	FeatureSkills Feature = "skills"
 	// FeatureToon covers toolsets using `toon` output encoding (see
@@ -62,6 +64,9 @@ func Requires(cfg *latest.Config) Requirements {
 		Features:  map[Feature][]string{},
 	}
 
+	for _, name := range slices.Sorted(maps.Keys(cfg.Evaluators)) {
+		r.feature(FeatureEvaluators, "evaluators."+name)
+	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Models)) {
 		r.model(cfg, cfg.Models[name], "models."+name)
 	}

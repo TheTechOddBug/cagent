@@ -136,6 +136,13 @@
           "null"
         ]
       }
+    },
+    "evaluators": {
+      "type": "object",
+      "description": "Named provider-backed assessments, independent of chat models and decision policies.",
+      "additionalProperties": {
+        "$ref": "#/definitions/EvaluatorConfig"
+      }
     }
   },
   "additionalProperties": false,
@@ -1201,182 +1208,182 @@
           "type": "array",
           "description": "Hooks that run before a tool is executed. Can allow/deny/modify tool calls.",
           "items": {
-            "$ref": "#/definitions/HookMatcherConfig"
+            "$ref": "#/definitions/NonEvaluatorHookMatcherConfig"
           }
         },
         "post_tool_use": {
           "type": "array",
           "description": "Hooks that run after a tool completes (both success and failure). The result is delivered in tool_response (failed calls carry an is_error flag and any error text). Returning decision=block or exit code 2 stops the run loop after the current tool batch \u2014 useful for circuit-breaker patterns.",
           "items": {
-            "$ref": "#/definitions/HookMatcherConfig"
+            "$ref": "#/definitions/NonEvaluatorHookMatcherConfig"
           }
         },
         "permission_request": {
           "type": "array",
           "description": "Hooks that run just before the runtime prompts the user to approve a tool call (i.e. when the safety mode and permission rules did not short-circuit the decision). Hooks may auto-allow or auto-deny via hook_specific_output.permission_decision; otherwise control falls through to the interactive confirmation. Tool-matched, like pre_tool_use.",
           "items": {
-            "$ref": "#/definitions/HookMatcherConfig"
+            "$ref": "#/definitions/NonEvaluatorHookMatcherConfig"
           }
         },
         "session_start": {
           "type": "array",
           "description": "Hooks that run when a session begins. Can load context or setup environment.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "user_prompt_submit": {
           "type": "array",
           "description": "Hooks that run once per user message, after the user has submitted their prompt and before the first model call of the turn. The submitted text is passed in the prompt field. Hooks can block submission (decision=block / continue=false / exit code 2) or contribute additional_context that is spliced into the conversation as a transient system message for that turn only. Sub-sessions (transferred tasks, background agents) do NOT fire this event because their kick-off message is synthesised by the runtime.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "user_steering_messages_submit": {
           "type": "array",
           "description": "Hooks that run each time the runtime drains the steering queue and appends the queued user messages to the session \u2014 messages the user submitted while the agent was already working (mid-turn, after the model stopped, or while idle before the first model call). The drained messages are passed in the steering_messages field. Like user_prompt_submit, hooks can block the run (decision=block / continue=false / exit code 2) or contribute additional_context that is spliced into the conversation as a transient system message for the steered turn only \u2014 it is NOT persisted to the session.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "user_followup_submit": {
           "type": "array",
           "description": "Hooks that run each time the runtime dequeues a follow-up message at the end of a turn and starts a fresh turn for it. Follow-ups are user messages queued for end-of-turn processing (the FollowUp API / queue), distinct from mid-turn steering \u2014 the model sees them as fresh input. The follow-up text is passed in the prompt field. Like user_prompt_submit, hooks can block the run (decision=block / continue=false / exit code 2) or contribute additional_context that is spliced into the conversation as a transient system message for the follow-up turn only \u2014 it is NOT persisted to the session.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "turn_start": {
           "type": "array",
           "description": "Hooks that run at the start of every agent turn (each model call). Their AdditionalContext is appended as transient system messages for that turn only \u2014 it is NOT persisted to the session, so per-turn signals (date, prompt files) are recomputed every turn instead of bloating message history on every resume.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "turn_end": {
           "type": "array",
           "description": "Hooks that run once per agent turn when the turn finishes \u2014 the symmetric counterpart of turn_start. Fires no matter why the turn ended: a normal stop, an error, a hook-driven shutdown, the loop detector, or context cancellation. The reason is reported via the hook input's reason field ('normal', 'continue', 'steered', 'error', 'canceled', 'hook_blocked', 'loop_detected'). Observational; output is ignored.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "before_llm_call": {
           "type": "array",
           "description": "Hooks that run just before each model call (after turn_start has assembled the messages). Use for observability, cost guardrails, or auditing without contributing system messages \u2014 turn_start is the right event for the latter.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "after_llm_call": {
           "type": "array",
           "description": "Hooks that run just after each successful model call, before the response is recorded into the session and tool calls are dispatched. Receives the assistant text content in stop_response. Failed calls fire on_error instead.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "session_end": {
           "type": "array",
           "description": "Hooks that run when a session ends. Can perform cleanup or logging.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "pre_compact": {
           "type": "array",
           "description": "Hooks that run just before the runtime compacts the session transcript into a summary. The trigger is reported in source: 'manual' (user-initiated /compact), 'auto' (proactive threshold), 'overflow' (context-overflow recovery), or 'tool_overflow' (proactive after tool results pushed past the threshold). Hooks may block compaction (decision=block / continue=false / exit code 2) or contribute additional_context that is appended to the compaction prompt \u2014 useful for steering the summary without modifying the agent's instruction.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "subagent_stop": {
           "type": "array",
           "description": "Hooks that run when a sub-agent (transferred task, background agent, skill sub-session) finishes. Fires against the parent agent's executor so handlers configured on the orchestrator see every child completion. The sub-agent's name is in agent_name and its final assistant message in stop_response.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_user_input": {
           "type": "array",
           "description": "Hooks that run when the agent needs user input. Can send notifications or log events.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "stop": {
           "type": "array",
           "description": "Hooks that run when the model finishes responding and is about to hand control back to the user. Can perform post-response validation or logging.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "notification": {
           "type": "array",
           "description": "Hooks that run when the agent sends a notification (error, warning) to the user. Can send external notifications or log events.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_error": {
           "type": "array",
           "description": "Hooks that run when the runtime hits an error during a turn (model failures, repetitive tool-call loops). Fires alongside notification (level=error); use this for structured error-only handlers without parsing notification_level.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_max_iterations": {
           "type": "array",
           "description": "Hooks that run when the runtime reaches its configured max_iterations limit. Fires alongside notification (level=warning); use this for structured handlers (e.g. log to a metrics pipeline) without parsing notification_message.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_agent_switch": {
           "type": "array",
           "description": "Hooks that run whenever the runtime moves the active agent to a new one (transfer_task, handoff, or the return after a transferred task completes). Receives from_agent, to_agent, and agent_switch_kind in the input. Observational; useful for audit, transcript, and metrics pipelines that track which agent ran which tools.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_session_resume": {
           "type": "array",
           "description": "Hooks that run when the user explicitly approves the runtime to continue past its configured max_iterations limit. Receives previous_max_iterations and new_max_iterations in the input. Observational; useful for alerting on extended-runtime sessions or for billing/quota pipelines that meter resumes.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "on_tool_approval_decision": {
           "type": "array",
           "description": "Hooks that run after the runtime's tool approval chain (custom rules / safety mode / hooks / ask) resolves a verdict for a tool call, before the call is executed (allow) or its error response is recorded (deny / canceled). Receives approval_decision (\"allow\" | \"deny\" | \"canceled\"), approval_source (a stable classifier of which step decided), and safety_label (the runtime classifier's safe / destructive / unknown verdict). Observational; gives audit pipelines a single \"who approved what\" record without re-implementing the chain.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "before_compaction": {
           "type": "array",
           "description": "Hooks that run immediately before a session compaction. The Input carries input_tokens, output_tokens, context_limit, and compaction_reason ('threshold', 'overflow', 'manual'). A hook may veto compaction by setting decision='block' (or exiting with code 2), or supply a custom summary via hookSpecificOutput.summary, in which case the runtime applies that summary verbatim and skips the LLM-based summarization. Be cautious about denying when compaction_reason='overflow': the runtime is recovering from a context-overflow error and a denial there will leave the session unable to make progress.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "after_compaction": {
           "type": "array",
           "description": "Hooks that run after a successful compaction (a summary was applied to the session). Receives the final summary text in Input.summary alongside input_tokens, output_tokens, context_limit and compaction_reason. Purely observational \u2014 hook output is ignored.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         },
         "tool_response_transform": {
           "type": "array",
           "description": "Hooks that fire between a tool's execution and the runtime's emission/record of the response, with the rewrite reaching event consumers, the persisted session, the post_tool_use hook input, and the next LLM call. A hook may rewrite the tool's textual output by setting hookSpecificOutput.updated_tool_response \u2014 the symmetric counterpart of pre_tool_use's updated_input, applied to tool RESULTS instead of tool ARGUMENTS. The redact_secrets builtin uses this event for the third leg of the redact_secrets feature; custom rewriters can also truncate excessive output, scrub PII, or normalise tool dialects. Tool-matched, like pre_tool_use / post_tool_use.",
           "items": {
-            "$ref": "#/definitions/HookMatcherConfig"
+            "$ref": "#/definitions/NonEvaluatorHookMatcherConfig"
           }
         },
         "tool_input_transform": {
           "type": "array",
           "description": "Hooks that run before every tool call, ahead of the deterministic approval pipeline (safety mode, permission rules, --yolo) and of tool_guard. Hooks run sequentially, each seeing the preceding rewrite, and may patch tool arguments via hookSpecificOutput.updated_input exactly like pre_tool_use; the approval pipeline and every later hook see the rewritten arguments. Rewrite-only: verdicts belong on tool_guard. Failures follow the hook's on_error policy (default warn; block denies the call). The redact_secrets builtin's argument-scrubbing leg is auto-injected here. Tool-matched, like pre_tool_use; preempt_yolo is rejected because the event always preempts approval.",
           "items": {
-            "$ref": "#/definitions/HookMatcherConfig"
+            "$ref": "#/definitions/NonEvaluatorHookMatcherConfig"
           }
         },
         "tool_guard": {
@@ -1390,7 +1397,7 @@
           "type": "array",
           "description": "Hooks that run once, just after `docker agent run --worktree` creates a git worktree and before the session starts. They execute inside the new worktree (their working directory is the fresh checkout), and the worktree path, branch, and source repository root are passed in worktree_path / worktree_branch / worktree_source_dir. Use them to prepare the checkout: copy untracked files like .env, install dependencies, warm caches, before the agent begins. A hook may abort the run by blocking (decision=block / continue=false / exit code 2); stdout is surfaced as additional context. Dispatched from the CLI rather than the run loop because the worktree (and the working directory every downstream component captures) must be settled before the runtime and session exist.",
           "items": {
-            "$ref": "#/definitions/HookDefinition"
+            "$ref": "#/definitions/NonEvaluatorHookDefinition"
           }
         }
       },
@@ -1429,7 +1436,7 @@
     },
     "HookDefinition": {
       "type": "object",
-      "description": "Definition of a single hook command",
+      "description": "Definition of a lifecycle hook",
       "properties": {
         "name": {
           "type": "string",
@@ -1437,11 +1444,12 @@
         },
         "type": {
           "type": "string",
-          "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime; 'model' asks an LLM and translates its reply into the hook's native output (used for LLM-as-a-judge pre_tool_use, summarizers, etc., with no Go code). The docker-agent runtime ships these builtins: 'add_context' (context-contributing events: renders Go templates in args against hook input and joins non-empty results with newlines as additional context), 'add_date' (turn_start: today's date), 'add_environment_info' (session_start: cwd, git, OS, arch), 'add_prompt_files' (turn_start: contents of named files looked up in the workdir hierarchy and the home directory; args may include '--depth=<N>' to additionally list, by path only, the same filenames found up to N levels below the working directory), 'add_git_status' (turn_start: `git status --short --branch`), 'add_git_diff' (turn_start: `git diff --stat`, or full diff with args=['full']), 'add_directory_listing' (session_start: top-level entries of cwd), 'add_user_info' (session_start: current OS user and hostname), 'add_recent_commits' (session_start: `git log --oneline -n N`, default N=10, override via args=['<N>']), 'max_iterations' (before_llm_call: hard stop after N model calls; args=['<N>'] required), 'redact_secrets' (tool_input_transform or pre_tool_use / before_llm_call / tool_response_transform: scrubs detected secrets from tool arguments, outgoing chat content, and tool output \u2014 the same builtin handles all three legs and dispatches on the event; the matching agent-level 'redact_secrets: true' flag auto-injects the entries on tool_input_transform, before_llm_call, and tool_response_transform), 'limit_large_tool_results' (tool_response_transform and session_end: stores oversized tool output in a per-session temp file and replaces it with a bounded excerpt; always injected by the runtime), 'safer_shell' (pre_tool_use: deprecated compatibility shim that attaches shell safety classification metadata), 'http_post' (any event: POSTs args[1] to the URL in args[0]), 'snapshot' (session_start, turn_start, turn_end, pre_tool_use, post_tool_use, and session_end: records filesystem snapshots in a shadow git repository), 'unload' (on_agent_switch: POSTs `{\"model\": \"<id>\"}` to the previous agent's DMR model endpoints \u2014 e.g. asks Docker Model Runner to release the GPU/RAM held by the just-departing model so the next agent's model can claim it. Pure HTTP, no provider-specific runtime coupling; non-DMR providers are silently skipped. Opt in by adding the entry to the agent's hooks.on_agent_switch list).",
+          "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime; 'model' asks an LLM and translates its reply into the hook's native output (used for LLM-as-a-judge pre_tool_use, summarizers, etc., with no Go code). The docker-agent runtime ships these builtins: 'add_context' (context-contributing events: renders Go templates in args against hook input and joins non-empty results with newlines as additional context), 'add_date' (turn_start: today's date), 'add_environment_info' (session_start: cwd, git, OS, arch), 'add_prompt_files' (turn_start: contents of named files looked up in the workdir hierarchy and the home directory; args may include '--depth=<N>' to additionally list, by path only, the same filenames found up to N levels below the working directory), 'add_git_status' (turn_start: `git status --short --branch`), 'add_git_diff' (turn_start: `git diff --stat`, or full diff with args=['full']), 'add_directory_listing' (session_start: top-level entries of cwd), 'add_user_info' (session_start: current OS user and hostname), 'add_recent_commits' (session_start: `git log --oneline -n N`, default N=10, override via args=['<N>']), 'max_iterations' (before_llm_call: hard stop after N model calls; args=['<N>'] required), 'redact_secrets' (tool_input_transform or pre_tool_use / before_llm_call / tool_response_transform: scrubs detected secrets from tool arguments, outgoing chat content, and tool output — the same builtin handles all three legs and dispatches on the event; the matching agent-level 'redact_secrets: true' flag auto-injects the entries on tool_input_transform, before_llm_call, and tool_response_transform), 'limit_large_tool_results' (tool_response_transform and session_end: stores oversized tool output in a per-session temp file and replaces it with a bounded excerpt; always injected by the runtime), 'safer_shell' (pre_tool_use: deprecated compatibility shim that attaches shell safety classification metadata), 'http_post' (any event: POSTs args[1] to the URL in args[0]), 'snapshot' (session_start, turn_start, turn_end, pre_tool_use, post_tool_use, and session_end: records filesystem snapshots in a shadow git repository), 'unload' (on_agent_switch: POSTs `{\"model\": \"<id>\"}` to the previous agent's DMR model endpoints — e.g. asks Docker Model Runner to release the GPU/RAM held by the just-departing model so the next agent's model can claim it. Pure HTTP, no provider-specific runtime coupling; non-DMR providers are silently skipped. Opt in by adding the entry to the agent's hooks.on_agent_switch list). 'evaluator' assesses tool input through a named evaluator and applies a separate policy (tool_guard only).",
           "enum": [
             "command",
             "builtin",
-            "model"
+            "model",
+            "evaluator"
           ]
         },
         "command": {
@@ -1498,6 +1506,14 @@
         "schema": {
           "type": "string",
           "description": "Well-known response interpretation for type=model hooks. Empty: return the model's reply as additional_context. 'pre_tool_use_decision': ask the model for {decision, reason} JSON and produce a permission_decision verdict (allow|ask|deny)."
+        },
+        "evaluator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Top-level evaluator referenced by type=evaluator tool_guard hooks."
+        },
+        "evaluator_policy": {
+          "$ref": "#/definitions/EvaluatorPolicy"
         }
       },
       "required": [
@@ -1555,6 +1571,40 @@
               "model",
               "prompt"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "evaluator",
+              "evaluator_policy"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "evaluator"
+                  ]
+                },
+                {
+                  "required": [
+                    "evaluator_policy"
+                  ]
+                }
+              ]
+            }
           }
         }
       ]
@@ -3217,6 +3267,216 @@
           "description": "Optional OAuth redirect URI used in place of http://127.0.0.1:{callbackPort}/callback. The literal placeholder ${callbackPort} is replaced with the actual local callback port at runtime. The external URL is expected to redirect the browser back to the local callback server."
         }
       }
+    },
+    "EvaluatorConfig": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "boolean",
+            "choice",
+            "score"
+          ]
+        },
+        "base_url": {
+          "type": "string",
+          "description": "API base URL (TypeSafe default: https://api.typesafe.ai)."
+        },
+        "token_key": {
+          "type": "string",
+          "description": "API key environment variable (TypeSafe default: TYPESAFE_API_KEY)."
+        },
+        "choices": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 255,
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timeout": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "description": "Request timeout, default 10s."
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "type",
+        "instructions"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "choice"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "choices"
+            ],
+            "not": {
+              "required": [
+                "levels"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "score"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "levels"
+            ],
+            "not": {
+              "required": [
+                "choices"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "boolean"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "choices"
+                  ]
+                },
+                {
+                  "required": [
+                    "levels"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "EvaluatorPolicy": {
+      "type": "object",
+      "properties": {
+        "decisions": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Choice keys (or true/false for booleans) mapped to guard decisions.",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ]
+          }
+        },
+        "min_probability": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Minimum selected-outcome probability to apply its mapping; not the confidence metric."
+        },
+        "fallback": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "deny"
+          ],
+          "description": "Decision for uncertainty or unmapped outcomes; provider failures always block."
+        }
+      },
+      "required": [
+        "decisions",
+        "min_probability",
+        "fallback"
+      ],
+      "additionalProperties": false
+    },
+    "NonEvaluatorHookDefinition": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/HookDefinition"
+        },
+        {
+          "not": {
+            "properties": {
+              "type": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        }
+      ]
+    },
+    "NonEvaluatorHookMatcherConfig": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/HookMatcherConfig"
+        },
+        {
+          "properties": {
+            "hooks": {
+              "items": {
+                "$ref": "#/definitions/NonEvaluatorHookDefinition"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

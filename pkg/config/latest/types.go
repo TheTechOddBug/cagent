@@ -23,12 +23,13 @@ const Version = "16"
 
 // Config represents the entire configuration file
 type Config struct {
-	Version   string                    `json:"version,omitempty"`
-	Agents    Agents                    `json:"agents,omitempty"`
-	Providers map[string]ProviderConfig `json:"providers,omitempty"`
-	Models    map[string]ModelConfig    `json:"models,omitempty"`
-	MCPs      map[string]MCPToolset     `json:"mcps,omitempty"`
-	RAG       map[string]RAGToolset     `json:"rag,omitempty"`
+	Version    string                     `json:"version,omitempty"`
+	Agents     Agents                     `json:"agents,omitempty"`
+	Providers  map[string]ProviderConfig  `json:"providers,omitempty"`
+	Models     map[string]ModelConfig     `json:"models,omitempty"`
+	Evaluators map[string]EvaluatorConfig `json:"evaluators,omitempty"`
+	MCPs       map[string]MCPToolset      `json:"mcps,omitempty"`
+	RAG        map[string]RAGToolset      `json:"rag,omitempty"`
 	// Commands and Skills are reusable, named groups shared across agents.
 	// An agent opts into a group by listing its name in AgentConfig.UseCommands
 	// or AgentConfig.UseSkills; the group is merged into the agent during config
@@ -2937,11 +2938,16 @@ type HookDefinition struct {
 	//                 add_prompt_files, redact_secrets (see also the
 	//                 redact_secrets agent flag), and several others
 	//                 documented in pkg/hooks/builtins.
+	//   - "evaluator": assess tool input using a named evaluator and a separate policy.
 	//   - "model":    ask an LLM and translate its reply into the hook's
 	//                 native output. See Model / Prompt / Schema. Used to
 	//                 implement "LLM as a judge" pre_tool_use hooks,
 	//                 turn-start summarizers, etc., with no Go code.
 	Type string `json:"type" yaml:"type"`
+
+	// Evaluator references a top-level assessment used by a tool_guard hook.
+	Evaluator       string           `json:"evaluator,omitempty" yaml:"evaluator,omitempty"`
+	EvaluatorPolicy *EvaluatorPolicy `json:"evaluator_policy,omitempty" yaml:"evaluator_policy,omitempty"`
 
 	// Command is the shell command (Type==command) or the builtin name
 	// (Type==builtin) to invoke.
@@ -3045,6 +3051,9 @@ func (h *HookDefinition) validate(prefix string, index int) error {
 		return fmt.Errorf("hooks.%s[%d]: type is required", prefix, index)
 	}
 
+	if h.Type != "evaluator" && (h.Evaluator != "" || h.EvaluatorPolicy != nil) {
+		return fmt.Errorf("hooks.%s[%d]: evaluator fields require type evaluator", prefix, index)
+	}
 	switch h.Type {
 	case "command":
 		if h.Command == "" {
@@ -3054,6 +3063,13 @@ func (h *HookDefinition) validate(prefix string, index int) error {
 		if h.Command == "" {
 			return fmt.Errorf("hooks.%s[%d]: command must name the builtin to invoke", prefix, index)
 		}
+	case "evaluator":
+		if strings.TrimSpace(h.Evaluator) == "" {
+			return fmt.Errorf("hooks.%s[%d]: evaluator is required", prefix, index)
+		}
+		if err := h.EvaluatorPolicy.Validate(); err != nil {
+			return fmt.Errorf("hooks.%s[%d]: %w", prefix, index, err)
+		}
 	case "model":
 		if h.Model == "" {
 			return fmt.Errorf("hooks.%s[%d]: model is required for model hooks (e.g. 'openai/gpt-4o-mini')", prefix, index)
@@ -3062,7 +3078,7 @@ func (h *HookDefinition) validate(prefix string, index int) error {
 			return fmt.Errorf("hooks.%s[%d]: prompt is required for model hooks", prefix, index)
 		}
 	default:
-		return fmt.Errorf("hooks.%s[%d]: unsupported hook type '%s' (supported: 'command', 'builtin', 'model')", prefix, index, h.Type)
+		return fmt.Errorf("hooks.%s[%d]: unsupported hook type '%s' (supported: 'command', 'builtin', 'model', 'evaluator')", prefix, index, h.Type)
 	}
 
 	return nil

@@ -579,6 +579,9 @@ to cover every call. See [the complete example](https://github.com/docker/docker
 
 ### Preempting auto-approval from `pre_tool_use`
 
+For provider-backed assessments, see [Evaluators](../evaluators/index.md):
+`type: evaluator` hooks map boolean or choice results to a separate guard policy.
+
 For new mandatory checks, prefer `tool_guard`. The legacy `preempt_yolo` option
 remains supported, including its exception for session-scoped “always allow”
 grants. Unlike that option, a `tool_guard` ask always requires fresh approval.

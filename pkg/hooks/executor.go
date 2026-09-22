@@ -296,6 +296,8 @@ func sameHook(a, b Hook) bool {
 		a.OnError == b.OnError &&
 		a.StrictOutput == b.StrictOutput &&
 		a.Model == b.Model &&
+		a.Evaluator == b.Evaluator &&
+		sameEvaluatorPolicy(a.EvaluatorPolicy, b.EvaluatorPolicy) &&
 		a.Prompt == b.Prompt &&
 		a.Schema == b.Schema
 }

@@ -31,6 +31,7 @@ func withDoctorTestEnv(env map[string]string, dmrModels []string, dmrErr error) 
 		mapProvider := environment.NewMapEnvProvider(env)
 		f.runConfig.EnvProviderForTests = mapProvider
 		f.sourcesForTests = []environment.Source{{Name: "environment", Provider: mapProvider}}
+		f.loadHookDropIns = func() *latest.HooksConfig { return nil }
 		f.dmrLister = func(context.Context) ([]string, error) { return dmrModels, dmrErr }
 		f.loadUserConfig = func() (*userconfig.Config, error) { return &userconfig.Config{}, nil }
 		f.claudeProbe = func(context.Context) codingharness.ClaudeCLIStatus {
@@ -661,4 +662,90 @@ func TestFindSource_SkipsSourcesWithoutValue(t *testing.T) {
 
 	_, found = findSource(t.Context(), sources, "OTHER")
 	assert.False(t, found)
+}
+
+func TestDoctorEvaluatorGlobalProvider(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+evaluators:
+  risk:
+    provider: corporate
+    model: jev-latest
+    type: boolean
+    instructions: Assess risk.
+agents:
+  root:
+    model: openai/gpt-5-mini
+    hooks:
+      tool_guard:
+        - hooks:
+            - type: evaluator
+              evaluator: risk
+              evaluator_policy:
+                decisions: {"true": ask}
+                min_probability: 0.9
+                fallback: ask
+`), 0o600))
+	output, err := executeDoctor(t, []string{path}, withDoctorTestEnv(map[string]string{"OPENAI_API_KEY": "test"}, nil, nil), func(f *doctorFlags) {
+		f.loadUserConfig = func() (*userconfig.Config, error) {
+			return &userconfig.Config{Providers: map[string]latest.ProviderConfig{"corporate": {Provider: "typesafe", TokenKey: "CORPORATE_KEY"}}}, nil
+		}
+	})
+	require.Error(t, err)
+	assert.Contains(t, output, "CORPORATE_KEY")
+	assert.Contains(t, output, "evaluators")
+}
+
+func TestDoctorEvaluatorResolutionErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		provider *latest.ProviderConfig
+		want     string
+	}{
+		{name: "missing provider", want: `unsupported evaluator provider "corporate"`},
+		{name: "unsupported backend", provider: &latest.ProviderConfig{Provider: "anthropic"}, want: `unsupported evaluator provider "anthropic"`},
+		{name: "chat api type", provider: &latest.ProviderConfig{Provider: "typesafe", BaseURL: "https://example.com", APIType: "openai_responses"}, want: "evaluator providers do not support auth or api_type"},
+		{name: "invalid inherited url", provider: &latest.ProviderConfig{Provider: "typesafe", BaseURL: "https://user:private-secret@example.com"}, want: "base_url must be an HTTP(S) URL without credentials, query, or fragment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "agent.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(`
+evaluators:
+  risk:
+    provider: corporate
+    model: jev-latest
+    type: boolean
+    instructions: Assess risk.
+agents:
+  root:
+    model: openai/gpt-5-mini
+    hooks:
+      tool_guard:
+        - hooks:
+            - type: evaluator
+              evaluator: risk
+              evaluator_policy:
+                decisions: {"true": ask}
+                min_probability: 0.9
+                fallback: ask
+`), 0o600))
+			output, err := executeDoctor(t, []string{"--json", path}, withDoctorTestEnv(map[string]string{"OPENAI_API_KEY": "test"}, nil, nil), func(f *doctorFlags) {
+				f.loadUserConfig = func() (*userconfig.Config, error) {
+					cfg := &userconfig.Config{}
+					if tc.provider != nil {
+						cfg.Providers = map[string]latest.ProviderConfig{"corporate": *tc.provider}
+					}
+					return cfg, nil
+				}
+			})
+			require.Error(t, err)
+			var report doctorReport
+			require.NoError(t, json.Unmarshal([]byte(output), &report))
+			assert.Contains(t, report.Issues, "evaluators.risk: "+tc.want)
+			assert.NotContains(t, output, "private-secret")
+		})
+	}
 }

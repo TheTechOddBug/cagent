@@ -287,12 +287,12 @@ var proxyManagedEnvVars = []string{
 //   - envVars: `KEY=VALUE` entries to set on the exec process environment
 //
 // Variables that Docker Desktop already proxies are skipped.
-func EnvForAgent(ctx context.Context, agentRef string, env environment.Provider, flavors []string) (flags, envVars []string) {
+func EnvForAgent(ctx context.Context, agentRef string, env environment.Provider, flavors []string, defaults ...*config.RuntimeConfig) (flags, envVars []string) {
 	if agentRef == "" {
 		return nil, nil
 	}
 
-	names, err := gatherAgentEnvVars(ctx, agentRef, env, flavors)
+	names, err := gatherAgentEnvVars(ctx, agentRef, env, flavors, defaults...)
 	if err != nil {
 		slog.DebugContext(ctx, "Failed to gather agent env vars for sandbox", "error", err)
 		return nil, nil
@@ -315,7 +315,7 @@ func EnvForAgent(ctx context.Context, agentRef string, env environment.Provider,
 
 // gatherAgentEnvVars resolves the agent config and returns the list of
 // environment variable names required by its models and tools.
-func gatherAgentEnvVars(ctx context.Context, agentRef string, env environment.Provider, flavors []string) ([]string, error) {
+func gatherAgentEnvVars(ctx context.Context, agentRef string, env environment.Provider, flavors []string, defaults ...*config.RuntimeConfig) ([]string, error) {
 	source, err := sources.Resolve(agentRef, env)
 	if err != nil {
 		return nil, fmt.Errorf("resolving agent: %w", err)
@@ -326,8 +326,25 @@ func gatherAgentEnvVars(ctx context.Context, agentRef string, env environment.Pr
 		return nil, fmt.Errorf("loading agent config: %w", err)
 	}
 
+	for _, rc := range defaults {
+		if rc == nil {
+			continue
+		}
+		config.MergeGlobalProviders(cfg, rc.Providers)
+		config.MergeAgentHooks(cfg, config.MergeHooks(rc.GlobalHooks, rc.CLIHooks()))
+	}
+	if err := cfg.ValidateEvaluators(); err != nil {
+		return nil, err
+	}
+	for name, def := range cfg.Evaluators {
+		if _, err := def.Resolve(cfg.Providers); err != nil {
+			return nil, fmt.Errorf("evaluator %q: %w", name, err)
+		}
+	}
+
 	var names []string
 	names = append(names, config.GatherEnvVarsForModels(ctx, cfg, env)...)
+	names = append(names, config.GatherEnvVarsForEvaluators(cfg)...)
 
 	toolNames, err := config.GatherEnvVarsForTools(ctx, cfg)
 	if err != nil {
