@@ -983,6 +983,10 @@ func (r *LocalRuntime) runTurn(
 	dispatchCalls, soFinalized := r.handleStructuredOutputCalls(ctx, sess, a, &res, agentTools, modelID.String(), events)
 
 	stopRun, stopMsg := r.processToolCalls(ctx, sess, a, dispatchCalls, agentTools, events)
+	if stopRun && r.enforceBudget(ctx, sess, a, events) == iterationStop {
+		endReason = turnEndReasonBudgetExceeded
+		return turnExit
+	}
 
 	// Re-probe toolsets after tool calls: an install/setup tool call may
 	// have made a previously-unavailable LSP or MCP connectable. reprobe()

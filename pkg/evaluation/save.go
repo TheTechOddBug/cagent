@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,7 +106,7 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 
 	// Helper to flush current assistant message
 	flushAssistantMessage := func() {
-		if currentContent.Len() > 0 || currentReasoningContent.Len() > 0 || len(currentToolCalls) > 0 {
+		if currentContent.Len() > 0 || currentReasoningContent.Len() > 0 || len(currentToolCalls) > 0 || currentUsage != nil {
 			msg := &session.Message{
 				AgentName: currentAgentName,
 				Message: chat.Message{
@@ -213,6 +214,24 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 			}
 			sess.AddMessage(msg)
 
+		case "evaluation_usage":
+			data, err := json.Marshal(event["evaluation"])
+			if err != nil {
+				slog.Warn("Failed to encode evaluator usage event", "error", err)
+				continue
+			}
+			var evaluation *session.Evaluation
+			if err := json.Unmarshal(data, &evaluation); err != nil {
+				slog.Warn("Failed to parse evaluator usage event", "error", err)
+				continue
+			}
+			if evaluation == nil || evaluation.ID == "" {
+				slog.Warn("Ignoring evaluator usage event without an evaluation ID")
+				continue
+			}
+			flushAssistantMessage()
+			sess.AddEvaluation(evaluation)
+
 		case "token_usage":
 			// Update session token usage
 			if usage, ok := event["usage"].(map[string]any); ok {
@@ -233,6 +252,12 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 				// Extract per-message usage if available
 				if lastMsg, ok := usage["last_message"].(map[string]any); ok {
 					currentUsage = parseMessageUsage(lastMsg)
+					if currentAgentName == "" {
+						currentAgentName, _ = event["agent_name"].(string)
+					}
+					if currentTimestamp == "" {
+						currentTimestamp = eventTimestamp
+					}
 					if model, ok := lastMsg["Model"].(string); ok {
 						currentModel = model
 					}

@@ -53,6 +53,10 @@ func newBudgetTracker(cfg *latest.BudgetConfig) *budgetTracker {
 }
 
 func (b *budgetTracker) record(agentName string, usage *chat.Usage, cost *float64, active time.Duration) {
+	b.recordSpend(agentName, usage, cost, active, false)
+}
+
+func (b *budgetTracker) recordSpend(agentName string, usage *chat.Usage, cost *float64, active time.Duration, unknown bool) {
 	if b == nil {
 		return
 	}
@@ -69,7 +73,7 @@ func (b *budgetTracker) record(agentName string, usage *chat.Usage, cost *float6
 	case cost != nil:
 		addCost = *cost
 		b.cost += addCost
-	case usage != nil:
+	case usage != nil || unknown:
 		b.unpriced = true
 	}
 
@@ -389,10 +393,14 @@ func (s *budgetSet) exceededFor(agentName string) *budgetBreach {
 	return nil
 }
 
-const unpricedSpendWarning = "This run has a max_cost limit, but the model reported usage the runtime cannot price, " +
-	"so that spend does not count against the limit. Set a model-level `cost:` block to price it."
+const unpricedSpendWarning = "This run has a max_cost limit, but some model or evaluator spend is unknown and the runtime cannot price it, " +
+	"so that spend does not count against the limit. Set a model- or evaluator-level `cost:` block when rates are missing; requests without usage cannot be priced."
 
 func (r *LocalRuntime) recordBudget(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events EventSink) {
+	r.recordBudgetSpend(sess, a, usage, cost, active, events, false)
+}
+
+func (r *LocalRuntime) recordBudgetSpend(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events EventSink, unknown bool) {
 	s := r.currentBudget()
 	if s == nil {
 		return
@@ -404,7 +412,7 @@ func (r *LocalRuntime) recordBudget(sess *session.Session, a *agent.Agent, usage
 
 	warnUnpriced := !s.unpricedSpend()
 	for _, nt := range targets {
-		nt.Tracker.record(a.Name(), usage, cost, active)
+		nt.Tracker.recordSpend(a.Name(), usage, cost, active, unknown)
 	}
 	if warnUnpriced && s.unpricedSpend() {
 		events.Emit(Warning(unpricedSpendWarning, a.Name()))

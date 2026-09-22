@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/evaluator"
 )
@@ -33,6 +34,8 @@ type typesafe struct {
 	question        json.RawMessage
 	probabilityKeys []string
 	timeout         time.Duration
+	cost            *latest.CostConfig
+	officialPricing bool
 }
 
 type typesafeQuestion struct {
@@ -48,9 +51,9 @@ type typesafeRequest struct {
 }
 
 type typesafeResponse struct {
-	Model   string                     `json:"model"`
-	Answers map[string]*typesafeAnswer `json:"answers"`
-	Usage   evaluator.Usage            `json:"usage"`
+	Model   json.RawMessage `json:"model"`
+	Answers json.RawMessage `json:"answers"`
+	Usage   json.RawMessage `json:"usage"`
 }
 
 type typesafeAnswer struct {
@@ -102,14 +105,13 @@ func (p *typesafe) Evaluate(ctx context.Context, state any) (*evaluator.Result, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	record := evaluator.UsageRecord{Model: p.model}
+	defer func() { evaluator.ObserveUsage(ctx, record) }()
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, requestError(ctx, "evaluator request failed")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("evaluator returned HTTP status %d", resp.StatusCode)
-	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
@@ -119,10 +121,30 @@ func (p *typesafe) Evaluate(ctx context.Context, state any) (*evaluator.Result, 
 		return nil, errors.New("evaluator response exceeds size limit")
 	}
 	var response typesafeResponse
-	if err := json.Unmarshal(body, &response); err != nil {
+	decodeErr := json.Unmarshal(body, &response)
+	var model string
+	modelErr := json.Unmarshal(response.Model, &model)
+	if strings.TrimSpace(model) != "" {
+		record.Model = model
+	}
+	var usageErr error
+	if decodeErr == nil {
+		record.Usage, usageErr = reportedUsage(response.Usage)
+		record.Cost = p.estimateCost(model, record.Usage)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("evaluator returned HTTP status %d", resp.StatusCode)
+	}
+	if decodeErr != nil || (len(response.Model) != 0 && modelErr != nil) {
 		return nil, errors.New("invalid evaluator response JSON")
 	}
-	return p.result(response)
+	if strings.TrimSpace(model) == "" {
+		return nil, errors.New("evaluator response is missing the model")
+	}
+	if usageErr != nil {
+		return nil, usageErr
+	}
+	return p.result(response.Answers, record)
 }
 
 // Preserve cancellation identity without exposing transport errors or URLs.
@@ -133,28 +155,31 @@ func requestError(ctx context.Context, message string) error {
 	return errors.New(message)
 }
 
-func (p *typesafe) result(response typesafeResponse) (*evaluator.Result, error) {
-	answer := response.Answers["evaluation"]
+func (p *typesafe) result(rawAnswers json.RawMessage, record evaluator.UsageRecord) (*evaluator.Result, error) {
+	var answers map[string]*typesafeAnswer
+	if len(rawAnswers) != 0 {
+		if err := json.Unmarshal(rawAnswers, &answers); err != nil {
+			return nil, errors.New("invalid evaluator response JSON")
+		}
+	}
+	answer := answers["evaluation"]
 	if answer == nil {
 		return nil, errors.New("evaluator response is missing the evaluation answer")
 	}
 	if answer.Type != p.questionType {
 		return nil, errors.New("evaluator answer type does not match the question")
 	}
-	if strings.TrimSpace(response.Model) == "" {
-		return nil, errors.New("evaluator response is missing the model")
-	}
-	if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 {
-		return nil, errors.New("evaluator response has invalid token usage")
-	}
 	if answer.Confidence != nil && !validProbability(answer.Confidence) {
 		return nil, errors.New("evaluator answer has invalid confidence")
 	}
 	result := &evaluator.Result{
 		Type:       p.resultType,
-		Model:      response.Model,
+		Model:      record.Model,
 		Confidence: answer.Confidence,
-		Usage:      response.Usage,
+		Cost:       record.Cost,
+	}
+	if record.Usage != nil {
+		result.Usage = *record.Usage
 	}
 
 	if p.resultType == "boolean" {

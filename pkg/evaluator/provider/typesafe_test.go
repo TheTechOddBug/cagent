@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/evaluator"
 )
 
 func responseBody(answer string) string {
@@ -172,9 +173,16 @@ func TestEvaluateRejectsInvalidAnswers(t *testing.T) {
 			cfg.BaseURL = server.URL
 			client, err := New(t.Context(), cfg, environment.NewMapEnvProvider(map[string]string{"TYPESAFE_API_KEY": "private-token"}))
 			require.NoError(t, err)
-			result, err := client.Evaluate(t.Context(), "private-state")
+			var records []evaluator.UsageRecord
+			ctx := evaluator.WithUsageObserver(t.Context(), func(record evaluator.UsageRecord) {
+				records = append(records, record)
+			})
+			result, err := client.Evaluate(ctx, "private-state")
 			require.Error(t, err)
 			assert.Nil(t, result)
+			require.Len(t, records, 1)
+			assert.Equal(t, "jev-resolved", records[0].Model)
+			assert.Equal(t, &evaluator.Usage{InputTokens: 12, OutputTokens: 3}, records[0].Usage)
 			assert.NotContains(t, err.Error(), "private-state")
 			assert.NotContains(t, err.Error(), "private-token")
 		})
@@ -202,9 +210,14 @@ func TestEvaluateInvalidResponses(t *testing.T) {
 			cfg.BaseURL = server.URL
 			client, err := New(t.Context(), cfg, environment.NewMapEnvProvider(map[string]string{"TYPESAFE_API_KEY": "private-token"}))
 			require.NoError(t, err)
-			result, err := client.Evaluate(t.Context(), "private-state")
+			var records []evaluator.UsageRecord
+			ctx := evaluator.WithUsageObserver(t.Context(), func(record evaluator.UsageRecord) { records = append(records, record) })
+			result, err := client.Evaluate(ctx, "private-state")
 			require.Error(t, err)
 			assert.Nil(t, result)
+			require.Len(t, records, 1)
+			assert.Nil(t, records[0].Usage)
+			assert.Nil(t, records[0].Cost)
 			assert.NotContains(t, err.Error(), "private-state")
 		})
 	}
@@ -246,10 +259,15 @@ func TestEvaluateTruncatedResponse(t *testing.T) {
 	cfg.BaseURL = server.URL
 	client, err := New(t.Context(), cfg, environment.NewMapEnvProvider(map[string]string{"TYPESAFE_API_KEY": "token"}))
 	require.NoError(t, err)
-	result, err := client.Evaluate(t.Context(), "state")
+	var records []evaluator.UsageRecord
+	ctx := evaluator.WithUsageObserver(t.Context(), func(record evaluator.UsageRecord) { records = append(records, record) })
+	result, err := client.Evaluate(ctx, "state")
 	require.ErrorContains(t, err, "failed to read evaluator response")
 	assert.NotContains(t, err.Error(), "private-state")
 	assert.Nil(t, result)
+	require.Len(t, records, 1)
+	assert.Nil(t, records[0].Usage)
+	assert.Nil(t, records[0].Cost)
 }
 
 func TestEvaluateHTTPFailures(t *testing.T) {

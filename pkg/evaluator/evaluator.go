@@ -18,6 +18,8 @@ type Result struct {
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    *float64           `json:"confidence,omitempty"`
 	Usage         Usage              `json:"usage"`
+	// Cost is the estimated USD charge; nil means usage or pricing is unknown.
+	Cost *float64 `json:"cost,omitempty"`
 }
 
 // Usage records the tokens consumed by an evaluation.

@@ -135,6 +135,9 @@ type Store interface {
 	// Persisting failures lets them survive a reload and travel with a JSON export.
 	AddError(ctx context.Context, sessionID string, e *Error) error
 
+	// AddEvaluation appends evaluator usage once per evaluation ID.
+	AddEvaluation(ctx context.Context, sessionID string, e *Evaluation) error
+
 	// === Granular metadata updates ===
 
 	// UpdateSessionTokens updates only token/cost fields
@@ -169,6 +172,7 @@ func (s *InMemorySessionStore) AddSession(_ context.Context, session *Session) e
 	if _, loaded := s.sessions.LoadOrStore(session.ID, session); loaded {
 		return fmt.Errorf("add session %q: %w", session.ID, ErrAlreadyExists)
 	}
+	session.syncEvaluationCosts()
 	return nil
 }
 
@@ -270,7 +274,7 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 		Starred:             session.Starred,
 		InputTokens:         session.InputTokens,
 		OutputTokens:        session.OutputTokens,
-		Cost:                session.Cost,
+		Cost:                session.persistenceCostLocked(),
 		Permissions:         session.Permissions.Clone(),
 		Attributes:          maps.Clone(session.Attributes),
 		AgentModelOverrides: cloneStringMap(session.AgentModelOverrides),
@@ -368,6 +372,7 @@ func (s *InMemorySessionStore) AddSubSession(_ context.Context, parentSessionID 
 		return ErrNotFound
 	}
 	subSession.ParentID = parentSessionID
+	subSession.syncEvaluationCosts()
 	s.sessions.Store(subSession.ID, subSession)
 	parent.AddSubSession(subSession)
 	return nil
@@ -453,6 +458,18 @@ func (s *InMemorySessionStore) AddError(_ context.Context, sessionID string, e *
 	}
 	errCopy := *e
 	session.AddError(&errCopy)
+	return nil
+}
+
+func (s *InMemorySessionStore) AddEvaluation(_ context.Context, sessionID string, e *Evaluation) error {
+	if sessionID == "" {
+		return ErrEmptyID
+	}
+	sess, exists := s.sessions.Load(sessionID)
+	if !exists {
+		return ErrNotFound
+	}
+	sess.AddEvaluation(e)
 	return nil
 }
 
@@ -844,6 +861,13 @@ func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, se
 			}
 			items = append(items, item)
 
+		case "evaluation":
+			var evaluation Evaluation
+			if err := json.Unmarshal([]byte(row.messageJSON.String), &evaluation); err != nil {
+				return nil, fmt.Errorf("unmarshaling evaluation at position %d: %w", row.position, err)
+			}
+			items = append(items, Item{Evaluation: &evaluation})
+
 		case "error":
 			var e Error
 			if row.messageJSON.Valid && row.messageJSON.String != "" {
@@ -1055,7 +1079,7 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		Starred:             session.Starred,
 		InputTokens:         session.InputTokens,
 		OutputTokens:        session.OutputTokens,
-		Cost:                session.Cost,
+		Cost:                session.persistenceCostLocked(),
 		Permissions:         session.Permissions.Clone(),
 		Attributes:          maps.Clone(session.Attributes),
 		AgentModelOverrides: cloneStringMap(session.AgentModelOverrides),
@@ -1273,6 +1297,9 @@ func (s *SQLiteSessionStore) addSessionTx(ctx context.Context, tx *sql.Tx, sessi
 	if err != nil {
 		return err
 	}
+	session.mu.RLock()
+	cost := session.persistenceCostLocked()
+	session.mu.RUnlock()
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
@@ -1282,7 +1309,7 @@ func (s *SQLiteSessionStore) addSessionTx(ctx context.Context, tx *sql.Tx, sessi
 		)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Origin, session.ToolsApproved, string(session.SafetyPolicy), session.InputTokens, session.OutputTokens,
-		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations,
+		session.Title, cost, session.SendUserMessage, session.MaxIterations,
 		session.WorkingDir, session.CreatedAt.Format(time.RFC3339), session.Starred,
 		fields.PermissionsJSON, fields.AgentModelOverridesJSON, fields.CustomModelsUsedJSON, false,
 		fields.ParentID, fields.InstructionContextJSON, fields.AttributesJSON)
@@ -1333,6 +1360,17 @@ func (s *SQLiteSessionStore) addItemTx(ctx context.Context, tx *sql.Tx, sessionI
 			`INSERT INTO session_items (session_id, position, item_type, summary_text, first_kept_entry, cost, model, usage_json, message_json)
 			 VALUES (?, ?, 'summary', ?, ?, ?, ?, ?, ?)`,
 			sessionID, position, item.Summary, item.FirstKeptEntry, item.Cost, item.Model, usageJSON, compactionJSON)
+		return err
+
+	case item.Evaluation != nil:
+		evaluationJSON, err := json.Marshal(item.Evaluation)
+		if err != nil {
+			return fmt.Errorf("marshaling evaluation: %w", err)
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO session_items (session_id, position, item_type, message_json)
+			 VALUES (?, ?, 'evaluation', ?)`,
+			sessionID, position, string(evaluationJSON))
 		return err
 
 	case item.Error != nil:
@@ -1485,6 +1523,27 @@ func (s *SQLiteSessionStore) AddError(ctx context.Context, sessionID string, e *
 		`INSERT INTO session_items (session_id, position, item_type, message_json)
 		 VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'error', ?)`,
 		sessionID, sessionID, string(errJSON))
+	return err
+}
+
+// AddEvaluation stores the payload in message_json, including nullable cost.
+func (s *SQLiteSessionStore) AddEvaluation(ctx context.Context, sessionID string, e *Evaluation) error {
+	if sessionID == "" {
+		return ErrEmptyID
+	}
+	if e == nil {
+		return nil
+	}
+	evaluationJSON, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshaling evaluation: %w", err)
+	}
+	// Deduplicate in the same statement so concurrent deliveries cannot race.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO session_items (session_id, position, item_type, message_json)
+		 SELECT ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'evaluation', ?
+		 WHERE NOT EXISTS (SELECT 1 FROM session_items WHERE session_id = ? AND item_type = 'evaluation' AND json_extract(message_json, '$.id') = ?)`,
+		sessionID, sessionID, string(evaluationJSON), sessionID, e.ID)
 	return err
 }
 

@@ -133,7 +133,7 @@ func (p SafetyPolicy) IsValid() bool {
 	return false
 }
 
-// Item represents a message, a sub-session, a summary, or a recorded error.
+// Item represents a conversation entry or a recorded runtime operation.
 type Item struct {
 	// Message holds a regular conversation message
 	Message *Message `json:"message,omitempty"`
@@ -145,6 +145,9 @@ type Item struct {
 	// error survive a session reload and travel with a shared JSON export
 	// for diagnostics.
 	Error *Error `json:"error,omitempty"`
+
+	// Evaluation tracks evaluator usage separately from the conversation.
+	Evaluation *Evaluation `json:"evaluation,omitempty"`
 
 	// Termination holds a structured, non-error run stop marker (e.g. a
 	// budget ceiling) recorded by the evaluation pipeline. Storing it as an
@@ -450,6 +453,9 @@ type Session struct {
 	// In remote mode, messages are managed server-side, so we track usage separately.
 	// This is not persisted (json:"-") as it's only needed for the current session display.
 	MessageUsageHistory []MessageUsageRecord `json:"-"`
+
+	// EvaluationUsageHistory includes remote child usage before its session is available locally.
+	EvaluationUsageHistory []*Evaluation `json:"-"`
 }
 
 // InstructionSource is one independently changing piece of trusted context.
@@ -495,6 +501,7 @@ type InstructionContextState struct {
 // MessageUsageRecord stores usage data for a single assistant message.
 // Used in remote mode where messages aren't stored in the client-side session.
 type MessageUsageRecord struct {
+	SessionID string     `json:"session_id,omitempty"`
 	AgentName string     `json:"agent_name"`
 	Model     string     `json:"model"`
 	Cost      float64    `json:"cost"`
@@ -747,11 +754,8 @@ func cloneMessage(m *Message) *Message {
 	return &cp
 }
 
-// snapshotItems returns a copy of s.Messages safe to use without holding
-// s.mu. Each Message value is deep-copied so concurrent UpdateMessage calls
-// cannot mutate the snapshot; the remaining non-value fields (Summary,
-// SubSession, Cost, FirstKeptEntry, Model) are shallow-copied since they are
-// not mutated in place.
+// snapshotItems copies mutable message, usage, and evaluation fields under
+// s.mu. Sub-sessions remain live references with their own locking.
 func (s *Session) snapshotItems() []Item {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -766,6 +770,7 @@ func (s *Session) snapshotItems() []Item {
 			items[i].Usage = &usage
 		}
 		items[i].Compaction = item.Compaction.Clone()
+		items[i].Evaluation = cloneEvaluation(item.Evaluation)
 	}
 	return items
 }
@@ -1361,12 +1366,18 @@ func isUsageOnlyMessage(msg *chat.Message) bool {
 // AddMessageUsageRecord appends a usage record for remote mode where messages aren't stored locally.
 // This enables the /cost dialog to show per-message breakdown even when using a remote runtime.
 func (s *Session) AddMessageUsageRecord(agentName, model string, cost float64, usage *chat.Usage) {
+	s.AddMessageUsageRecordForSession(s.ID, agentName, model, cost, usage)
+}
+
+// AddMessageUsageRecordForSession retains provenance when child events reach a parent UI.
+func (s *Session) AddMessageUsageRecordForSession(sessionID, agentName, model string, cost float64, usage *chat.Usage) {
 	if usage == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.MessageUsageHistory = append(s.MessageUsageHistory, MessageUsageRecord{
+		SessionID: sessionID,
 		AgentName: agentName,
 		Model:     model,
 		Cost:      cost,
@@ -1797,9 +1808,23 @@ func (s *Session) ItemCount() int {
 	return len(s.Messages)
 }
 
+// AllItemCount counts items recursively, including non-message accounting records.
+func (s *Session) AllItemCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	n := len(s.Messages)
+	for _, item := range s.Messages {
+		if item.IsSubSession() {
+			n += item.SubSession.AllItemCount()
+		}
+	}
+	return n
+}
+
 // MessagesSnapshot returns a lock-safe copy of the session's items, deep-
-// copying each Message so the result cannot alias a concurrent AddMessage /
-// UpdateMessage mutation. It is the exported counterpart of snapshotItems for
+// copying messages and evaluations so callers cannot mutate stored records.
+// It is the exported counterpart of snapshotItems for
 // callers outside this package (e.g. pkg/server's ForkSession) that need to
 // iterate Messages without racing session.mu; in-package callers should keep
 // using snapshotItems directly.
@@ -1808,7 +1833,7 @@ func (s *Session) MessagesSnapshot() []Item {
 }
 
 // TotalCost computes the total cost of a session by walking all messages,
-// sub-sessions, and summary items. It does not use the session-level Cost
+// sub-sessions, summaries, and evaluations. It does not use the session-level Cost
 // field, which exists only for backward-compatible persistence.
 func (s *Session) TotalCost() float64 {
 	s.mu.RLock()
@@ -1825,13 +1850,16 @@ func (s *Session) totalCostLocked() float64 {
 		case item.IsSubSession():
 			cost += item.SubSession.TotalCost()
 		}
+		if item.Evaluation != nil && item.Evaluation.Cost != nil {
+			cost += *item.Evaluation.Cost
+		}
 		cost += item.Cost
 	}
 	return cost
 }
 
 // OwnCost returns only this session's direct cost: its own messages and
-// item-level costs (e.g. compaction). It excludes sub-session costs.
+// item-level costs (e.g. compaction and evaluations). It excludes sub-session costs.
 // This is used for live event emissions where sub-sessions report their
 // own costs separately.
 func (s *Session) OwnCost() float64 {
@@ -1842,6 +1870,9 @@ func (s *Session) OwnCost() float64 {
 	for _, item := range s.Messages {
 		if item.IsMessage() {
 			cost += item.Message.Message.Cost
+		}
+		if item.Evaluation != nil && item.Evaluation.Cost != nil {
+			cost += *item.Evaluation.Cost
 		}
 		cost += item.Cost
 	}

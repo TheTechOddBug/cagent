@@ -368,6 +368,8 @@ type Usage struct {
 	ContextLimit  int64         `json:"context_limit"`
 	Cost          float64       `json:"cost"`
 	LastMessage   *MessageUsage `json:"last_message,omitempty"`
+	// SnapshotOnly refreshes totals without reporting another chat response.
+	SnapshotOnly bool `json:"snapshot_only,omitempty"`
 	// CompactionThreshold is the fraction of the context window at which
 	// auto-compaction triggers for the agent that produced this snapshot,
 	// so UIs can color context gauges against it. 0 means unknown;

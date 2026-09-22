@@ -886,6 +886,11 @@ func (s *RemoteSessionStore) AddError(context.Context, string, *session.Error) e
 	return fmt.Errorf("add error: %w", ErrUnsupported)
 }
 
+// AddEvaluation is a no-op: the server persists runtime evaluation events.
+func (s *RemoteSessionStore) AddEvaluation(context.Context, string, *session.Evaluation) error {
+	return nil
+}
+
 func (s *RemoteSessionStore) UpdateSessionTokens(context.Context, string, int64, int64, float64) error {
 	return fmt.Errorf("update session tokens: %w", ErrUnsupported)
 }

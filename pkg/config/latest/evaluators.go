@@ -20,6 +20,7 @@ type EvaluatorConfig struct {
 	Choices      map[string]string `json:"choices,omitempty"`
 	Levels       []string          `json:"levels,omitempty"`
 	Timeout      Duration          `json:"timeout,omitzero"`
+	Cost         *CostConfig       `json:"cost,omitempty"`
 }
 
 // Validate checks an evaluator definition before provider resolution.
@@ -32,6 +33,16 @@ func (e EvaluatorConfig) Validate() error {
 	}
 	if e.Timeout.Duration < 0 {
 		return errors.New("timeout must not be negative")
+	}
+	if err := e.Cost.validate(); err != nil {
+		return err
+	}
+	if e.Cost != nil {
+		for _, price := range []float64{e.Cost.Input, e.Cost.Output, e.Cost.CacheRead, e.Cost.CacheWrite} {
+			if math.IsNaN(price) || math.IsInf(price, 0) {
+				return errors.New("cost prices must be finite")
+			}
+		}
 	}
 	if e.BaseURL != "" {
 		u, err := url.Parse(e.BaseURL)

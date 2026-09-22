@@ -83,6 +83,7 @@ func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
 			"tool_call_response":     func() Event { return &ToolCallResponseEvent{} },
 			"tool_call_confirmation": func() Event { return &ToolCallConfirmationEvent{} },
 			"token_usage":            func() Event { return &TokenUsageEvent{} },
+			"evaluation_usage":       func() Event { return &EvaluationUsageEvent{} },
 			"stream_stopped":         func() Event { return &StreamStoppedEvent{} },
 			"runtime_paused":         func() Event { return &PausedEvent{} },
 			"stream_started":         func() Event { return &StreamStartedEvent{} },

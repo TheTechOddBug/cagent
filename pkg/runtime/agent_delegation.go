@@ -481,6 +481,9 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 		if usage, ok := event.(*TokenUsageEvent); ok {
 			r.emitBackgroundEvent(usage)
 		}
+		if usage, ok := event.(*EvaluationUsageEvent); ok {
+			r.emitBackgroundEvent(usage)
+		}
 		// Elicitation requests are NOT re-forwarded here: elicitationHandler
 		// already delivered this event to the OnElicitationRequest sink
 		// directly, synchronously, and exactly once (#3584). Forwarding it

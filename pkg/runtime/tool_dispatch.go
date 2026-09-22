@@ -34,6 +34,10 @@ import (
 // halts the *batch* but keeps the loop alive so the synthesised tool
 // error responses can be sent back to the model on the next turn.
 func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, caller *agent.Agent, calls []tools.ToolCall, agentTools []tools.Tool, events EventSink) (stopRun bool, stopMessage string) {
+	r.ensureBudget()
+	accounting := &evaluatorAccounting{r: r, sess: sess, a: caller, events: events}
+	ctx = context.WithValue(ctx, evaluatorAccountingKey{}, accounting)
+
 	// Bind runtime-managed handlers (transfer_task, handoff, change_model, ...)
 	// to the current events channel: r.toolMap entries take chan Event,
 	// toolexec.ToolHandler doesn't.
@@ -71,7 +75,13 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 			return r.recall(ctx, QueuedMessage{Content: message})
 		},
 	}
-	return d.Process(ctx, sess, calls, agentTools, &sinkEmitter{events: events})
+	stopRun, stopMessage = d.Process(ctx, sess, calls, agentTools, &sinkEmitter{events: events})
+	if accounting.used {
+		if breach := r.currentBudget().exceededFor(caller.Name()); breach != nil {
+			return true, breach.Message()
+		}
+	}
+	return stopRun, stopMessage
 }
 
 // permissionCheckers returns the ordered list of permission checkers to

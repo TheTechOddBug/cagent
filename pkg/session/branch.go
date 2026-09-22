@@ -115,6 +115,7 @@ func (s *Session) Clone() *Session {
 		DelegationLineage:       cloneStringSlice(s.DelegationLineage),
 		InstructionContext:      cloneInstructionContext(s.InstructionContext),
 		MessageUsageHistory:     slices.Clone(s.MessageUsageHistory),
+		EvaluationUsageHistory:  cloneEvaluations(s.EvaluationUsageHistory),
 	}
 
 	// Start from a shallow copy of each item so value fields (Summary,
@@ -144,6 +145,7 @@ func (s *Session) Clone() *Session {
 			clone.Messages[i].Usage = &usageCopy
 		}
 		clone.Messages[i].Compaction = item.Compaction.Clone()
+		clone.Messages[i].Evaluation = cloneEvaluation(item.Evaluation)
 	}
 	return clone
 }
@@ -169,6 +171,8 @@ func cloneSessionItem(item Item) (Item, error) {
 			cloned.Usage = &usageCopy
 		}
 		return cloned, nil
+	case item.Evaluation != nil:
+		return Item{Evaluation: cloneEvaluation(item.Evaluation)}, nil
 	case item.Error != nil:
 		errCopy := *item.Error
 		return Item{Error: &errCopy}, nil
