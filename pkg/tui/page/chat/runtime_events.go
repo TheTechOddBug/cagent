@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"time"
@@ -117,6 +118,12 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, p.handleToolCallResponse(msg)
 
 	// ===== Sidebar Info Events (forwarded) =====
+	case *runtime.EvaluationUsageEvent:
+		if sess := p.app.Session(); sess != nil {
+			sess.AddEvaluationUsageRecord(msg.Evaluation)
+		}
+		return true, nil
+
 	case *runtime.TokenUsageEvent:
 		p.handleTokenUsage(msg)
 		return true, nil
@@ -280,7 +287,8 @@ func (p *chatPage) handleTokenUsage(msg *runtime.TokenUsageEvent) {
 
 			// Track per-message usage for /cost dialog
 			if msg.Usage.LastMessage != nil {
-				sess.AddMessageUsageRecord(
+				sess.AddMessageUsageRecordForSession(
+					cmp.Or(msg.SessionID, sess.ID),
 					msg.AgentName,
 					msg.Usage.LastMessage.Model,
 					msg.Usage.LastMessage.Cost,

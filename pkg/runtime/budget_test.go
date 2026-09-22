@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -420,4 +421,45 @@ func TestBudgetConfigIsZero(t *testing.T) {
 	assert.False(t, (&latest.BudgetConfig{MaxCost: 0.5}).IsZero())
 	assert.False(t, (&latest.BudgetConfig{MaxTokens: 1}).IsZero())
 	assert.False(t, (&latest.BudgetConfig{MaxTime: latest.Duration{Duration: time.Second}}).IsZero())
+}
+
+func TestBudgetTokensSaturate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		usages []chat.Usage
+	}{
+		{"single record", []chat.Usage{{InputTokens: math.MaxInt64, OutputTokens: 1}}},
+		{"cached prompt", []chat.Usage{{InputTokens: math.MaxInt64 - 1, CachedInputTokens: 1, CacheWriteTokens: 1}}},
+		{"multiple records", []chat.Usage{{InputTokens: math.MaxInt64 - 1}, {OutputTokens: 2}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBudgetTracker(&latest.BudgetConfig{MaxTokens: 10})
+			for _, usage := range tc.usages {
+				b.record("root", &usage, nil, 0)
+			}
+			snapshot := b.snapshot()
+			assert.Equal(t, int64(math.MaxInt64), snapshot.Tokens)
+			require.Len(t, snapshot.PerAgent, 1)
+			assert.Equal(t, int64(math.MaxInt64), snapshot.PerAgent[0].Tokens)
+			require.NotNil(t, b.exceeded())
+			b.record("child", &chat.Usage{InputTokens: 1}, nil, 0)
+			assert.Equal(t, int64(math.MaxInt64), b.snapshot().Tokens)
+			require.NotNil(t, b.exceeded())
+		})
+	}
+}
+
+func TestSharedBudgetCostOverflowSaturates(t *testing.T) {
+	t.Parallel()
+	b := newBudgetTracker(&latest.BudgetConfig{MaxTokens: 100})
+	for range 2 {
+		b.record("root", &chat.Usage{InputTokens: 1}, new(math.MaxFloat64), 0)
+	}
+	snapshot := b.snapshot()
+	assert.InDelta(t, math.MaxFloat64, snapshot.Cost, 0)
+	assert.InDelta(t, math.MaxFloat64, snapshot.PerAgent[0].Cost, 0)
+	assert.True(t, snapshot.Unpriced)
+	assert.EqualValues(t, 2, snapshot.Tokens)
 }

@@ -789,10 +789,17 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		if err != nil {
 			return nil, false
 		}
+		var client evaluator.Evaluator
+		var ok bool
 		if a.HasEvaluatorScope() {
-			return a.Evaluator(name)
+			client, ok = a.Evaluator(name)
+		} else {
+			client, ok = r.team.Evaluator(name)
 		}
-		return r.team.Evaluator(name)
+		if !ok || client == nil {
+			return nil, false
+		}
+		return &accountedEvaluator{client: client, name: name}, true
 	}))
 
 	// cache_response is registered here (not in pkg/hooks/builtins)

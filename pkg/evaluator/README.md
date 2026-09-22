@@ -52,5 +52,42 @@ contains input and output token counts. Zero-valued probabilities, scores, and
 confidence remain present through pointer fields. Missing or null confidence
 stays `nil`; required probabilities and scores cannot be missing or null.
 
+## Usage observation and pricing
+
+`Result.Cost` is an estimated USD charge, with `nil` indicating unknown usage or
+pricing and non-nil zero indicating a known zero charge. Automatic pricing is
+limited to the official endpoint and returned model ID `jev-1.13.0`:
+[$0.042/M input tokens, output free](https://docs.typesafe.ai/models). Aliases and
+future versions are not guessed. Set `EvaluatorConfig.Cost` to override pricing,
+including for custom endpoints; an empty cost object explicitly means free.
+Overrides are copied when constructing the client. Cache prices are unused.
+
+Observe request accounting independently of answer validity:
+
+```go
+ctx = evaluator.WithUsageObserver(ctx, func(record evaluator.UsageRecord) {
+    // Record known tokens/cost or track unknown usage/pricing separately.
+    account(record)
+})
+result, err := client.Evaluate(ctx, state)
+```
+
+The callback runs synchronously once per attempted HTTP request, even for errors
+or invalid answers. Transport failures report unknown usage; local validation and
+credential failures before a request produce no record.
+`UsageRecord.Model` is the returned model ID, falling back to the requested ID.
+`UsageRecord.Usage` is nil for missing, null, incomplete, or malformed counts;
+explicit zero counts are non-nil. Unreadable or malformed responses report unknown
+usage. `Result.Usage` remains a value for compatibility. The observer receives
+independent copies of usage and cost; it cannot change the returned result.
+Observers are context-scoped, not retained by clients. A new observer replaces
+an inherited one; nil disables it. Shared callbacks must synchronize their state,
+and all callbacks must finish before `Evaluate` returns. Report every attempted
+request separately, including requests made by custom retrying evaluators.
+
+Count records once, not again from results. The runtime uses these estimates for
+session totals and budget accounting but are not invoices; unknown values should
+not be treated as free.
+
 Run local tests with `go test -race ./pkg/evaluator/...`. Tests use fake
 environment providers and local HTTP servers, not the TypeSafe API.

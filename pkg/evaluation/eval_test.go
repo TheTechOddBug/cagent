@@ -1696,3 +1696,15 @@ func TestComputeSummary_Assertions(t *testing.T) {
 	assert.Equal(t, 5, s.AssertionsTotal)
 	assert.Equal(t, 4, s.AssertionsPassed)
 }
+
+func TestParseContainerEventsEvaluatorSnapshot(t *testing.T) {
+	t.Parallel()
+	events := []map[string]any{
+		{"type": "token_usage", "usage": map[string]any{"cost": 0.1, "output_tokens": float64(50)}},
+		{"type": "evaluation_usage", "evaluation": map[string]any{"cost": 0.01, "usage": map[string]any{"output_tokens": float64(3)}}},
+		{"type": "token_usage", "usage": map[string]any{"cost": 0.11, "output_tokens": float64(50), "snapshot_only": true}},
+	}
+	_, cost, tokens, _ := parseContainerEvents(events)
+	assert.InDelta(t, 0.11, cost, 1e-12)
+	assert.Equal(t, int64(50), tokens, "evaluator snapshots must not duplicate chat output")
+}

@@ -79,6 +79,14 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		return
 	}
 
+	// Accounting for an attempted request must survive cancellation of the run.
+	switch event.(type) {
+	case *EvaluationUsageEvent, *TokenUsageEvent, *SubSessionCompletedEvent:
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+	}
+
 	switch e := event.(type) {
 	case *AgentChoiceEvent:
 		p.streaming.content.WriteString(e.Content)
@@ -130,6 +138,11 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		}
 		if err := p.store.AddSummary(ctx, e.SessionID, item); err != nil {
 			slog.WarnContext(ctx, "Failed to persist summary", "session_id", e.SessionID, "error", err)
+		}
+
+	case *EvaluationUsageEvent:
+		if err := p.store.AddEvaluation(ctx, e.SessionID, e.Evaluation); err != nil {
+			slog.WarnContext(ctx, "Failed to persist evaluator usage", "session_id", e.SessionID, "error", err)
 		}
 
 	case *TokenUsageEvent:

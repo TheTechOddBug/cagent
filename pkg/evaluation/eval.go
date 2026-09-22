@@ -570,8 +570,10 @@ func parseContainerEvents(events []map[string]any) (response string, cost float6
 				if c, ok := usage["cost"].(float64); ok {
 					cost = c
 				}
-				if tokens, ok := usage["output_tokens"].(float64); ok {
-					outputTokens += int64(tokens)
+				if snapshotOnly, _ := usage["snapshot_only"].(bool); !snapshotOnly {
+					if tokens, ok := usage["output_tokens"].(float64); ok {
+						outputTokens += int64(tokens)
+					}
 				}
 			}
 		}

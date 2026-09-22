@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/evaluator"
 )
 
 type environmentFunc func(context.Context, string) (string, bool)
@@ -82,6 +83,9 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"negative timeout":     func(c *latest.EvaluatorConfig) { c.Timeout.Duration = -time.Second },
 		"missing choices":      func(c *latest.EvaluatorConfig) { c.Type = "choice" },
 		"missing levels":       func(c *latest.EvaluatorConfig) { c.Type = "score" },
+		"negative cost":        func(c *latest.EvaluatorConfig) { c.Cost = &latest.CostConfig{Input: -1} },
+		"NaN cost":             func(c *latest.EvaluatorConfig) { c.Cost = &latest.CostConfig{Input: math.NaN()} },
+		"infinite cost":        func(c *latest.EvaluatorConfig) { c.Cost = &latest.CostConfig{Output: math.Inf(1)} },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -130,7 +134,10 @@ func TestEvaluateMissingKey(t *testing.T) {
 			t.Parallel()
 			client, err := New(t.Context(), testConfig("boolean"), environment.NewMapEnvProvider(map[string]string{"TYPESAFE_API_KEY": token}))
 			require.NoError(t, err)
-			result, err := client.Evaluate(t.Context(), "state")
+			ctx := evaluator.WithUsageObserver(t.Context(), func(evaluator.UsageRecord) {
+				t.Error("request without a response reported usage")
+			})
+			result, err := client.Evaluate(ctx, "state")
 			require.ErrorContains(t, err, "API key is missing")
 			assert.Nil(t, result)
 		})

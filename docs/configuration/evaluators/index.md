@@ -39,6 +39,7 @@ evaluators:
 | `base_url` | Optional API base URL. TypeSafe defaults to `https://api.typesafe.ai`; `/v1/systemone` is appended. |
 | `token_key` | Environment variable containing the API key; defaults to `TYPESAFE_API_KEY`. |
 | `timeout` | Request timeout as a duration such as `3s`; defaults to `10s`. |
+| `cost` | Optional USD prices per million tokens: `input` and `output`. Overrides automatic pricing; `cost: {}` explicitly declares free evaluations. |
 
 Connection defaults can be shared through a named provider:
 
@@ -76,16 +77,92 @@ In HCL, use `evaluator "name" { ... }` for a top-level named evaluator.
 - **Score:** `score` is the expected zero-based level index. For three levels its
   range is 0–2, not 0–1. Probability keys are `"0"`, `"1"`, and `"2"`.
 
-Results also carry the returned model ID, token usage, and optional provider
-confidence. Confidence is distinct from outcome probability, and neither should
-be assumed comparable across providers. Missing or invalid required answer fields
-are errors, not zero-valued assessments.
+Results also carry the returned model ID, token usage, an optional estimated USD
+`cost`, and optional provider confidence. Confidence is distinct from outcome
+probability, and neither should be assumed comparable across providers. Missing
+or invalid required answer fields are errors, not zero-valued assessments.
 
 The Go API is `evaluator.Evaluator.Evaluate(ctx, state)`. State can be a string,
 JSON object, or array. Loaded teams expose named clients through `Team.Evaluator`.
 The initial implementation sends one question per evaluation and does not retry
-failed requests automatically. Evaluator usage is returned by the Go API but is
-not yet included in session token/cost totals or run budget accounting.
+failed requests automatically.
+
+## Pricing and accounting
+
+For the official TypeSafe endpoint, the returned model ID `jev-1.13.0` has
+[documented pricing](https://docs.typesafe.ai/models) of **$0.042 per million input
+tokens**, with output tokens free. Automatic pricing uses that exact returned ID,
+not the requested alias: `jev-latest` is priced only if it resolves to a known
+version. Unknown or future versions and custom endpoints have no assumed price.
+
+Set an evaluator-level override for private deployments, negotiated rates, or
+models without built-in pricing:
+
+```yaml
+evaluators:
+  credential_exposure:
+    provider: typesafe
+    model: jev-1.13.0
+    type: boolean
+    instructions: Does this disclose credentials outside a trusted boundary?
+    cost:
+      input: 0.042
+      output: 0
+```
+
+All prices must be finite and nonnegative. Omitted rates in a supplied `cost`
+object are zero; `cost: {}` means explicitly free, not unknown. The shared cost
+configuration also accepts `cache_read` and `cache_write`, but evaluators do not
+currently report cached tokens, so those rates are unused. Clients snapshot their
+pricing overrides when constructed.
+
+`Result.Cost` is a `*float64` in USD: `nil` means the charge is unknown; a pointer
+to zero means a known zero charge. Estimates require both valid reported token
+counts and known pricing. They are not invoices: discounts, minimum charges,
+unreported work, and provider billing adjustments may differ. Even free pricing
+cannot establish a charge when usage is missing.
+
+Go consumers can attach a request-scoped callback with
+`evaluator.WithUsageObserver(ctx, func(evaluator.UsageRecord))`. The callback runs
+synchronously once for each attempted HTTP request, including responses whose answers fail
+validation or whose HTTP status is an error. Records carry the returned model ID
+(or the requested ID when no usable ID is returned), `Usage *Usage`, and
+`Cost *float64`. Malformed, missing, null, or incomplete usage is represented by
+`Usage == nil`; explicitly reported zero input and output counts remain non-nil.
+Transport failures and unreadable or malformed responses produce an unknown-usage
+record. Local validation and credential failures before sending a request do not. Callbacks shared
+across concurrent evaluations must synchronize their own state; a child context
+replaces its inherited observer rather than adding another callback. All callbacks
+must finish before `Evaluate` returns. Custom evaluators that issue multiple
+requests must report each request separately; all records count toward budgets.
+
+`Result.Usage` remains a value for compatibility, so use observation to distinguish
+missing usage from explicit zeros. Observation also captures billable tokens when
+`Evaluate` returns an error instead of a result. Consumers must not count the
+same request again from its result.
+
+Tool-guard evaluations are recorded as separate session items, including calls
+that allow, ask, deny, or return an invalid answer. Known costs contribute to
+session totals and the cost display; `/cost` includes a **By Evaluator** breakdown
+and explicitly marks unknown costs. Records survive save/reload, branching, and
+session export. Runtime events expose each assessment as `evaluation_usage`;
+reported token counts also reach telemetry.
+
+Evaluator input/output tokens and known costs count against run and named budgets
+for the calling agent. They do not change chat context-window usage or trigger
+chat compaction. Budgets are checked before an evaluation and after accounting;
+a reached limit blocks the guarded tool and stops the run, never bypassing the
+guard. Unknown spend produces a warning and marks cost budgets incomplete rather
+than pretending the call was free. Invalid accounting from custom evaluators
+(negative or non-finite costs, negative tokens, or overflowing token totals)
+is recorded as unknown for the invalid fields and blocks the guarded tool.
+Consumption counters saturate at their numeric limits instead of wrapping;
+cost budgets whose shared totals overflow are marked incomplete.
+
+These limits are best-effort, not billing caps: a single evaluation can cross a
+limit, concurrently admitted requests can finish after it is reached, and a
+provider may charge for a timed-out request without reporting usage. Such
+unreported charges cannot be added to the numerical cost or token totals.
 
 ## Tool guards
 

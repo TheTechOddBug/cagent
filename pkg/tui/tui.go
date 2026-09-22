@@ -1571,7 +1571,9 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 			// Token-usage events are accounting, not agent-switch signals: a
 			// background agent task's usage can arrive while the tab is idle
 			// and must not move the current-agent marker to that agent.
-			if _, isUsage := msg.Inner.(*runtime.TokenUsageEvent); !isUsage {
+			switch msg.Inner.(type) {
+			case *runtime.TokenUsageEvent, *runtime.EvaluationUsageEvent:
+			default:
 				if agentName := event.GetAgentName(); agentName != "" {
 					sessionState.SetCurrentAgentName(agentName)
 				}

@@ -124,6 +124,9 @@ func TestEvaluatorConfigRoundTripAndReferences(t *testing.T) {
     type: boolean
     instructions: Does this expose credentials?
     timeout: 2s
+    cost:
+      input: 0.042
+      output: 0
 agents:
   root:
     model: openai/gpt-5-mini
@@ -140,6 +143,7 @@ agents:
 	var cfg Config
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 	assert.Equal(t, 2*time.Second, cfg.Evaluators["risk"].Timeout.Duration)
+	assert.Equal(t, &CostConfig{Input: 0.042}, cfg.Evaluators["risk"].Cost)
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	var decoded Config
@@ -159,5 +163,42 @@ agents:
 			err := yaml.Unmarshal([]byte(strings.Replace(src, tc.old, tc.replacement, 1)), &invalid)
 			require.ErrorContains(t, err, tc.want)
 		})
+	}
+}
+
+func TestEvaluatorCostValidation(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]float64{
+		"negative": -1, "NaN": math.NaN(), "positive infinity": math.Inf(1), "negative infinity": math.Inf(-1),
+	} {
+		for _, field := range []string{"input", "output", "cache_read", "cache_write"} {
+			t.Run(name+"/"+field, func(t *testing.T) {
+				t.Parallel()
+				cfg := EvaluatorConfig{Provider: "typesafe", Model: "jev-latest", Type: "boolean", Instructions: "Assess risk", Cost: &CostConfig{}}
+				switch field {
+				case "input":
+					cfg.Cost.Input = value
+				case "output":
+					cfg.Cost.Output = value
+				case "cache_read":
+					cfg.Cost.CacheRead = value
+				case "cache_write":
+					cfg.Cost.CacheWrite = value
+				}
+				require.ErrorContains(t, cfg.Validate(), "cost")
+				_, err := cfg.Resolve(nil)
+				require.ErrorContains(t, err, "cost")
+			})
+		}
+	}
+	for _, cost := range []*CostConfig{nil, {}, {Input: 0.042, Output: 1}} {
+		cfg := EvaluatorConfig{Provider: "typesafe", Model: "jev-latest", Type: "boolean", Instructions: "Assess risk", Cost: cost}
+		require.NoError(t, cfg.Validate())
+		data, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		var decoded EvaluatorConfig
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		assert.Equal(t, cost, decoded.Cost)
 	}
 }

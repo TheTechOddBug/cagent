@@ -76,6 +76,11 @@ func New(ctx context.Context, cfg latest.EvaluatorConfig, env environment.Provid
 		return nil, errors.New("invalid evaluator question")
 	}
 
+	var cost *latest.CostConfig
+	if cfg.Cost != nil {
+		price := *cfg.Cost
+		cost = &price
+	}
 	client := httpclient.NewHTTPClient(ctx)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &typesafe{
@@ -89,5 +94,7 @@ func New(ctx context.Context, cfg latest.EvaluatorConfig, env environment.Provid
 		question:        questionJSON,
 		probabilityKeys: probabilityKeys,
 		timeout:         timeout,
+		cost:            cost,
+		officialPricing: strings.TrimRight(baseURL, "/") == defaultBaseURL,
 	}, nil
 }
