@@ -357,8 +357,7 @@ func TestCloseSessionCancelsActiveAndQueuedPrompts(t *testing.T) {
 	secondDone := promptAsync(agent, t.Context(), promptRequest("second"))
 	<-rt.firstCanceled
 
-	_, err := agent.CloseSession(t.Context(), acpsdk.CloseSessionRequest{SessionId: testSessionID})
-	require.NoError(t, err)
+	closeDone := closeSessionAsync(agent, t.Context(), testSessionID)
 	secondResult := <-secondDone
 	require.ErrorContains(t, secondResult.err, "not found")
 	assert.Empty(t, secondResult.response.StopReason)
@@ -369,6 +368,7 @@ func TestCloseSessionCancelsActiveAndQueuedPrompts(t *testing.T) {
 	firstResult := <-firstDone
 	require.NoError(t, firstResult.err)
 	assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
+	require.NoError(t, <-closeDone)
 	assert.Empty(t, agent.sessions)
 }
 

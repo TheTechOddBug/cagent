@@ -31,14 +31,14 @@ func newResumeFixture(t *testing.T, wd string, roots ...string) (*Agent, *Sessio
 	a := NewAgent(nil, nil, store)
 	a.team = team.New()
 	s := &Session{id: sess.ID, sess: sess, rt: &fakeRuntime{}, workingDir: wd, additionalDirs: roots}
-	_, stored, err := a.registerSessionIfAbsent(s)
+	_, stored, err := registerTestSession(t.Context(), a, s)
 	require.NoError(t, err)
 	require.True(t, stored)
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
 		t.Error("active or invalid resume must not load a team")
 		return nil, context.Canceled
 	}
-	t.Cleanup(func() { a.Stop(t.Context()) })
+	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 	return a, s
 }
 
@@ -206,6 +206,7 @@ func TestResumeRejectsRunningAndDrainingTurns(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rt := &drainingPromptRuntime{started: make(chan struct{}), release: make(chan struct{}), stopped: make(chan struct{})}
 		a, s, _ := newPromptTestAgent(t, rt)
+		a.team = team.New()
 		s.workingDir = t.TempDir()
 		s.additionalDirs = []string{t.TempDir()}
 		before := slices.Clone(s.additionalDirs)
@@ -288,6 +289,7 @@ func TestResumeRevocationBlocksFilesystemRPC(t *testing.T) {
 	t.Parallel()
 	wd, additional := t.TempDir(), t.TempDir()
 	fs, ctx, peer := newPolicyFileFixture(t, wd, latest.Toolset{}, additional)
+	fs.agent.team = team.New()
 	_, err := fs.agent.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: "policy-session", Cwd: wd})
 	require.NoError(t, err)
 	result := callPolicyFileTool(t, ctx, fs, filesystem.ToolNameReadFile, filepath.Join(additional, "file.txt"))
@@ -323,7 +325,7 @@ func TestResumeRegistrationRaceRejectsInvalidWinner(t *testing.T) {
 				wantErr = "closed"
 			}
 			a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
-				_, stored, err := a.registerSessionIfAbsent(winner)
+				_, stored, err := registerTestSession(t.Context(), a, winner)
 				require.NoError(t, err)
 				require.True(t, stored)
 				return loaded, nil

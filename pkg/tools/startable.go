@@ -277,6 +277,7 @@ type StartableToolSet struct {
 	started    bool
 	attempted  bool
 	recovering bool
+	stopErr    error // Retained until a successful start; pending-stop handoffs must not lose failures.
 
 	// stopRequestMu guards the stop request that StopIfStarted publishes
 	// before waiting for mu. A requester that times out waiting leaves the
@@ -569,6 +570,7 @@ func (s *StartableToolSet) startLocked(ctx context.Context) (err error) {
 	if recovering {
 		if reporter, ok := As[StartReporter](s.ToolSet); ok && reporter.IsStarted() {
 			s.started = true
+			s.stopErr = nil
 			s.recovering = false
 			s.startStreak.reset()
 			s.recoveryStreak.reset()
@@ -685,6 +687,7 @@ func (s *StartableToolSet) startLocked(ctx context.Context) (err error) {
 	// Successful start: clear streaks and backoff so any future failure is
 	// reported as fresh. This is the recovery path — it is intentionally silent.
 	s.started = true
+	s.stopErr = nil
 	s.recovering = false
 	s.startStreak.reset()
 	s.recoveryStreak.reset()
@@ -746,6 +749,7 @@ func (s *StartableToolSet) RestartIfSupported(ctx context.Context) error {
 	}
 
 	s.started = true
+	s.stopErr = nil
 	s.recovering = false
 	s.startStreak.reset()
 	s.listStreak.reset()
@@ -797,7 +801,7 @@ func (s *StartableToolSet) StopIfStarted(ctx context.Context) error {
 	s.stopRequestMu.Unlock()
 
 	if !s.started {
-		return nil
+		return s.stopErr
 	}
 	return s.stopLocked(ctx)
 }
@@ -812,10 +816,11 @@ func (s *StartableToolSet) stopLocked(ctx context.Context) error {
 	s.listStreak.reset()
 	s.recoveryStreak.reset()
 	s.resetStartBackoff()
+	s.stopErr = nil
 	if startable, ok := As[Startable](s.ToolSet); ok {
-		return startable.Stop(ctx)
+		s.stopErr = startable.Stop(ctx)
 	}
-	return nil
+	return s.stopErr
 }
 
 // unlock releases the lifecycle lock after a handshake that settles any
@@ -823,7 +828,8 @@ func (s *StartableToolSet) stopLocked(ctx context.Context) error {
 // Tools, a reporter or Stop: while still holding mu it consumes the request
 // and, when the toolset is started, stops it. The requester may have timed
 // out and returned long ago, so the stop runs under context.WithoutCancel
-// of the request ctx and a failure can only be logged. It reports whether
+// of the request ctx. Failures are retained for waiting shutdown callers and
+// logged for callers that already timed out. It reports whether
 // any request was settled, so non-blocking probes (TryIsStarted, TryState)
 // can avoid reporting a started toolset this very release just reaped.
 //
