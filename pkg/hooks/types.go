@@ -9,7 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelinfo"
-	"github.com/docker/docker-agent/pkg/skills"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // EventType identifies a hook event.
@@ -271,8 +271,8 @@ type PromptFile struct {
 
 // Input is the JSON-serializable payload passed to hooks via stdin.
 type Input struct {
-	PromptFile *PromptFile     `json:"prompt_file,omitempty"`
-	Skill      *skills.Content `json:"skill,omitempty"`
+	PromptFile *PromptFile         `json:"prompt_file,omitempty"`
+	Skill      *tools.SkillContent `json:"skill,omitempty"`
 
 	SessionID     string    `json:"session_id"`
 	Cwd           string    `json:"cwd"`

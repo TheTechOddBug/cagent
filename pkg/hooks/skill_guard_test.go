@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/skills"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 func TestSkillGuardExplicitVerdicts(t *testing.T) {
@@ -44,7 +44,7 @@ func TestSkillGuardExplicitVerdicts(t *testing.T) {
 				{Type: "allow", Model: "test/model", Prompt: "check", Schema: ShapeGuardDecision},
 				{Type: "fail", OnError: "ignore"},
 			}}, "", nil, reg)
-			result, err := exec.Dispatch(t.Context(), EventSkillContentGuard, &Input{Skill: &skills.Content{Content: "untrusted body"}})
+			result, err := exec.Dispatch(t.Context(), EventSkillContentGuard, &Input{Skill: &tools.SkillContent{Content: "untrusted body"}})
 			require.NoError(t, err)
 			assert.Equal(t, tc.allowed, result.Allowed)
 			assert.NotContains(t, result.Message, "untrusted body")
@@ -77,7 +77,7 @@ func TestSkillGuardModel(t *testing.T) {
 			reg := NewRegistry()
 			reg.Register(HookTypeModel, NewModelFactory(client))
 			exec := NewExecutorWithRegistry(&Config{SkillContentGuard: []Hook{{Type: HookTypeModel, Model: "test/model", Prompt: "{{ .Skill.Content | toJSON }}", SystemPrompt: "Literal policy {{ .Skill.Content }}", Schema: ShapeGuardDecision}}}, "", nil, reg)
-			result, err := exec.Dispatch(t.Context(), EventSkillContentGuard, &Input{Skill: &skills.Content{Content: "untrusted body"}})
+			result, err := exec.Dispatch(t.Context(), EventSkillContentGuard, &Input{Skill: &tools.SkillContent{Content: "untrusted body"}})
 			require.NoError(t, err)
 			assert.Equal(t, tc.allowed, result.Allowed)
 			assert.NotContains(t, result.Message, "untrusted body")

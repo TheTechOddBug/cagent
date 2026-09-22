@@ -1231,7 +1231,6 @@ $ docker agent run myorg/coder \
 >
 > Agent-config, global, drop-in, and CLI hooks are additive. For each event, configuration order is: agent-config hooks first, then global hooks from `settings.hooks`, then [hook drop-ins](#hook-drop-in-files-hooksd) from `hooks.d/`, then CLI hooks. Transformation pipelines execute in this order; concurrent events aggregate results in this order. No source replaces another, and individual agents cannot opt out of global hooks.
 
-
 ## Skill content guard
 
 `skill_content_guard` checks raw skill text before embedded commands expand or
@@ -1291,7 +1290,6 @@ and sandboxing in place. Slash commands and command templates still cannot execu
 commands embedded in skills.
 
 See [the skill guard example](https://github.com/docker/docker-agent/blob/main/examples/skill_content_guard.yaml).
-
 
 ## Prompt file guard
 

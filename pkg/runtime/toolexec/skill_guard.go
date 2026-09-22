@@ -6,11 +6,11 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/hooks"
-	"github.com/docker/docker-agent/pkg/skills"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // CheckSkillContent bypasses tool approval: a skill policy is mandatory in every safety mode.
-func CheckSkillContent(ctx context.Context, dispatcher HookDispatcher, a *agent.Agent, sessionID string, content skills.Content) error {
+func CheckSkillContent(ctx context.Context, dispatcher HookDispatcher, a *agent.Agent, sessionID string, content tools.SkillContent) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

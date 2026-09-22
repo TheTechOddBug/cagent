@@ -8,7 +8,6 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -21,7 +20,7 @@ type skillRuntime struct {
 	sessionID string
 }
 
-func (r skillRuntime) CheckSkillContent(ctx context.Context, content skills.Content) error {
+func (r skillRuntime) CheckSkillContent(ctx context.Context, content tools.SkillContent) error {
 	return toolexec.CheckSkillContent(ctx, &hookDispatcher{r: r.runtime}, r.agent, r.sessionID, content)
 }
 

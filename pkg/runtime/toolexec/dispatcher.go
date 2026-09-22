@@ -24,7 +24,6 @@ import (
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/safety"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -1058,7 +1057,7 @@ func (r callRuntime) ConfirmAndRun(ctx context.Context, run tools.ConfirmedRun, 
 	return r.gate().ConfirmAndRun(ctx, run, exec)
 }
 
-func (r callRuntime) CheckSkillContent(ctx context.Context, content skills.Content) error {
+func (r callRuntime) CheckSkillContent(ctx context.Context, content tools.SkillContent) error {
 	return CheckSkillContent(ctx, r.c.d.Hooks, r.c.a, r.c.sess.ID, content)
 }
 

@@ -240,7 +240,7 @@ func checkContent(ctx context.Context, rt tools.Runtime, skill *skills.Skill, pa
 	} else if skill.Local {
 		source = "local"
 	}
-	return rt.CheckSkillContent(ctx, skills.Content{Name: skill.Name, Source: source, Path: path, Content: content})
+	return rt.CheckSkillContent(ctx, tools.SkillContent{Name: skill.Name, Source: source, Path: path, Content: content})
 }
 
 func readFileContent(path string) (string, error) {

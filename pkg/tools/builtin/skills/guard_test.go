@@ -17,10 +17,10 @@ import (
 type checkingRuntime struct {
 	confirmingRuntime
 
-	check func(skills.Content) error
+	check func(tools.SkillContent) error
 }
 
-func (r *checkingRuntime) CheckSkillContent(_ context.Context, content skills.Content) error {
+func (r *checkingRuntime) CheckSkillContent(_ context.Context, content tools.SkillContent) error {
 	return r.check(content)
 }
 
@@ -39,9 +39,9 @@ func TestSkillContentGuardBeforeExpansion(t *testing.T) {
 			}
 			st := New([]skills.Skill{skill}, "")
 			calls := 0
-			rt := &checkingRuntime{check: func(content skills.Content) error {
+			rt := &checkingRuntime{check: func(content tools.SkillContent) error {
 				calls++
-				assert.Equal(t, skills.Content{Name: "test", Source: source, Path: skill.FilePath, Content: body}, content)
+				assert.Equal(t, tools.SkillContent{Name: "test", Source: source, Path: skill.FilePath, Content: body}, content)
 				return errors.New("denied")
 			}}
 			content, err := st.ReadSkillContent(t.Context(), "test", rt)
@@ -70,7 +70,7 @@ func TestSkillGuardConsumesCheckedBytes(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("approved text"), 0o644))
 			st := New([]skills.Skill{{Name: "test", FilePath: path, BaseDir: dir, Local: true}}, dir)
 			calls := 0
-			rt := &checkingRuntime{check: func(content skills.Content) error {
+			rt := &checkingRuntime{check: func(content tools.SkillContent) error {
 				calls++
 				assert.Equal(t, "approved text", content.Content)
 				assert.Equal(t, path, content.Path)
@@ -98,7 +98,7 @@ func TestReadSkillFileHandlerChecksContent(t *testing.T) {
 	st := New([]skills.Skill{{Name: "test", BaseDir: dir, Files: []string{"SKILL.md", "resource.md"}}}, dir)
 	list, err := st.Tools(t.Context())
 	require.NoError(t, err)
-	rt := &checkingRuntime{check: func(content skills.Content) error {
+	rt := &checkingRuntime{check: func(content tools.SkillContent) error {
 		assert.Equal(t, "untrusted", content.Content)
 		return errors.New("denied")
 	}}
