@@ -37,7 +37,7 @@ require (
 	github.com/docker/aijson v0.1.0
 	github.com/docker/cli v29.7.2+incompatible
 	github.com/docker/go-units v0.5.0
-	github.com/docker/portcullis v1.0.0
+	github.com/docker/portcullis v1.1.0
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
 	github.com/expr-lang/expr v1.17.8
 	github.com/fatih/color v1.19.0
@@ -60,7 +60,7 @@ require (
 	github.com/muesli/cancelreader v0.2.2
 	github.com/natefinch/atomic v1.0.1
 	github.com/openai/openai-go/v3 v3.61.0
-	github.com/pb33f/libopenapi v0.39.0
+	github.com/pb33f/libopenapi v0.39.1
 	github.com/rivo/uniseg v0.4.7
 	github.com/rumpl/harness v0.0.0-20260810193856-9376b9c76461
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82

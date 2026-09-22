@@ -178,8 +178,8 @@ github.com/docker/go-metrics v0.0.1 h1:AgB/0SvBxihN0X8OR4SjsblXkbMvalQ8cjmtKQ2rQ
 github.com/docker/go-metrics v0.0.1/go.mod h1:cG1hvH2utMXtqgqqYE9plW6lDxS3/5ayHzueweSI3Vw=
 github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4=
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
-github.com/docker/portcullis v1.0.0 h1:Lc2hWYP+XQ02Sex0xU3svvXeR9ge1guApsvnQ2bCEN0=
-github.com/docker/portcullis v1.0.0/go.mod h1:Fqozd7Xl9v8M3SmCBHMHHd6+MRthduC6xVr4jnU1QAg=
+github.com/docker/portcullis v1.1.0 h1:c45WCRlsQfRxX3hLBqsaKI5/AbA+mdiNNgyeSl4bQZg=
+github.com/docker/portcullis v1.1.0/go.mod h1:Mi8911/f4iLlXzAPVR/FFU9Hflze+7PDoxVzyQqHzGs=
 github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b h1:UMDLDHFR1Chu3qnsPNCrVxq0lZgG6JqHpLL5+iqfSkw=
 github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b/go.mod h1:u8yZRUavu+N4EnFFy6J5fVtjE7lEcZ2YyV2GcBXY9c8=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
@@ -373,8 +373,8 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/pb33f/jsonpath v0.8.3 h1:gdOUYn31vic8iRSSR4I2SEv7UQf2WxLeDcUnDPpGZNE=
 github.com/pb33f/jsonpath v0.8.3/go.mod h1:zBV5LJW4OQOPatmQE2QdKpGQJvhDTlE5IEj6ASaRNTo=
-github.com/pb33f/libopenapi v0.39.0 h1:PHHc0s3JGHSzW/yZL926LufjZrtGq31yWLZvc63443Y=
-github.com/pb33f/libopenapi v0.39.0/go.mod h1:nISN8KLZBliHRwZY0V53JZJtuzI8P52WGfJ6J56z9Tg=
+github.com/pb33f/libopenapi v0.39.1 h1:r9CtrHN+uuH3CCApMeAx0fm72NkMduA8QUvZJ05sm3A=
+github.com/pb33f/libopenapi v0.39.1/go.mod h1:nISN8KLZBliHRwZY0V53JZJtuzI8P52WGfJ6J56z9Tg=
 github.com/pb33f/ordered-map/v2 v2.3.1 h1:5319HDO0aw4DA4gzi+zv4FXU9UlSs3xGZ40wcP1nBjY=
 github.com/pb33f/ordered-map/v2 v2.3.1/go.mod h1:qxFQgd0PkVUtOMCkTapqotNgzRhMPL7VvaHKbd1HnmQ=
 github.com/pb33f/testify v0.1.0 h1:g48/HDU/jn2COspS4nM0scptxiKTJ4DnbX/4ehK6IZ8=
