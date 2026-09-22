@@ -132,7 +132,9 @@ validation or whose HTTP status is an error. Records carry the returned model ID
 Transport failures and unreadable or malformed responses produce an unknown-usage
 record. Local validation and credential failures before sending a request do not. Callbacks shared
 across concurrent evaluations must synchronize their own state; a child context
-replaces its inherited observer rather than adding another callback.
+replaces its inherited observer rather than adding another callback. All callbacks
+must finish before `Evaluate` returns. Custom evaluators that issue multiple
+requests must report each request separately; all records count toward budgets.
 
 `Result.Usage` remains a value for compatibility, so use observation to distinguish
 missing usage from explicit zeros. Observation also captures billable tokens when
@@ -151,7 +153,11 @@ for the calling agent. They do not change chat context-window usage or trigger
 chat compaction. Budgets are checked before an evaluation and after accounting;
 a reached limit blocks the guarded tool and stops the run, never bypassing the
 guard. Unknown spend produces a warning and marks cost budgets incomplete rather
-than pretending the call was free.
+than pretending the call was free. Invalid accounting from custom evaluators
+(negative or non-finite costs, negative tokens, or overflowing token totals)
+is recorded as unknown for the invalid fields and blocks the guarded tool.
+Consumption counters saturate at their numeric limits instead of wrapping;
+cost budgets whose shared totals overflow are marked incomplete.
 
 These limits are best-effort, not billing caps: a single evaluation can cross a
 limit, concurrently admitted requests can finish after it is reached, and a

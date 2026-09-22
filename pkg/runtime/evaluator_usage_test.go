@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -330,4 +331,275 @@ func TestEvaluatorAccountingPersistsAfterCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, summaries, 1)
 	assert.InDelta(t, 0.1, summaries[0].Cost, 1e-12)
+}
+
+func TestEvaluatorInvalidAccountingFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		usage        evaluator.Usage
+		cost         float64
+		invalidUsage bool
+	}{
+		{name: "negative cost", usage: evaluator.Usage{InputTokens: 3, OutputTokens: 2}, cost: -1},
+		{name: "NaN cost", usage: evaluator.Usage{InputTokens: 3, OutputTokens: 2}, cost: math.NaN()},
+		{name: "infinite cost", usage: evaluator.Usage{InputTokens: 3, OutputTokens: 2}, cost: math.Inf(1)},
+		{name: "negative infinite cost", usage: evaluator.Usage{InputTokens: 3, OutputTokens: 2}, cost: math.Inf(-1)},
+		{name: "negative input", usage: evaluator.Usage{InputTokens: -1, OutputTokens: 2}, cost: 0.1, invalidUsage: true},
+		{name: "negative output", usage: evaluator.Usage{InputTokens: 3, OutputTokens: -1}, cost: 0.1, invalidUsage: true},
+		{name: "token overflow", usage: evaluator.Usage{InputTokens: math.MaxInt64, OutputTokens: 1}, cost: 0.1, invalidUsage: true},
+	} {
+		for _, observe := range []bool{false, true} {
+			t.Run(tc.name+"/observer="+strconv.FormatBool(observe), func(t *testing.T) {
+				t.Parallel()
+				client := runtimeEvaluatorFunc(func(ctx context.Context, _ any) (*evaluator.Result, error) {
+					if observe {
+						evaluator.ObserveUsage(ctx, evaluator.UsageRecord{Model: "custom", Usage: &tc.usage, Cost: &tc.cost})
+					}
+					return &evaluator.Result{Type: "boolean", Probability: new(1.0), Model: "custom", Usage: tc.usage, Cost: &tc.cost}, nil
+				})
+				root, tm := evaluationTestAgent(client, "allow")
+				telemetry := &recordingTelemetry{}
+				rt, err := NewLocalRuntime(t.Context(), tm, WithTelemetry(telemetry), WithBudget(&latest.BudgetConfig{MaxCost: 10, MaxTokens: 100}))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = rt.Close() })
+				sess := session.New(session.WithSafetyPolicy(session.SafetyPolicyAutonomous), session.WithNonInteractive(true))
+				var executed bool
+				tool := recordingTool("the_tool", &executed)
+				calls := []tools.ToolCall{{ID: "call", Function: tools.FunctionCall{Name: "the_tool", Arguments: `{}`}}}
+				sink := &collectSink{}
+				rt.processToolCalls(t.Context(), sess, root, calls, tool, sink)
+				assert.False(t, executed)
+				records := evaluationItems(sess)
+				require.Len(t, records, 1)
+				assert.Nil(t, records[0].Cost)
+				assert.Zero(t, sess.TotalCost())
+				snapshot := rt.currentBudget().trackers[runBudgetName].snapshot()
+				assert.True(t, snapshot.Unpriced)
+				assert.Zero(t, snapshot.Cost)
+				if tc.invalidUsage {
+					assert.Nil(t, records[0].Usage)
+					assert.Zero(t, snapshot.Tokens)
+					assert.Empty(t, telemetry.snapshot().tokenUsages)
+				} else {
+					require.NotNil(t, records[0].Usage)
+					assert.EqualValues(t, 5, snapshot.Tokens)
+					require.Len(t, telemetry.snapshot().tokenUsages, 1)
+					assert.Zero(t, telemetry.snapshot().tokenUsages[0].Cost)
+				}
+				_, err = json.Marshal(sess)
+				require.NoError(t, err)
+				store, err := sqlitestore.New(t.Context(), filepath.Join(t.TempDir(), "session.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = store.Close() })
+				observer := newPersistenceObserver(store)
+				observer.OnRunStart(t.Context(), sess)
+				var blocked bool
+				for _, event := range sink.events {
+					_, err = json.Marshal(event)
+					require.NoError(t, err, "accounting events must be JSON/SSE-safe")
+					observer.OnEvent(t.Context(), sess, event)
+					if e, ok := event.(*HookBlockedEvent); ok {
+						blocked = true
+						assert.Contains(t, e.Message, "invalid accounting")
+					}
+				}
+				assert.True(t, blocked)
+				loaded, err := store.GetSession(t.Context(), sess.ID)
+				require.NoError(t, err)
+				assert.Equal(t, records, evaluationItems(loaded))
+				assert.Zero(t, loaded.TotalCost())
+			})
+		}
+	}
+}
+
+func TestEvaluatorAccountsEveryRequest(t *testing.T) {
+	t.Parallel()
+	for _, limit := range []float64{0.1, 1} {
+		t.Run(strconv.FormatFloat(limit, 'f', 1, 64), func(t *testing.T) {
+			t.Parallel()
+			var elapsed atomic.Int64
+			client := runtimeEvaluatorFunc(func(ctx context.Context, _ any) (*evaluator.Result, error) {
+				for _, active := range []time.Duration{2 * time.Second, 3 * time.Second} {
+					elapsed.Store(int64(active))
+					evaluator.ObserveUsage(ctx, evaluator.UsageRecord{Model: "custom", Usage: &evaluator.Usage{InputTokens: 3, OutputTokens: 2}, Cost: new(0.06)})
+				}
+				return &evaluator.Result{Type: "boolean", Probability: new(1.0), Usage: evaluator.Usage{InputTokens: 6, OutputTokens: 4}, Cost: new(0.12)}, nil
+			})
+			root, tm := evaluationTestAgent(client, "allow")
+			rt, err := NewLocalRuntime(t.Context(), tm, WithBudget(&latest.BudgetConfig{MaxCost: limit}), WithClock(func() time.Time { return budgetEpoch.Add(time.Duration(elapsed.Load())) }))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = rt.Close() })
+			sess := session.New(session.WithSafetyPolicy(session.SafetyPolicyAutonomous), session.WithNonInteractive(true))
+			var executed bool
+			tool := recordingTool("the_tool", &executed)
+			calls := []tools.ToolCall{{ID: "call", Function: tools.FunctionCall{Name: "the_tool", Arguments: `{}`}}}
+			sink := &collectSink{}
+			stopped, _ := rt.processToolCalls(t.Context(), sess, root, calls, tool, sink)
+			assert.Equal(t, limit < 0.12, stopped)
+			assert.Equal(t, limit > 0.12, executed)
+			records := evaluationItems(sess)
+			require.Len(t, records, 2, "record each request, never the fallback result again")
+			assert.NotEqual(t, records[0].ID, records[1].ID)
+			assert.InDelta(t, 0.12, sess.TotalCost(), 1e-12)
+			snapshot := rt.currentBudget().trackers[runBudgetName].snapshot()
+			assert.InDelta(t, 0.12, snapshot.Cost, 1e-12)
+			assert.EqualValues(t, 10, snapshot.Tokens)
+			assert.Equal(t, 3*time.Second, snapshot.Elapsed)
+			store, err := sqlitestore.New(t.Context(), filepath.Join(t.TempDir(), "session.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = store.Close() })
+			observer := newPersistenceObserver(store)
+			observer.OnRunStart(t.Context(), sess)
+			for _, event := range sink.events {
+				observer.OnEvent(t.Context(), sess, event)
+			}
+			loaded, err := store.GetSession(t.Context(), sess.ID)
+			require.NoError(t, err)
+			assert.Equal(t, records, evaluationItems(loaded))
+			assert.InDelta(t, 0.12, loaded.TotalCost(), 1e-12)
+		})
+	}
+}
+
+func TestEvaluatorConcurrentRequestObservers(t *testing.T) {
+	t.Parallel()
+	client := runtimeEvaluatorFunc(func(ctx context.Context, _ any) (*evaluator.Result, error) {
+		var wg sync.WaitGroup
+		for range 20 {
+			wg.Go(func() {
+				evaluator.ObserveUsage(ctx, evaluator.UsageRecord{Model: "custom", Usage: &evaluator.Usage{InputTokens: 1}, Cost: new(0.01)})
+			})
+		}
+		wg.Wait()
+		return &evaluator.Result{Type: "boolean", Probability: new(1.0)}, nil
+	})
+	root, tm := evaluationTestAgent(client, "allow")
+	rt, err := NewLocalRuntime(t.Context(), tm, WithBudget(&latest.BudgetConfig{MaxCost: 1}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.Close() })
+	rt.ensureBudget()
+	sess := session.New()
+	sink := &collectSink{}
+	ctx := context.WithValue(t.Context(), evaluatorAccountingKey{}, &evaluatorAccounting{r: rt, sess: sess, a: root, events: sink})
+	result, err := (&accountedEvaluator{client: client, name: "parallel"}).Evaluate(ctx, "state")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Len(t, evaluationItems(sess), 20)
+	assert.InDelta(t, 0.2, sess.TotalCost(), 1e-12)
+	assert.EqualValues(t, 20, rt.currentBudget().trackers[runBudgetName].snapshot().Tokens)
+}
+
+func TestEvaluatorHTTPUsageOverflowBlocksTool(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"model":"jev","answers":{"evaluation":{"type":"noul","noul":1}},"usage":{"input_tokens":9223372036854775807,"output_tokens":1}}`)
+	}))
+	t.Cleanup(server.Close)
+	client, err := evaluatorprovider.New(t.Context(), latest.EvaluatorConfig{Provider: "typesafe", Model: "jev", BaseURL: server.URL, Type: "boolean", Instructions: "Assess"}, environment.NewMapEnvProvider(map[string]string{"TYPESAFE_API_KEY": "token"}))
+	require.NoError(t, err)
+	root, tm := evaluationTestAgent(client, "allow")
+	rt, err := NewLocalRuntime(t.Context(), tm, WithBudget(&latest.BudgetConfig{MaxTokens: 10}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.Close() })
+	sess := session.New(session.WithSafetyPolicy(session.SafetyPolicyAutonomous), session.WithNonInteractive(true))
+	var executed bool
+	tool := recordingTool("the_tool", &executed)
+	sink := &collectSink{}
+	rt.processToolCalls(t.Context(), sess, root, []tools.ToolCall{{ID: "call", Function: tools.FunctionCall{Name: "the_tool", Arguments: `{}`}}}, tool, sink)
+	assert.False(t, executed)
+	require.Len(t, evaluationItems(sess), 1)
+	assert.Nil(t, evaluationItems(sess)[0].Usage)
+	assert.Zero(t, rt.currentBudget().trackers[runBudgetName].snapshot().Tokens)
+}
+
+func TestEvaluatorRejectsOverflowingCostTotal(t *testing.T) {
+	t.Parallel()
+	client := runtimeEvaluatorFunc(func(ctx context.Context, _ any) (*evaluator.Result, error) {
+		for range 2 {
+			evaluator.ObserveUsage(ctx, evaluator.UsageRecord{Model: "custom", Usage: &evaluator.Usage{InputTokens: 1}, Cost: new(math.MaxFloat64)})
+		}
+		return &evaluator.Result{Type: "boolean", Probability: new(1.0)}, nil
+	})
+	root, tm := evaluationTestAgent(client, "allow")
+	rt, err := NewLocalRuntime(t.Context(), tm)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.Close() })
+	sess := session.New()
+	sink := &collectSink{}
+	ctx := context.WithValue(t.Context(), evaluatorAccountingKey{}, &evaluatorAccounting{r: rt, sess: sess, a: root, events: sink})
+	result, err := (&accountedEvaluator{client: client, name: "overflow"}).Evaluate(ctx, "state")
+	require.ErrorContains(t, err, "invalid accounting")
+	assert.Nil(t, result)
+	records := evaluationItems(sess)
+	require.Len(t, records, 2)
+	assert.NotNil(t, records[0].Cost)
+	assert.Nil(t, records[1].Cost)
+	assert.InDelta(t, math.MaxFloat64, sess.TotalCost(), 0)
+	_, err = json.Marshal(sess)
+	require.NoError(t, err)
+	for _, event := range sink.events {
+		_, err = json.Marshal(event)
+		require.NoError(t, err)
+	}
+}
+
+func TestEvaluatorSharedSessionCostOverflow(t *testing.T) {
+	t.Parallel()
+	client := runtimeEvaluatorFunc(func(ctx context.Context, _ any) (*evaluator.Result, error) {
+		evaluator.ObserveUsage(ctx, evaluator.UsageRecord{Model: "custom", Usage: &evaluator.Usage{InputTokens: 1}, Cost: new(math.MaxFloat64)})
+		return &evaluator.Result{Type: "boolean", Probability: new(1.0)}, nil
+	})
+	root, tm := evaluationTestAgent(client, "allow")
+	rt, err := NewLocalRuntime(t.Context(), tm, WithBudget(&latest.BudgetConfig{MaxTokens: 100}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rt.Close() })
+	rt.ensureBudget()
+	parent := session.New()
+	var wg sync.WaitGroup
+	failures := make(chan error, 2)
+	for range 2 {
+		wg.Go(func() {
+			sess := session.New()
+			sink := &collectSink{}
+			ctx := context.WithValue(t.Context(), evaluatorAccountingKey{}, &evaluatorAccounting{r: rt, sess: sess, a: root, events: sink})
+			_, err := (&accountedEvaluator{client: client, name: "huge"}).Evaluate(ctx, "state")
+			if err != nil {
+				failures <- err
+				return
+			}
+			parent.AddSubSession(sess)
+			for _, event := range sink.events {
+				_, err = json.Marshal(event)
+				assert.NoError(t, err)
+			}
+		})
+	}
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	parent.AddEvaluation(&session.Evaluation{ID: "parent", Cost: new(math.MaxFloat64)})
+	assert.InDelta(t, math.MaxFloat64, parent.TotalCost(), 0)
+	assert.InDelta(t, math.MaxFloat64, parent.OwnCost(), 0)
+	assert.InDelta(t, math.MaxFloat64, parent.EmbeddedSubSessionCost(), 0)
+	_, err = json.Marshal(SessionUsage(parent, 1000))
+	require.NoError(t, err)
+	_, err = json.Marshal(parent)
+	require.NoError(t, err)
+	snapshot := rt.currentBudget().trackers[runBudgetName].snapshot()
+	assert.InDelta(t, math.MaxFloat64, snapshot.Cost, 0)
+	assert.InDelta(t, math.MaxFloat64, snapshot.PerAgent[0].Cost, 0)
+	assert.True(t, snapshot.Unpriced)
+	store, err := sqlitestore.New(t.Context(), filepath.Join(t.TempDir(), "session.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	require.NoError(t, store.AddSession(t.Context(), parent))
+	loaded, err := store.GetSession(t.Context(), parent.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, math.MaxFloat64, loaded.TotalCost(), 0)
+	_, err = json.Marshal(loaded)
+	require.NoError(t, err)
 }

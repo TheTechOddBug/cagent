@@ -23,6 +23,7 @@ func WithUsageObserver(ctx context.Context, observer func(UsageRecord)) context.
 
 // ObserveUsage delivers an accounting record to the observer on ctx.
 // Providers call it once per attempted HTTP request, even when answer validation fails.
+// All callbacks must finish before Evaluate returns.
 func ObserveUsage(ctx context.Context, record UsageRecord) {
 	if observer, _ := ctx.Value(usageObserverKey{}).(func(UsageRecord)); observer != nil {
 		// Keep observer mutations independent of the returned assessment.

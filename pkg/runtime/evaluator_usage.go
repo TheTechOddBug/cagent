@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -48,13 +49,18 @@ func (e *accountedEvaluator) Evaluate(ctx context.Context, state any) (*evaluato
 	}
 
 	started := accounting.r.now()
-	observed := false
+	var observerMu sync.Mutex
+	var observed, invalid bool
+	var accountedActive time.Duration
 	observe := func(record evaluator.UsageRecord) {
-		if observed {
-			return
-		}
+		observerMu.Lock()
+		defer observerMu.Unlock()
 		observed = true
-		accounting.record(ctx, e.name, record, accounting.r.now().Sub(started))
+		active := max(accounting.r.now().Sub(started), accountedActive)
+		if !accounting.record(ctx, e.name, record, active-accountedActive) {
+			invalid = true
+		}
+		accountedActive = active
 	}
 	result, err := e.client.Evaluate(evaluator.WithUsageObserver(ctx, observe), state)
 	if !observed && result != nil {
@@ -65,16 +71,39 @@ func (e *accountedEvaluator) Evaluate(ctx context.Context, state any) (*evaluato
 		}
 		observe(record)
 	}
+	if invalid {
+		return nil, errors.New("evaluator reported invalid accounting")
+	}
 	if breach := accounting.r.currentBudget().exceededFor(accounting.a.Name()); breach != nil {
 		return nil, errors.New(breach.Message())
 	}
 	return result, err
 }
 
-func (ac *evaluatorAccounting) record(ctx context.Context, name string, record evaluator.UsageRecord, elapsed time.Duration) {
+func (ac *evaluatorAccounting) record(ctx context.Context, name string, record evaluator.UsageRecord, elapsed time.Duration) bool {
 	// Keep cumulative cost snapshots ordered when guards run concurrently.
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+
+	valid := true
+	if record.Usage != nil {
+		usage := *record.Usage
+		if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.InputTokens > math.MaxInt64-usage.OutputTokens {
+			record.Usage, record.Cost = nil, nil
+			valid = false
+		} else {
+			record.Usage = &usage
+		}
+	}
+	if record.Cost != nil {
+		cost := *record.Cost
+		if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) || math.IsInf(ac.sess.TotalCost()+cost, 0) {
+			record.Cost = nil
+			valid = false
+		} else {
+			record.Cost = &cost
+		}
+	}
 
 	evaluation := &session.Evaluation{
 		ID: uuid.NewString(), Evaluator: name, AgentName: ac.a.Name(),
@@ -103,6 +132,7 @@ func (ac *evaluatorAccounting) record(ctx context.Context, name string, record e
 	usage := SessionUsage(ac.sess, contextLimit, ac.a.CompactionThreshold())
 	usage.SnapshotOnly = true
 	ac.events.Emit(NewTokenUsageEvent(ac.sess.ID, ac.a.Name(), usage))
+	return valid
 }
 
 // EvaluationUsageEvent reports a paid assessment independently of its decision.

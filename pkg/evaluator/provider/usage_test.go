@@ -44,6 +44,7 @@ func TestEvaluateUsagePresence(t *testing.T) {
 		{name: "array", usage: `[]`, wantErr: true},
 		{name: "string tokens", usage: `{"input_tokens":"12","output_tokens":0}`, wantErr: true},
 		{name: "fraction", usage: `{"input_tokens":1.5,"output_tokens":0}`, wantErr: true},
+		{name: "total overflow", usage: `{"input_tokens":9223372036854775807,"output_tokens":1}`, wantErr: true},
 		{name: "overflow", usage: `{"input_tokens":9223372036854775808,"output_tokens":0}`, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

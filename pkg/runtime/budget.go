@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -65,14 +66,19 @@ func (b *budgetTracker) recordSpend(agentName string, usage *chat.Usage, cost *f
 
 	var addTokens int64
 	if usage != nil {
-		addTokens = usage.PromptTokens() + usage.OutputTokens
-		b.tokens += addTokens
+		for _, tokens := range []int64{usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens} {
+			addTokens = addBudgetTokens(addTokens, tokens)
+		}
+		b.tokens = addBudgetTokens(b.tokens, addTokens)
 	}
 	var addCost float64
 	switch {
 	case cost != nil:
 		addCost = *cost
-		b.cost += addCost
+		if math.IsInf(b.cost+addCost, 1) {
+			b.unpriced = true
+		}
+		b.cost = min(math.MaxFloat64, b.cost+addCost)
 	case usage != nil || unknown:
 		b.unpriced = true
 	}
@@ -86,11 +92,22 @@ func (b *budgetTracker) recordSpend(agentName string, usage *chat.Usage, cost *f
 		spend = &agentSpend{}
 		b.perAgent[agentName] = spend
 	}
-	spend.cost += addCost
-	spend.tokens += addTokens
+	spend.cost = min(math.MaxFloat64, spend.cost+addCost)
+	spend.tokens = addBudgetTokens(spend.tokens, addTokens)
 	if active > 0 {
 		spend.active += active
 	}
+}
+
+// Saturate consumption counters so overflow cannot turn spend into credit.
+func addBudgetTokens(total, tokens int64) int64 {
+	if tokens <= 0 {
+		return total
+	}
+	if total > math.MaxInt64-tokens {
+		return math.MaxInt64
+	}
+	return total + tokens
 }
 
 type budgetSnapshot struct {

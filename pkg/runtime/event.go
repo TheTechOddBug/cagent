@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"cmp"
+	"math"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/chat"
@@ -421,7 +422,7 @@ func SessionUsage(sess *session.Session, contextLimit int64, compactionThreshold
 		OutputTokens:  output,
 		ContextLength: input + output,
 		ContextLimit:  contextLimit,
-		Cost:          sess.OwnCost() + sess.EmbeddedSubSessionCost(),
+		Cost:          min(math.MaxFloat64, sess.OwnCost()+sess.EmbeddedSubSessionCost()),
 	}
 	if len(compactionThreshold) > 0 {
 		u.CompactionThreshold = compactionThreshold[0]

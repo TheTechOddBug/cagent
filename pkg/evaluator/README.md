@@ -81,7 +81,9 @@ explicit zero counts are non-nil. Unreadable or malformed responses report unkno
 usage. `Result.Usage` remains a value for compatibility. The observer receives
 independent copies of usage and cost; it cannot change the returned result.
 Observers are context-scoped, not retained by clients. A new observer replaces
-an inherited one; nil disables it. Shared callbacks must synchronize their state.
+an inherited one; nil disables it. Shared callbacks must synchronize their state,
+and all callbacks must finish before `Evaluate` returns. Report every attempted
+request separately, including requests made by custom retrying evaluators.
 
 Count records once, not again from results. The runtime uses these estimates for
 session totals and budget accounting but are not invoices; unknown values should

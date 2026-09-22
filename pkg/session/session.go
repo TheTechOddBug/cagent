@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1855,7 +1856,7 @@ func (s *Session) totalCostLocked() float64 {
 		}
 		cost += item.Cost
 	}
-	return cost
+	return min(math.MaxFloat64, cost)
 }
 
 // OwnCost returns only this session's direct cost: its own messages and
@@ -1876,7 +1877,7 @@ func (s *Session) OwnCost() float64 {
 		}
 		cost += item.Cost
 	}
-	return cost
+	return min(math.MaxFloat64, cost)
 }
 
 // EmbeddedSubSessionCost returns the total cost of sub-sessions that were
@@ -1895,7 +1896,7 @@ func (s *Session) EmbeddedSubSessionCost() float64 {
 			cost += item.SubSession.TotalCost()
 		}
 	}
-	return cost
+	return min(math.MaxFloat64, cost)
 }
 
 // IsToolsApproved reports whether every tool call auto-approves. It is

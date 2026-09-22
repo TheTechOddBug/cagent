@@ -26,6 +26,9 @@ func reportedUsage(raw json.RawMessage) (*evaluator.Usage, error) {
 	if usage.InputTokens == nil || usage.OutputTokens == nil {
 		return nil, nil
 	}
+	if *usage.InputTokens > math.MaxInt64-*usage.OutputTokens {
+		return nil, errors.New("evaluator response has invalid token usage")
+	}
 	return &evaluator.Usage{InputTokens: *usage.InputTokens, OutputTokens: *usage.OutputTokens}, nil
 }
 
