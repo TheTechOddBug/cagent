@@ -177,6 +177,15 @@ func WithDenyList(roots []string) Opt {
 
 // CreateToolSet is used by the tools registry.
 func CreateToolSet(toolset latest.Toolset, runConfig *config.RuntimeConfig) (tools.ToolSet, error) {
+	ts, err := NewFromConfig(toolset, runConfig)
+	if err != nil {
+		return nil, err
+	}
+	return ts, nil
+}
+
+// NewFromConfig builds a filesystem toolset with its configured policies and hooks.
+func NewFromConfig(toolset latest.Toolset, runConfig *config.RuntimeConfig) (*ToolSet, error) {
 	wd := runConfig.WorkingDir
 	if wd == "" {
 		var err error
@@ -623,6 +632,18 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 	}, nil
 }
 
+// ExecutePostEditCommands runs hooks after a transport writes a checked, canonical path.
+func (t *ToolSet) ExecutePostEditCommands(ctx context.Context, path string) error {
+	if len(t.postEditCommands) == 0 {
+		return nil
+	}
+	workingDir, err := filepath.EvalSymlinks(t.workingDir)
+	if err != nil {
+		return fmt.Errorf("resolving post-edit working directory: %w", err)
+	}
+	return runPostEditCommands(ctx, workingDir, t.postEditCommands, path)
+}
+
 // executePostEditCommands executes any matching post-edit commands for the given file path
 func (t *ToolSet) executePostEditCommands(ctx context.Context, filePath string) error {
 	if len(t.postEditCommands) == 0 {
@@ -650,6 +671,12 @@ func (t *ToolSet) resolvePath(path string) string {
 	}
 
 	return filepath.Clean(filepath.Join(t.workingDir, path))
+}
+
+// ResolveAndCheckPath applies filesystem policy without reading or writing file contents.
+// Transport adapters must also enforce containment when they access the path.
+func (t *ToolSet) ResolveAndCheckPath(path string) (string, error) {
+	return t.resolveAndCheckPath(path)
 }
 
 // resolveAndCheckPath is the canonical entry point used by every filesystem

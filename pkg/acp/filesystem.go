@@ -94,8 +94,12 @@ func (t *FilesystemToolset) resolvePathForSession(ctx context.Context, userPath 
 		return "", fmt.Errorf("session %s not found", sessionID)
 	}
 
+	checkedPath, err := t.ResolveAndCheckPath(userPath)
+	if err != nil {
+		return "", err
+	}
 	workingDir, roots := acpSess.pathRoots(t.workingDir)
-	return resolvePathInRoots(userPath, workingDir, roots)
+	return resolvePathInRoots(checkedPath, workingDir, roots)
 }
 
 func resolvePathInRoots(userPath, workingDir string, roots []string) (string, error) {
@@ -166,6 +170,12 @@ func evalSymlinksAllowMissing(path string) (string, error) {
 	}
 	if !os.IsNotExist(err) {
 		return "", err
+	}
+	// A dangling symlink is not a missing path: the client might create its target.
+	if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("cannot resolve symlink %q: %w", path, err)
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return "", statErr
 	}
 
 	// Walk up to find the nearest existing ancestor.
@@ -244,6 +254,9 @@ func (t *FilesystemToolset) handleWriteFile(ctx context.Context, toolCall tools.
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
 
+	if err := t.ExecutePostEditCommands(ctx, resolvedPath); err != nil {
+		return tools.ResultError(fmt.Sprintf("File written successfully but post-edit command failed: %s", err)), nil
+	}
 	return tools.ResultSuccess("File written successfully"), nil
 }
 
@@ -294,6 +307,10 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 		modifiedContent = strings.Replace(modifiedContent, edit.OldText, edit.NewText, 1)
 	}
 
+	resolvedPath, err = t.resolvePathForSession(ctx, resolvedPath)
+	if err != nil {
+		return tools.ResultError(fmt.Sprintf("Error: %s", err)), nil
+	}
 	_, err = t.agent.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
@@ -303,5 +320,8 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
 
+	if err := t.ExecutePostEditCommands(ctx, resolvedPath); err != nil {
+		return tools.ResultError(fmt.Sprintf("File edited successfully but post-edit command failed: %s", err)), nil
+	}
 	return tools.ResultSuccess("File edited successfully"), nil
 }

@@ -69,6 +69,14 @@ New sessions and resumes that reconstruct a runtime load the agent configuration
 
 The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. If a client omits `cwd` when creating a session, tools use the configured working directory or the subprocess directory; the saved session retains an empty `cwd` rather than inventing workspace provenance. A resume without `cwd` uses the saved working directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
 
+## Filesystem Policies and Post-Edit Hooks
+
+The ACP `filesystem` toolset's `read_file`, `write_file`, and `edit_file` operations enforce `allow_list`, `deny_list`, and `.agentsignore` before requesting client I/O. Session workspace roots remain an additional restriction: adding a workspace root does not override a deny rule or expand the configured allow list. Invalid allow/deny configuration disables these operations.
+
+These are path checks, not an atomic sandbox around client I/O. The ACP client must enforce access boundaries when opening files; the agent cannot apply local `os.Root` protections to another process's file operations. User-supplied `resource_link` attachments follow a separate, session-root-checked path and are not governed by a filesystem toolset's policy.
+
+Configured `post_edit` commands run **locally**, in the session toolset's working directory, only after a successful client write. They receive the checked target path in `${file}` and match patterns against that target, not a symlink alias. Hooks require the client and agent to share a coherent on-disk filesystem; editor-buffer-only writes are not mirrored to local disk. A hook failure reports that the write succeeded but the hook failed, without retrying or rolling back the write.
+
 ## CLI Flags
 
 ```bash
