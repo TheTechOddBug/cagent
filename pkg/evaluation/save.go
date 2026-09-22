@@ -101,10 +101,15 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 	var currentCost float64
 	var currentTimestamp string
 
+	// Guards and results can interleave with sibling tool calls. Keep the
+	// assistant batch intact, then append these items in arrival order.
+	var pendingItems []session.Item
+	seenEvaluations := make(map[string]struct{})
+
 	// Track budget stop markers already imported (idempotence on repeats)
 	terminations := &terminationTracker{}
 
-	// Helper to flush current assistant message
+	// Flush the assistant batch before its deferred evaluations and results.
 	flushAssistantMessage := func() {
 		if currentContent.Len() > 0 || currentReasoningContent.Len() > 0 || len(currentToolCalls) > 0 || currentUsage != nil {
 			msg := &session.Message{
@@ -131,6 +136,14 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 			currentCost = 0
 			currentTimestamp = ""
 		}
+		for _, item := range pendingItems {
+			if item.Evaluation != nil {
+				sess.AddEvaluation(item.Evaluation)
+			} else {
+				sess.AddMessage(item.Message)
+			}
+		}
+		pendingItems = nil
 	}
 
 	for _, event := range events {
@@ -141,19 +154,26 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 		case "user_message":
 			// Use the event timestamp for the user message instead of time.Now()
 			if !userMessageAdded {
+				flushAssistantMessage()
 				addNextQuestion(eventTimestamp)
 			}
 
-		case "agent_choice":
+		case "agent_choice", "agent_choice_reasoning":
+			if currentUsage != nil || len(pendingItems) > 0 {
+				flushAssistantMessage()
+			}
 			// Ensure a user message has been added before the first agent response.
 			// This handles event streams that lack a "user_message" event.
 			if !userMessageAdded {
 				addNextQuestion(eventTimestamp)
 			}
 
-			// Accumulate agent response content
 			if content, ok := event["content"].(string); ok {
-				currentContent.WriteString(content)
+				if eventType == "agent_choice_reasoning" {
+					currentReasoningContent.WriteString(content)
+				} else {
+					currentContent.WriteString(content)
+				}
 			}
 			if agentName, ok := event["agent_name"].(string); ok && agentName != "" {
 				currentAgentName = agentName
@@ -162,16 +182,9 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 				currentTimestamp = eventTimestamp
 			}
 
-		case "agent_choice_reasoning":
-			// Accumulate reasoning content (for models like DeepSeek, Claude with extended thinking)
-			if content, ok := event["content"].(string); ok {
-				currentReasoningContent.WriteString(content)
-			}
-			if agentName, ok := event["agent_name"].(string); ok && agentName != "" {
-				currentAgentName = agentName
-			}
-			if eventTimestamp != "" {
-				currentTimestamp = eventTimestamp
+		case "partial_tool_call":
+			if currentUsage != nil || len(pendingItems) > 0 {
+				flushAssistantMessage()
 			}
 
 		case "tool_call":
@@ -196,9 +209,6 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 			}
 
 		case "tool_call_response":
-			// Flush any pending assistant message before adding tool response
-			flushAssistantMessage()
-
 			// The ToolCallResponseEvent serializes tool_call_id as a top-level string field,
 			// not nested under a "tool_call" map.
 			toolCallID, _ := event["tool_call_id"].(string)
@@ -212,7 +222,7 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 					CreatedAt:  eventTimestamp,
 				},
 			}
-			sess.AddMessage(msg)
+			pendingItems = append(pendingItems, session.Item{Message: msg})
 
 		case "evaluation_usage":
 			data, err := json.Marshal(event["evaluation"])
@@ -229,12 +239,26 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 				slog.Warn("Ignoring evaluator usage event without an evaluation ID")
 				continue
 			}
-			flushAssistantMessage()
-			sess.AddEvaluation(evaluation)
+			if _, seen := seenEvaluations[evaluation.ID]; seen {
+				continue
+			}
+			seenEvaluations[evaluation.ID] = struct{}{}
+			if !userMessageAdded {
+				addNextQuestion(eventTimestamp)
+			}
+			pendingItems = append(pendingItems, session.Item{Evaluation: evaluation})
 
 		case "token_usage":
 			// Update session token usage
 			if usage, ok := event["usage"].(map[string]any); ok {
+				// A new per-message usage record also bounds an empty response.
+				lastMsg, hasLastMessage := usage["last_message"].(map[string]any)
+				if hasLastMessage && (currentUsage != nil || len(pendingItems) > 0) {
+					flushAssistantMessage()
+				}
+				if !userMessageAdded {
+					addNextQuestion(eventTimestamp)
+				}
 				// Route the write through the locked setter, keeping the
 				// previous value for any field absent from the event. sess is
 				// local to this import, so the pre-read cannot race.
@@ -250,7 +274,7 @@ func SessionFromEvents(events []map[string]any, title string, questions []string
 				}
 				sess.SetTokensAndCost(sessInput, sessOutput, sessCost)
 				// Extract per-message usage if available
-				if lastMsg, ok := usage["last_message"].(map[string]any); ok {
+				if hasLastMessage {
 					currentUsage = parseMessageUsage(lastMsg)
 					if currentAgentName == "" {
 						currentAgentName, _ = event["agent_name"].(string)

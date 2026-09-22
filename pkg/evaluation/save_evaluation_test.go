@@ -74,14 +74,13 @@ func TestSessionFromEventsEvaluationUsage(t *testing.T) {
 				items := sess.MessagesSnapshot()
 				const evaluationIndex = 2
 				assert.Equal(t, content, items[1].Message.Message.Content)
-				require.Len(t, items, evaluationIndex+4)
+				require.Len(t, items, evaluationIndex+3)
 				assert.Equal(t, evaluation, items[evaluationIndex].Evaluation)
-				toolMessage := items[evaluationIndex+1].Message
+				toolMessage := items[1].Message
 				require.NotNil(t, toolMessage)
 				require.Len(t, toolMessage.Message.ToolCalls, 1)
 				assert.Equal(t, "call-1", toolMessage.Message.ToolCalls[0].ID)
-				usageMessage := items[1].Message
-				assert.Nil(t, toolMessage.Message.Usage, "already flushed usage must not be duplicated")
+				usageMessage := toolMessage
 				assert.Equal(t, &chat.Usage{InputTokens: 100, OutputTokens: 50}, usageMessage.Message.Usage)
 				assert.Equal(t, "chat-model", usageMessage.Message.Model)
 				assert.InDelta(t, 0.01, usageMessage.Message.Cost, 1e-12)
