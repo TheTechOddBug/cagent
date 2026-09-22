@@ -1134,6 +1134,26 @@ func TestRunAgent_MaxIterationsReachedOutcomes(t *testing.T) {
 			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},
 		},
 		{
+			name:       "unknown option rejects",
+			result:     permissionSelected("maybe"),
+			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},
+		},
+		{
+			name:       "empty option rejects",
+			result:     permissionSelected(""),
+			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},
+		},
+		{
+			name:       "tool approval option rejects",
+			result:     permissionSelected("allow"),
+			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},
+		},
+		{
+			name:       "option IDs are case sensitive",
+			result:     permissionSelected("Continue"),
+			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},
+		},
+		{
 			name:       "cancelled rejects",
 			result:     permissionCancelled(),
 			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeReject}},

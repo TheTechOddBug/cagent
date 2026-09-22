@@ -897,7 +897,7 @@ func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session
 	}
 
 	if permResp.Outcome.Cancelled != nil || permResp.Outcome.Selected == nil ||
-		string(permResp.Outcome.Selected.OptionId) == "stop" {
+		string(permResp.Outcome.Selected.OptionId) != "continue" {
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeReject})
 	} else {
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeApprove})
