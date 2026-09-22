@@ -97,7 +97,7 @@ func checkWorkspaceTools(t *testing.T, s *Session, marker string) {
 
 	cmd := "cat marker.txt"
 	if goruntime.GOOS == "windows" {
-		cmd = "cmd /c type marker.txt"
+		cmd = "type marker.txt"
 	}
 	for _, cwd := range []string{"", "nested"} {
 		args, err := json.Marshal(map[string]any{"cmd": cmd, "cwd": cwd})

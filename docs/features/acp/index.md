@@ -105,7 +105,7 @@ A resume must name the same directory as the saved workspace. Filesystem aliases
 
 Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
 
-Resuming a registered session while a foreground prompt is running, queued, or draining returns an error without canceling the prompt or changing roots. Retry after the prompt finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
+Resuming a registered session while a foreground prompt is running, queued, or draining, or another resume holds the setup reservation, returns a busy error without canceling that work or changing roots. Retry after it finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
 
 ## Closing Sessions
 
