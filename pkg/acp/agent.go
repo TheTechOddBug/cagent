@@ -831,7 +831,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 			},
 			{
 				Kind:     acp.PermissionOptionKindAllowAlways,
-				Name:     "Allow and remember my choice",
+				Name:     "Always allow this tool for this session",
 				OptionId: "allow-always",
 			},
 			{
@@ -858,7 +858,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 	case "allow":
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeApprove})
 	case "allow-always":
-		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeApproveAutonomous})
+		acpSess.rt.Resume(ctx, runtime.ResumeApproveTool(e.ToolCall.Function.Name))
 	case "reject":
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeReject})
 	default:

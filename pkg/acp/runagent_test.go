@@ -888,7 +888,7 @@ func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 	assert.Equal(t, map[string]any{"command": "rm -rf /tmp/scratch"}, req.ToolCall.RawInput)
 	assert.Equal(t, []acpsdk.PermissionOption{
 		{Kind: acpsdk.PermissionOptionKindAllowOnce, Name: "Allow this action", OptionId: "allow"},
-		{Kind: acpsdk.PermissionOptionKindAllowAlways, Name: "Allow and remember my choice", OptionId: "allow-always"},
+		{Kind: acpsdk.PermissionOptionKindAllowAlways, Name: "Always allow this tool for this session", OptionId: "allow-always"},
 		{Kind: acpsdk.PermissionOptionKindRejectOnce, Name: "Skip this action", OptionId: "reject"},
 	}, req.Options)
 
@@ -916,9 +916,9 @@ func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
 			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeApprove}},
 		},
 		{
-			name:       "allow-always approves session",
+			name:       "allow-always approves only this tool",
 			result:     permissionSelected("allow-always"),
-			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeApproveAutonomous}},
+			wantResume: []runtime.ResumeRequest{{Type: runtime.ResumeTypeApproveTool, ToolName: "shell"}},
 		},
 		{
 			name:       "reject rejects",
@@ -954,6 +954,83 @@ func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
 			assert.Len(t, f.peer.recordedRequests(), 1)
 		})
 	}
+}
+
+type approvalTestProvider struct {
+	mockProvider
+
+	toolNames []string
+	next      int
+}
+
+func (p *approvalTestProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
+	if p.next == len(p.toolNames) {
+		return &mockStream{responses: []chat.MessageStreamResponse{{
+			Choices: []chat.MessageStreamChoice{{
+				Delta:        chat.MessageDelta{Content: "Done"},
+				FinishReason: chat.FinishReasonStop,
+			}},
+		}}}, nil
+	}
+	name := p.toolNames[p.next]
+	p.next++
+	return &mockStream{responses: []chat.MessageStreamResponse{{
+		Choices: []chat.MessageStreamChoice{{
+			Delta: chat.MessageDelta{ToolCalls: []tools.ToolCall{{
+				ID:       fmt.Sprintf("call-%d", p.next),
+				Type:     "function",
+				Function: tools.FunctionCall{Name: name, Arguments: "{}"},
+			}}},
+			FinishReason: chat.FinishReasonToolCalls,
+		}},
+	}}}, nil
+}
+
+func TestRunAgent_AlwaysAllowKeepsOtherToolsGated(t *testing.T) {
+	t.Parallel()
+
+	var executed []string
+	handler := func(_ context.Context, call tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		executed = append(executed, call.Function.Name)
+		return tools.ResultSuccess("ok"), nil
+	}
+	prov := &approvalTestProvider{
+		mockProvider: mockProvider{id: modelsdev.NewID("test", "approval")},
+		toolNames:    []string{"allowed_tool", "allowed_tool", "other_tool"},
+	}
+	root := agentpkg.New("root", "You are a test agent", agentpkg.WithModel(prov), agentpkg.WithTools(
+		tools.Tool{Name: "allowed_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
+		tools.Tool{Name: "other_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
+	))
+	rt, err := runtime.New(t.Context(), team.New(team.WithAgents(root)), runtime.WithSessionCompaction(false))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rt.Close()) })
+
+	f := newRunAgentFixtureWithPermissions(t, &fakeRuntime{}, &captureWriter{}, func(req acpsdk.RequestPermissionRequest) any {
+		if req.ToolCall.ToolCallId == "call-1" {
+			return permissionSelected("allow-always")
+		}
+		return permissionSelected("allow")
+	})
+	f.sess.rt = rt
+	f.sess.sess = session.New(
+		session.WithUserMessage("Run the tools"),
+		session.WithSafetyPolicy(session.SafetyPolicyStrict),
+	)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, f.agent.runAgent(ctx, f.sess))
+
+	assert.Equal(t, []string{"allowed_tool", "allowed_tool", "other_tool"}, executed)
+	reqs := f.peer.recordedRequests()
+	require.Len(t, reqs, 2)
+	assert.Equal(t, acpsdk.ToolCallId("call-1"), reqs[0].ToolCall.ToolCallId)
+	assert.Equal(t, acpsdk.ToolCallId("call-3"), reqs[1].ToolCall.ToolCallId)
+	assert.Equal(t, session.SafetyPolicyStrict, f.sess.sess.GetSafetyPolicy())
+	perms := f.sess.sess.ClonePermissions()
+	require.NotNil(t, perms)
+	assert.Equal(t, []string{"allowed_tool"}, perms.Allow)
 }
 
 func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {

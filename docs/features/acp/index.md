@@ -61,6 +61,7 @@ Host Application
 - **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied MCP servers and audio prompts are not supported; use `session/resume`, not `session/load`, for persisted sessions.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
 - **Filesystem operations** — Agents can read/write files relative to the host's working directory
+- **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
 ## CLI Flags
 
