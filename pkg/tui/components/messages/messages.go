@@ -606,8 +606,9 @@ func (m *model) handleMouseMotion(msg tea.MouseMotionMsg) (layout.Model, tea.Cmd
 }
 
 func (m *model) handleMouseRelease(msg tea.MouseReleaseMsg) (layout.Model, tea.Cmd) {
-	if updated, cmd := m.handleScrollviewUpdate(msg); cmd != nil {
-		return updated, cmd
+	// Unrelated releases must not restore scroll state from a deferred frame.
+	if m.scrollview.IsDragging() {
+		return m.handleScrollviewUpdate(msg)
 	}
 
 	if msg.Button == tea.MouseLeft && m.selection.mouseButtonDown {
