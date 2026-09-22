@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -37,12 +38,72 @@ func validateResumeWorkingDir(saved, requested string) error {
 	return nil
 }
 
-func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string) error {
+func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation) error {
 	saved, _ := s.workspaceSnapshot()
 	if err := validateResumeWorkingDir(saved, workingDir); err != nil {
 		return acp.NewInvalidParams(err.Error())
 	}
+	if err := a.reserveResume(ctx, s); err != nil {
+		return err
+	}
+	defer func() { s.turns <- struct{}{} }()
 
+	var next *clientMCPGeneration
+	if s.clientMCP != nil {
+		var err error
+		next, err = prepareClientMCP(ctx, servers, cmp.Or(saved, a.defaultWorkingDir()))
+		if err != nil {
+			return errors.Join(err, a.discardClientMCP(ctx, op, s, next))
+		}
+	}
+	a.mu.Lock()
+	s.mu.Lock()
+	var commitErr error
+	switch {
+	case a.stopped || a.sessions[s.id] != s || s.closed:
+		commitErr = errSessionClosed
+	case s.failed != nil:
+		commitErr = s.failed
+	case op.lifecycle.err != nil:
+		commitErr = op.lifecycle.err
+	case ctx.Err() != nil:
+		commitErr = ctx.Err()
+	}
+	var previous *clientMCPGeneration
+	if commitErr == nil {
+		s.additionalDirs = slices.Clone(additionalDirs)
+		if s.clientMCP != nil {
+			previous = s.clientMCP.swap(next)
+		}
+	}
+	s.mu.Unlock()
+	a.mu.Unlock()
+	if commitErr != nil {
+		return errors.Join(commitErr, a.discardClientMCP(ctx, op, s, next))
+	}
+	return a.discardClientMCP(ctx, op, s, previous)
+}
+
+func (a *Agent) discardClientMCP(ctx context.Context, op *agentOperation, s *Session, generation *clientMCPGeneration) error {
+	err := generation.close(ctx)
+	if err != nil {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		op.lifecycle.err = errors.Join(op.lifecycle.err, err)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.failed = fmt.Errorf("client MCP cleanup failed: %w", err)
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if generation := s.clientMCP.generation(); generation != nil {
+			generation.retire()
+		}
+	}
+	return err
+}
+
+func (a *Agent) reserveResume(ctx context.Context, s *Session) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.stopped {
@@ -56,6 +117,12 @@ func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, working
 	if s.closed {
 		return errSessionClosed
 	}
+	if s.failed != nil {
+		return s.failed
+	}
+	if lifecycle := a.lifecycles[s.id]; lifecycle != nil && lifecycle.err != nil {
+		return lifecycle.err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -66,11 +133,9 @@ func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, working
 	s.initTurns()
 	select {
 	case <-s.turns:
-		defer func() { s.turns <- struct{}{} }()
 	default:
 		// A canceled queued prompt can clear cancel while an earlier turn drains.
 		return busy
 	}
-	s.additionalDirs = slices.Clone(additionalDirs)
 	return nil
 }

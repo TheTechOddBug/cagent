@@ -58,10 +58,36 @@ Host Application
 
 - **Stdio transport** — No network ports needed; ideal for subprocess integration
 - **Session persistence** — SQLite-backed sessions survive process restarts
-- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied MCP servers and audio prompts are not supported; use `session/resume`, not `session/load`, for persisted sessions.
+- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio MCP servers are supported; audio prompts are not supported; use `session/resume`, not `session/load`, for persisted sessions.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
+
+## Client-Supplied MCP Servers
+
+Pass stdio MCP servers in `mcpServers` on `session/new` or `session/resume`:
+
+```json
+{
+  "cwd": "/home/user/project",
+  "mcpServers": [
+    {
+      "name": "project-tools",
+      "command": "/usr/local/bin/project-mcp",
+      "args": ["--stdio", "--project", "/home/user/project"],
+      "env": [{"name": "PROJECT_MODE", "value": "development"}]
+    }
+  ]
+}
+```
+
+The executable path must be absolute. These are **local subprocesses**, running with the agent's OS permissions and the session's working directory. Arguments and environment values are passed literally, without shell expansion or installation. Processes inherit the agent's environment (including credentials); supplied entries override inherited values, and the last duplicate wins. Only stdio is supported here; HTTP, SSE, and MCP-over-ACP configurations are rejected.
+
+The agent initializes the servers and lists their tools before accepting setup, within a 30-second setup budget. Client tools supplement configured tools and are exposed to the session's agents, honoring each agent's read-only filter. Model-facing names are bounded, generation-specific aliases; remembered per-tool approvals do not transfer to replacements. Existing global permission policies still apply.
+
+Every successful resume supplies the complete replacement server list. An omitted or empty list removes all client servers. An idle session keeps its runtime and conversation; setup failure leaves its previous servers and additional roots unchanged. Cached calls to retired tools fail rather than being redirected, and calls already using the old servers are canceled and joined during retirement. Cleanup failure blocks further prompts/resumes and is retained by close/shutdown; failed cleanup remains an error for that agent process.
+
+Servers are not automatically restarted or retried after disconnection; explicitly resume to create fresh connections. Closing a session retires and stops its client subprocesses, including while calls are pending. Connection settings and environment values are not persisted as session configuration: clients must send them again on cold resume. This does not implement an OS sandbox or full ACP elicitation support.
 
 ## Elicitation
 
@@ -79,11 +105,11 @@ A resume must name the same directory as the saved workspace. Filesystem aliases
 
 Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
 
-Resuming a registered session while a foreground prompt is running, queued, or draining returns an error without canceling the prompt or changing roots. Retry after the prompt finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
+Resuming a registered session while a foreground prompt is running, queued, or draining, or another resume holds the setup reservation, returns a busy error without canceling that work or changing roots. Retry after it finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
 
 ## Closing Sessions
 
-A successful `session/close` response means the foreground turn has drained, the runtime has joined its background agents, and session toolset shutdown has completed through the existing toolset lifecycle. Close also cancels and joins in-flight resumes for that session so they cannot publish a replacement runtime after closure.
+A successful `session/close` response means the foreground turn has drained, the runtime has joined its background agents, and session toolset shutdown has completed through the existing toolset lifecycle. Client MCP shutdown starts before those joins so blocked subprocess I/O can be terminated rather than strand the drain. Close also cancels and joins in-flight resumes for that session so they cannot publish a replacement runtime after closure.
 
 Concurrent close requests join the same cleanup. Canceling a close request only stops that caller's wait: cleanup continues, and resume remains blocked until it succeeds. After a successful close, an explicit resume may reconstruct the session. Cleanup failures are returned and retained; the same session cannot reopen in that agent process when cleanup is uncertain.
 

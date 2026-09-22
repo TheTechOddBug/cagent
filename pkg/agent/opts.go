@@ -33,6 +33,16 @@ func WithToolSets(toolSet ...tools.ToolSet) Opt {
 	}
 }
 
+// WithAdditionalToolSets appends toolsets without replacing existing lifecycle wrappers.
+// Like other options, apply it before the agent is used by a runtime.
+func WithAdditionalToolSets(toolsets ...tools.ToolSet) Opt {
+	return func(a *Agent) {
+		for _, ts := range toolsets {
+			a.toolsets = append(a.toolsets, tools.NewStartable(ts))
+		}
+	}
+}
+
 func WithTools(allTools ...tools.Tool) Opt {
 	return func(a *Agent) {
 		a.tools = allTools

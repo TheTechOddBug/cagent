@@ -61,6 +61,7 @@ type Session struct {
 	sess           *session.Session
 	rt             runtime.Runtime
 	team           *team.Team
+	clientMCP      *clientMCPTools
 	workingDir     string
 	additionalDirs []string
 
@@ -70,6 +71,7 @@ type Session struct {
 	cancel      context.CancelFunc
 	generation  uint64
 	closed      bool
+	failed      error
 	cleanupDone chan struct{}
 	cleanupErr  error
 }
@@ -97,6 +99,15 @@ func (s *Session) close(ctx context.Context) <-chan struct{} {
 	}
 	s.initTurns()
 	s.cleanupDone = make(chan struct{})
+	var mcpClosed chan error
+	if s.clientMCP != nil {
+		generation := s.clientMCP.generation()
+		if generation != nil {
+			generation.retire()
+			mcpClosed = make(chan error, 1)
+			go func() { mcpClosed <- generation.close(ctx) }()
+		}
+	}
 	go func() {
 		defer close(s.cleanupDone)
 		// The admitted turn drains runtime events before returning the token.
@@ -106,6 +117,9 @@ func (s *Session) close(ctx context.Context) <-chan struct{} {
 			if err := s.rt.Close(); err != nil {
 				s.cleanupErr = errors.Join(s.cleanupErr, fmt.Errorf("closing ACP runtime: %w", err))
 			}
+		}
+		if mcpClosed != nil {
+			s.cleanupErr = errors.Join(s.cleanupErr, <-mcpClosed)
 		}
 		if s.team != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -137,6 +151,12 @@ func (s *Session) startTurn(ctx context.Context) (context.Context, func(), error
 		s.mu.Unlock()
 		cancel()
 		return nil, nil, errSessionClosed
+	}
+	if s.failed != nil {
+		err := s.failed
+		s.mu.Unlock()
+		cancel()
+		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()
@@ -170,14 +190,18 @@ func (s *Session) startTurn(ctx context.Context) (context.Context, func(), error
 
 	s.mu.Lock()
 	closed := s.closed
+	failed := s.failed
 	current := s.generation == generation
 	err := turnCtx.Err()
 	s.mu.Unlock()
-	if closed || !current || err != nil {
+	if closed || failed != nil || !current || err != nil {
 		turns <- struct{}{}
 		s.clearTurn(generation, cancel)
 		if closed {
 			return nil, nil, errSessionClosed
+		}
+		if failed != nil {
+			return nil, nil, failed
 		}
 		if err != nil {
 			return nil, nil, err
@@ -288,21 +312,29 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 				Audio:           false, // Not yet supported
 			},
 			McpCapabilities: acp.McpCapabilities{
-				Http: false, // MCP servers from client not yet supported
-				Sse:  false, // MCP servers from client not yet supported
+				Http: false, // Only client-supplied stdio servers are supported.
+				Sse:  false,
 			},
 		},
 	}, nil
 }
 
 // newRuntime creates a session-owned team and runtime using the default agent.
-func (a *Agent) newRuntime(ctx context.Context, workingDir string) (*Session, *agent.Agent, error) {
+func (a *Agent) newRuntime(ctx context.Context, workingDir string, servers []acp.McpServerStdio) (*Session, *agent.Agent, error) {
 	workingDir = cmp.Or(workingDir, a.defaultWorkingDir())
 	loadResult, err := a.loadTeamSerialized(ctx, workingDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load session team: %w", err)
 	}
-	acpSess := &Session{team: loadResult.Team}
+	acpSess := &Session{team: loadResult.Team, clientMCP: &clientMCPTools{}}
+	for _, name := range acpSess.team.AgentNames() {
+		agt, err := acpSess.team.Agent(name)
+		if err != nil {
+			return acpSess, nil, err
+		}
+		cfg, _ := acpSess.team.AgentConfig(name)
+		agent.WithAdditionalToolSets(teamloader.WithReadOnlyFilter(acpSess.clientMCP, cfg.ReadOnly))(agt)
+	}
 	defaultAgent, err := acpSess.team.DefaultAgent()
 	if err != nil {
 		return acpSess, nil, fmt.Errorf("failed to resolve default agent: %w", err)
@@ -322,6 +354,11 @@ func (a *Agent) newRuntime(ctx context.Context, workingDir string) (*Session, *a
 		return acpSess, nil, err
 	}
 	acpSess.rt = rt
+	generation, err := prepareClientMCP(ctx, servers, workingDir)
+	acpSess.clientMCP.swap(generation)
+	if err != nil {
+		return acpSess, nil, err
+	}
 	return acpSess, defaultAgent, nil
 }
 
@@ -353,8 +390,9 @@ func (a *Agent) registerSessionIfAbsent(ctx context.Context, acpSess *Session, l
 func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_ acp.NewSessionResponse, retErr error) {
 	slog.DebugContext(ctx, "ACP NewSession called", "cwd", params.Cwd)
 
-	if len(params.McpServers) > 0 {
-		slog.WarnContext(ctx, "MCP servers provided by client are not yet supported", "count", len(params.McpServers))
+	servers, err := validateClientMCPServers(params.McpServers)
+	if err != nil {
+		return acp.NewSessionResponse{}, err
 	}
 
 	workingDir, err := resolveWorkingDir(params.Cwd)
@@ -379,7 +417,7 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 		return acp.NewSessionResponse{}, err
 	}
 	defer a.finishOperation(op)
-	acpSess, defaultAgent, err := a.newRuntime(ctx, workingDir)
+	acpSess, defaultAgent, err := a.newRuntime(ctx, workingDir, servers)
 	stored := false
 	defer func() {
 		if !stored && acpSess != nil {
@@ -496,6 +534,10 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 		return acp.ResumeSessionResponse{}, err
 	}
 
+	servers, err := validateClientMCPServers(params.McpServers)
+	if err != nil {
+		return acp.ResumeSessionResponse{}, err
+	}
 	workingDir, err := resolveWorkingDir(params.Cwd)
 	if err != nil {
 		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
@@ -515,7 +557,7 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 	existing := a.sessions[sid]
 	a.mu.Unlock()
 	if existing != nil {
-		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs)
+		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op)
 	}
 
 	sess, err := a.sessionStore.GetSession(ctx, sid)
@@ -526,7 +568,7 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
 	}
 
-	acpSess, _, err := a.newRuntime(ctx, sess.WorkingDir)
+	acpSess, _, err := a.newRuntime(ctx, sess.WorkingDir, servers)
 	stored := false
 	defer func() {
 		if !stored && acpSess != nil {
@@ -553,7 +595,7 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 		if cleanupErr != nil {
 			return acp.ResumeSessionResponse{}, cleanupErr
 		}
-		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs)
+		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op)
 	}
 
 	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)

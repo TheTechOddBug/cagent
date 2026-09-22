@@ -254,24 +254,23 @@ func TestResumeRootsSnapshotsAreIndependent(t *testing.T) {
 	_, current := s.workspaceSnapshot()
 	assert.Equal(t, []string{second}, current)
 
-	errs := make(chan error, 150)
+	// Overlapping resumes may return busy; one writer isolates snapshot races.
+	errs := make(chan error, 100)
 	var wg sync.WaitGroup
-	for i := range 4 {
+	for i := range 3 {
 		wg.Go(func() {
-			for range 50 {
+			for j := range 50 {
 				switch i {
 				case 0:
-					_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id), AdditionalDirectories: []string{first}})
+					root := []string{first, second}[j%2]
+					_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id), AdditionalDirectories: []string{root}})
 					errs <- err
 				case 1:
-					_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id), AdditionalDirectories: []string{second}})
-					errs <- err
-				case 2:
 					_, roots := a.sessionListPaths(t.Context(), s.id)
 					if assert.Len(t, roots, 1) {
 						assert.Contains(t, []string{first, second}, roots[0])
 					}
-				case 3:
+				case 2:
 					_, err := a.resolveSessionPath(s.id, "file.txt")
 					errs <- err
 				}
@@ -392,7 +391,7 @@ func TestResumeRejectsRemovedRegistration(t *testing.T) {
 	a.mu.Lock()
 	delete(a.sessions, s.id)
 	a.mu.Unlock()
-	err := a.resumeRegisteredSession(t.Context(), s, "", nil)
+	err := a.resumeRegisteredSession(t.Context(), s, "", nil, nil, nil)
 	require.ErrorIs(t, err, errSessionClosed)
 	_, after := s.workspaceSnapshot()
 	assert.Equal(t, before, after)

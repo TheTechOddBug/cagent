@@ -16,11 +16,14 @@ import (
 type stdioMCPClient struct {
 	sessionClient
 
-	command string
-	argsMu  sync.RWMutex
-	args    []string
-	env     []string
-	cwd     string
+	command       string
+	argsMu        sync.RWMutex
+	args          []string
+	env           []string
+	cwd           string
+	sessionOwned  bool
+	processMu     sync.Mutex
+	processCancel context.CancelFunc
 }
 
 func newStdioCmdClient(command string, args, env []string, cwd string) *stdioMCPClient {
@@ -74,17 +77,67 @@ func (c *stdioMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeRequ
 		Version: "1.0.0",
 	}, opts)
 
-	cmd := exec.CommandContext(ctx, c.command, c.getArgs()...)
+	connectCtx, processCtx := ctx, ctx
+	var cancel context.CancelFunc
+	var stopCancel func() bool
+	if c.sessionOwned {
+		connectCtx = cancellableParentFromContext(ctx)
+		if connectCtx == nil {
+			connectCtx = ctx
+		}
+		if err := connectCtx.Err(); err != nil {
+			return nil, err
+		}
+		processCtx, cancel = context.WithCancel(context.WithoutCancel(ctx))
+		c.processMu.Lock()
+		c.processCancel = cancel
+		c.processMu.Unlock()
+		stopCancel = context.AfterFunc(connectCtx, cancel)
+		defer stopCancel()
+	}
+	cmd := exec.CommandContext(processCtx, c.command, c.getArgs()...)
 	cmd.Env = c.env
 	cmd.Dir = c.cwd
-	session, err := client.Connect(ctx, &gomcp.CommandTransport{
-		Command: cmd,
-	}, nil)
+	transport := &trackedCommandTransport{CommandTransport: gomcp.CommandTransport{Command: cmd}}
+	session, err := client.Connect(connectCtx, transport, nil)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+			if transport.connection != nil {
+				_ = transport.connection.Close()
+			}
+		}
 		return nil, err
+	}
+	if stopCancel != nil && (!stopCancel() || connectCtx.Err() != nil) {
+		cancel()
+		_ = session.Close()
+		return nil, connectCtx.Err()
 	}
 
 	c.setSession(session)
 
 	return session.InitializeResult(), nil
+}
+
+// trackedCommandTransport also closes SDK discovery failures that return no session.
+type trackedCommandTransport struct {
+	gomcp.CommandTransport
+
+	connection gomcp.Connection
+}
+
+func (t *trackedCommandTransport) Connect(ctx context.Context) (gomcp.Connection, error) {
+	conn, err := t.CommandTransport.Connect(ctx)
+	t.connection = conn
+	return conn, err
+}
+
+func (c *stdioMCPClient) cancelProcess() {
+	c.processMu.Lock()
+	cancel := c.processCancel
+	c.processMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }

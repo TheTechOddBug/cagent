@@ -179,6 +179,8 @@ type Toolset struct {
 	// callTimeout bounds an individual callTool invocation, including its
 	// one reconnect-retry. Zero means no timeout (use the caller's ctx).
 	callTimeout time.Duration
+	// sessionOwned stdio connections are explicitly replaced, never auto-reconnected.
+	sessionOwned bool
 
 	mu sync.Mutex
 
@@ -245,6 +247,22 @@ func NewToolsetCommand(name, command string, args, env []string, cwd string, pol
 		callTimeout: firstOrZero(policy).CallTimeout,
 	}
 	ts.supervisor = newSupervisor(ts, firstOrZero(policy))
+	return ts
+}
+
+// NewSessionToolsetCommand creates an explicitly owned stdio connection with cancellable setup.
+// It never reconnects automatically; callers replace it with a fresh instance after failure.
+func NewSessionToolsetCommand(name, command string, args, env []string, cwd string) *Toolset {
+	client := newStdioCmdClient(command, slices.Clone(args), slices.Clone(env), cwd)
+	client.sessionOwned = true
+	ts := &Toolset{
+		name:         name,
+		mcpClient:    client,
+		logID:        command,
+		description:  buildStdioDescription(command, args),
+		sessionOwned: true,
+	}
+	ts.supervisor = newSupervisor(ts, lifecycle.Policy{Restart: lifecycle.RestartNever})
 	return ts
 }
 
@@ -512,6 +530,13 @@ func (ts *Toolset) Stop(ctx context.Context) error {
 	if ts.supervisor == nil {
 		return nil
 	}
+	if ts.sessionOwned {
+		client := ts.mcpClient.(*stdioMCPClient)
+		stopKill := context.AfterFunc(ctx, client.cancelProcess)
+		defer stopKill()
+		defer client.cancelProcess()
+		return errors.Join(ts.supervisor.Stop(ctx), ctx.Err())
+	}
 	if err := ts.supervisor.Stop(ctx); err != nil && ctx.Err() == nil {
 		slog.ErrorContext(ctx, "Failed to stop MCP toolset", "server", ts.logID, "error", err)
 		return err
@@ -569,14 +594,18 @@ func (c *clientConnector) Connect(ctx context.Context) (lifecycle.Session, error
 		ts.invalidateCache()
 		ts.mu.Unlock()
 		slog.DebugContext(ctx, "MCP server notified tool list changed, refreshing", "server", ts.logID)
-		ts.refreshToolCache(ctx)
+		if !ts.sessionOwned {
+			ts.refreshToolCache(ctx)
+		}
 	})
 	ts.mcpClient.SetPromptListChangedHandler(func() {
 		ts.mu.Lock()
 		ts.invalidateCache()
 		ts.mu.Unlock()
 		slog.DebugContext(ctx, "MCP server notified prompt list changed, refreshing", "server", ts.logID)
-		ts.refreshPromptCache(ctx)
+		if !ts.sessionOwned {
+			ts.refreshPromptCache(ctx)
+		}
 	})
 
 	initRequest := &mcp.InitializeRequest{
@@ -794,7 +823,7 @@ func (ts *Toolset) callTool(ctx context.Context, toolCall tools.ToolCall, _ tool
 	// If the call failed with a connection or session error (e.g. the
 	// server restarted), trigger or wait for a reconnection and retry
 	// the call once.
-	if err != nil && isConnectionError(err) && callCtx.Err() == nil {
+	if err != nil && !ts.sessionOwned && isConnectionError(err) && callCtx.Err() == nil {
 		slog.WarnContext(ctx, "MCP call failed, forcing reconnect and retrying", "tool", toolCall.Function.Name, "server", ts.logID, "error", err)
 		if waitErr := ts.supervisor.RestartAndWait(callCtx, sessionMissingRetryTimeout); waitErr != nil {
 			return nil, ts.classifyCallToolError(ctx, callCtx, toolCall, start, fmt.Errorf("failed to reconnect after call failure: %w", waitErr))
