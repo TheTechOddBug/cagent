@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
+	"github.com/docker/docker-agent/pkg/promptfiles"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -43,6 +44,7 @@ func (r *LocalRuntime) buildHooksExecutors() {
 		})
 		cfg = applyAutoInjectors(cfg, r.autoInjectors)
 		cfg = applyCacheDefault(cfg, a)
+		cfg = builtins.GuardPromptFiles(cfg)
 		if cfg == nil {
 			continue
 		}
@@ -142,7 +144,7 @@ func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *sessi
 	return observeInstructions(r.dispatchHook(ctx, a, hooks.EventSessionStart, &hooks.Input{
 		SessionID: sess.ID,
 		Source:    "startup",
-	}, events))
+	}, events), r.hasPromptFileGuard(a))
 }
 
 // executeTurnStartHooks fires turn_start before each model call. Recomputing
@@ -151,7 +153,7 @@ func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *sessi
 func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) instructionObservation {
 	return observeInstructions(r.dispatchHook(ctx, a, hooks.EventTurnStart, &hooks.Input{
 		SessionID: sess.ID,
-	}, events))
+	}, events), r.hasPromptFileGuard(a))
 }
 
 // Reason values reported in [hooks.Input.Reason] when [hooks.EventTurnEnd]
@@ -254,14 +256,20 @@ func (o instructionObservation) legacyMessages() []chat.Message {
 	return messages
 }
 
-func observeInstructions(result *hooks.Result) instructionObservation {
+func observeInstructions(result *hooks.Result, promptFileGuard bool) instructionObservation {
 	observation := instructionObservation{messages: contextMessages(result)}
 	if result == nil {
 		return observation
 	}
+	for _, failed := range result.FailedHooks {
+		if promptFileGuard && failed.Type == hooks.HookTypeBuiltin && failed.Command == builtins.AddPromptFiles {
+			observation.sources = append(observation.sources, session.InstructionSource{Group: promptfiles.InstructionGroup, SetMarker: true})
+		}
+	}
 	for _, source := range result.InstructionContext {
 		observation.sources = append(observation.sources, session.InstructionSource{
 			Key:            source.Key,
+			Path:           source.Path,
 			Group:          source.Group,
 			Label:          source.Label,
 			Content:        source.Content,
@@ -292,21 +300,25 @@ func (r *LocalRuntime) messagesWithDynamicContext(
 	a *agent.Agent,
 	sources []session.InstructionSource,
 	legacyExtras []chat.Message,
-) []chat.Message {
-	if !userconfig.Get().CacheStablePromptsEnabled() {
+) ([]chat.Message, error) {
+	stable := userconfig.Get().CacheStablePromptsEnabled()
+	if err := r.checkPromptFiles(ctx, sess, a, sources, stable); err != nil {
+		return nil, err
+	}
+	if !stable {
 		if sess.ClearInstructionContext() {
 			if err := r.sessionStore.UpdateSession(ctx, sess); err != nil {
 				slog.WarnContext(ctx, "Failed to clear instruction context", "session_id", sess.ID, "error", err)
 			}
 		}
-		return sess.GetMessagesWithoutInstructionContext(a, legacyExtras...)
+		return sess.GetMessagesWithoutInstructionContext(a, legacyExtras...), nil
 	}
 	if sess.PrepareInstructionContext(sources) {
 		if err := r.sessionStore.UpdateSession(ctx, sess); err != nil {
 			slog.WarnContext(ctx, "Failed to persist instruction context", "session_id", sess.ID, "error", err)
 		}
 	}
-	return sess.GetMessages(a)
+	return sess.GetMessages(a), nil
 }
 
 func instructionSource(key, label string, messages []chat.Message) session.InstructionSource {

@@ -74,6 +74,11 @@ func (r *agentRouter) Current() *agent.Agent {
 // instead of reading the shared current-agent field; otherwise Current
 // is returned.
 func (r *agentRouter) ResolveSession(sess *session.Session) *agent.Agent {
+	if name := sess.HandoffAgent(); name != "" {
+		if a, err := r.team.Agent(name); err == nil {
+			return a
+		}
+	}
 	if sess.AgentName != "" {
 		if a, err := r.team.Agent(sess.AgentName); err == nil {
 			return a

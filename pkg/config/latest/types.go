@@ -2642,6 +2642,11 @@ type PermissionsConfig struct {
 // HooksConfig represents the hooks configuration for an agent.
 // Hooks allow running shell commands at various points in the agent lifecycle.
 type HooksConfig struct {
+	// PromptFileGuard checks loaded and retained prompt-file instructions before use.
+	PromptFileGuard HookDefinitions `json:"prompt_file_guard,omitempty" yaml:"prompt_file_guard,omitempty"`
+	// SkillContentGuard checks raw skill text before command expansion or delivery.
+	SkillContentGuard HookDefinitions `json:"skill_content_guard,omitempty" yaml:"skill_content_guard,omitempty"`
+
 	// PreToolUse hooks run before tool execution
 	PreToolUse HookMatcherConfigs `json:"pre_tool_use,omitempty" yaml:"pre_tool_use,omitempty"`
 
@@ -2985,6 +2990,9 @@ type HookDefinition struct {
 	// hook [Input] as the data context (so {{ .ToolName }},
 	// {{ .ToolInput }}, etc. work). Required for Type==model.
 	Prompt string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+
+	// SystemPrompt overrides the model hook's default system message. Not templated.
+	SystemPrompt string `json:"system_prompt,omitempty" yaml:"system_prompt,omitempty"`
 
 	// Schema selects a well-known response interpretation for Type==model
 	// hooks. The empty value means "return the model's reply as

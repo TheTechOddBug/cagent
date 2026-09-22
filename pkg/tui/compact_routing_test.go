@@ -197,3 +197,7 @@ func TestHandleCompactSession_UnsupportedRuntimeNotifies(t *testing.T) {
 	assert.Equal(t, notification.TypeError, note.Type)
 	assert.Contains(t, note.Text, "not supported")
 }
+
+func (stubRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

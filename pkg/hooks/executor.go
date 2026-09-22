@@ -299,6 +299,7 @@ func sameHook(a, b Hook) bool {
 		a.Evaluator == b.Evaluator &&
 		sameEvaluatorPolicy(a.EvaluatorPolicy, b.EvaluatorPolicy) &&
 		a.Prompt == b.Prompt &&
+		a.SystemPrompt == b.SystemPrompt &&
 		a.Schema == b.Schema
 }
 
@@ -317,7 +318,20 @@ type hookResult struct {
 // runHook resolves the hook's [HookType] in the registry, applies its
 // timeout, and returns the structured outcome. JSON-on-stdout is parsed
 // into [Output] when the handler didn't already provide one.
-func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inputJSON []byte) hookResult {
+func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inputJSON []byte) (result hookResult) {
+	contentGuard := event == EventSkillContentGuard || event == EventPromptFileGuard
+	if contentGuard {
+		defer func() {
+			// A judge can echo the rejected body even in its errors or explanation.
+			result.Stdout, result.Stderr = "", ""
+			if result.err != nil {
+				result.err = errors.New("content check failed")
+			}
+			if result.Output != nil {
+				result.Output = &Output{Continue: result.Output.Continue, Decision: result.Output.Decision}
+			}
+		}()
+	}
 	factory, ok := e.registry.Lookup(hook.Type)
 	if !ok {
 		return hookResult{hook: hook, err: fmt.Errorf("unsupported hook type: %s", hook.Type)}
@@ -362,7 +376,11 @@ func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inpu
 
 	// Fall back to the legacy "parse JSON from stdout" protocol.
 	if r.Output == nil && r.ExitCode == 0 {
-		r.Output, err = parseStdoutJSON(r.Stdout, hook.StrictOutput)
+		if contentGuard {
+			r.Output, err = parseContentGuardOutput(r.Stdout)
+		} else {
+			r.Output, err = parseStdoutJSON(r.Stdout, hook.StrictOutput)
+		}
 		if err != nil {
 			return markFailed(err)
 		}
@@ -370,8 +388,13 @@ func (e *Executor) runHook(ctx context.Context, event EventType, hook Hook, inpu
 	if r.ExitCode != 0 && r.ExitCode != 2 {
 		return markFailed(fmt.Errorf("exited with status %d", r.ExitCode))
 	}
+	if contentGuard && r.ExitCode == 0 {
+		if r.Output == nil || (r.Output.Continue == nil && !r.Output.IsBlocked()) {
+			return markFailed(errors.New("content guard requires an explicit verdict"))
+		}
+	}
 	if r.Output != nil && r.ExitCode == 0 {
-		if err := validateOutput(event, r.Output, hook.StrictOutput); err != nil {
+		if err := validateOutput(event, r.Output, hook.StrictOutput || contentGuard); err != nil {
 			return markFailed(err)
 		}
 	}
@@ -387,6 +410,9 @@ func aggregate(results []hookResult, event EventType) *Result {
 	for _, r := range results {
 		if r.err == nil && r.ExitCode != 0 && r.ExitCode != 2 {
 			r.err = fmt.Errorf("exited with status %d", r.ExitCode)
+		}
+		if r.err != nil || r.ExitCode != 0 {
+			final.FailedHooks = append(final.FailedHooks, r.hook)
 		}
 		switch {
 		case r.err != nil:

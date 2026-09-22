@@ -723,3 +723,7 @@ func TestCopyCommandReportsMissingAssistantResponse(t *testing.T) {
 	transcript := strings.Join(m.screen.Transcript.Lines(80, 0, false, m.sessionState, nil), "\n")
 	assert.Contains(t, transcript, "No assistant response to copy.")
 }
+
+func (r *cycleThinkingRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

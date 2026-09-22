@@ -54,11 +54,11 @@ func TestEvaluatorHookSchemaEventRestrictions(t *testing.T) {
 		"type": "evaluator", "evaluator": "risk",
 		"evaluator_policy": map[string]any{"decisions": map[string]string{"true": "ask"}, "min_probability": 0.9, "fallback": "ask"},
 	}
-	for _, event := range []string{"tool_guard", "pre_tool_use", "permission_request", "session_start"} {
+	for _, event := range []string{"tool_guard", "pre_tool_use", "permission_request", "session_start", "prompt_file_guard", "skill_content_guard"} {
 		t.Run(event, func(t *testing.T) {
 			t.Parallel()
 			var hooks any = []any{map[string]any{"hooks": []any{hook}}}
-			if event == "session_start" {
+			if event == "session_start" || event == "prompt_file_guard" || event == "skill_content_guard" {
 				hooks = []any{hook}
 			}
 			cfg := map[string]any{"agents": map[string]any{"root": map[string]any{"model": "openai/gpt-5-mini", "hooks": map[string]any{event: hooks}}}}

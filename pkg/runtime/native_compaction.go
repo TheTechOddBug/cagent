@@ -81,7 +81,11 @@ func (r *LocalRuntime) compactNatively(ctx context.Context, sess *session.Sessio
 	if err != nil {
 		return nil, fmt.Errorf("native compaction: %w", err)
 	}
-	messages, itemCount := sess.GetMessagesAndItemCount(a)
+	instructions := sess.InstructionContextSnapshot()
+	if err := r.checkStoredPromptFiles(ctx, sess, a, instructions); err != nil {
+		return nil, err
+	}
+	messages, itemCount := sess.GetMessagesWithInstructionContext(a, instructions)
 	if !slices.ContainsFunc(messages, func(m chat.Message) bool { return m.Role != chat.MessageRoleSystem }) {
 		slog.WarnContext(ctx, "Compaction skipped: no conversation messages to compact", "session_id", sess.ID)
 		return nil, nil

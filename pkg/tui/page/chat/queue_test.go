@@ -820,3 +820,15 @@ func TestSteerFlow_NoApp_FallsBackToQueue(t *testing.T) {
 	require.Len(t, p.messageQueue, 1)
 	assert.Equal(t, "hello", p.messageQueue[0].content)
 }
+
+func (r *skillDispatchRuntime) ReadSkillContent(ctx context.Context, sess *session.Session, name string) (string, error) {
+	st := r.CurrentAgentSkillsToolset()
+	if st == nil {
+		return "", nil
+	}
+	return st.ReadSkillContent(ctx, name, tools.NopRuntime{})
+}
+
+func (queueTestRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
+	return "", nil
+}

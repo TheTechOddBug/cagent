@@ -404,3 +404,17 @@ The skill will automatically be available to any agent with skills enabled (`ski
 > Skills are enabled in the [Agent Config](../../configuration/agents/index.md) with the `skills` property (boolean or list). For tool-based capabilities, see [Tools](../../concepts/tools/index.md).
 >
 > Example configs: [`examples/skills_inline.yaml`](https://github.com/docker/docker-agent/blob/main/examples/skills_inline.yaml) (inline skill definition), [`examples/skills_fork_toolsets.yaml`](https://github.com/docker/docker-agent/blob/main/examples/skills_fork_toolsets.yaml) (scoping a fork skill's tools), [`examples/skills_filter.yaml`](https://github.com/docker/docker-agent/blob/main/examples/skills_filter.yaml) (filtering which skills load).
+
+### Screening skill content
+
+Configure [`skill_content_guard`](../../configuration/hooks/index.md#skill-content-guard)
+to reject unsafe skill text before command expansion or delivery, including
+forked skills, slash commands, and supporting-file reads. Model judges use the
+built-in `guard_decision` schema; failures reject the load in every safety mode.
+This checks skill-loader reads, not arbitrary filesystem access or skill
+metadata, and does not replace tool permissions or sandboxing.
+
+Handoffs inside a forked skill stay within that fork: explicit `handoff` and
+configured `force_handoff` can select another agent without changing the parent
+conversation's active agent. Background sessions remain hard-pinned and reject
+explicit handoffs.

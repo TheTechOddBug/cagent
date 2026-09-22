@@ -59,6 +59,22 @@ func (h *HooksConfig) Validate() error {
 				}
 			}
 		}
+		for _, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Type != "model" {
+					continue
+				}
+				if hook.Schema == "guard_decision" && !contract.CanBlock {
+					return fmt.Errorf("hooks.%s: guard_decision requires a blocking event", event)
+				}
+				if hook.Schema == "pre_tool_use_decision" && !contract.Permission() {
+					return fmt.Errorf("hooks.%s: pre_tool_use_decision requires an approval event", event)
+				}
+				if (event == "skill_content_guard" || event == "prompt_file_guard") && hook.Schema != "guard_decision" {
+					return fmt.Errorf("hooks.%s: model hooks require schema guard_decision", event)
+				}
+			}
+		}
 		for i, matcher := range matchers {
 			for _, hook := range matcher.Hooks {
 				if hook.Type == "evaluator" && event != "tool_guard" {

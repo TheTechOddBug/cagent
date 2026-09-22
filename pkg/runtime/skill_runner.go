@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -17,12 +18,12 @@ import (
 
 // handleRunSkill unmarshals the run_skill tool arguments and delegates to
 // runSkillFork.
-func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, rt tools.Runtime) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
 	var args skills.RunSkillArgs
 	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
-	return r.runSkillFork(ctx, sess, args, evts, rt)
+	return r.runSkillFork(ctx, sess, args, evts, rt, caller)
 }
 
 // RunSkillFork executes a `context: fork` skill as an isolated sub-session.
@@ -31,18 +32,14 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 // tool call (the App's slash-command path); run_skill goes through
 // [LocalRuntime.handleRunSkill].
 func (r *LocalRuntime) RunSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts EventSink) (*tools.ToolCallResult, error) {
-	return r.runSkillFork(ctx, sess, args, evts, nil)
+	return r.runSkillFork(ctx, sess, args, evts, nil, r.resolveSessionAgent(sess))
 }
 
 // runSkillFork prepares and runs the fork sub-session. rt is the in-flight
 // tool call's runtime handle. Standalone invocations pass nil and skip embedded
 // commands because no tool call exists to own an approval prompt.
-func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts EventSink, rt tools.Runtime) (*tools.ToolCallResult, error) {
-	// The caller resolves from the session, not the shared current agent:
-	// a fork skill invoked from a pinned background session must use the
-	// pinned agent's skills, identity, and model override, no matter where
-	// the concurrent foreground loop points (#3886).
-	caller := r.resolveSessionAgent(sess)
+func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
+	// Tool calls retain the caller captured before approval; slash commands resolve it once.
 	if caller == nil {
 		return nil, errors.New("no agent resolved for the calling session")
 	}
@@ -54,7 +51,7 @@ func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, 
 	}
 
 	if rt == nil {
-		rt = tools.NopRuntime{}
+		rt = skillRuntime{runtime: r, agent: caller, sessionID: sess.ID}
 	}
 
 	prepared, errResult, err := st.PrepareForkSubSession(ctx, args, rt)
@@ -126,10 +123,8 @@ func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, 
 	// Skills are sub-sessions of the caller, not delegations, so the
 	// runtime's currentAgent stays put and the delegation lineage is
 	// inherited unchanged (no DelegationLineage: not a delegation edge).
-	// When the caller session is itself pinned (a background agent's
-	// session), pin the child to the same agent so RunStream resolves it
-	// as the pinned caller instead of the shared current agent.
-	return r.runForwarding(ctx, sess, evts, delegationRequest{
+	// Pin the child so a concurrent agent switch cannot change which agent consumes the skill.
+	return r.runForwarding(ctx, sess, caller, evts, delegationRequest{
 		Task:                prepared.Task,
 		SystemMessage:       skills.BuildSkillSystemMessage(prepared, sess.AttachedFilesSnapshot()),
 		ImplicitUserMessage: skills.BuildSkillUserMessage(prepared),
@@ -139,7 +134,8 @@ func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, 
 		SafetyPolicy:        sess.GetSafetyPolicy(),
 		Permissions:         sess.ClonePermissions(),
 		NonInteractive:      sess.NonInteractive,
-		PinAgent:            sess.AgentName != "",
+		PinAgent:            true,
+		AllowHandoffs:       true,
 		ExcludedTools:       []string{skills.ToolNameRunSkill},
 		AllowedTools:        prepared.AllowedTools,
 		ExtraToolSets:       prepared.ToolSets,

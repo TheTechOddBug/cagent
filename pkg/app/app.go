@@ -371,7 +371,7 @@ func (a *App) ResolveSkillCommand(ctx context.Context, input string) (string, er
 		// no way to raise an approval prompt here. Each refusal is inlined in
 		// the content the agent receives, and the agent can still run the
 		// command itself through its own (gated) shell tool.
-		content, err := st.ReadSkillContent(ctx, skill.Name, tools.NopRuntime{})
+		content, err := a.runtime.ReadSkillContent(ctx, a.session, skill.Name)
 		if err != nil {
 			return "", fmt.Errorf("reading skill %q: %w", skill.Name, err)
 		}

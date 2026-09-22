@@ -66,6 +66,8 @@ var contracts = []Contract{
 	{Name: "tool_input_transform", ToolMatched: true, CanBlock: true, Rewrite: RewriteToolInput},
 	{Name: "tool_guard", ToolMatched: true, CanBlock: true, FailClosed: true, Decision: true, Metadata: true},
 	{Name: "worktree_create", CanBlock: true, Context: true},
+	{Name: "skill_content_guard", CanBlock: true, FailClosed: true},
+	{Name: "prompt_file_guard", CanBlock: true, FailClosed: true},
 }
 
 // All iterates over public event contracts in configuration order.
