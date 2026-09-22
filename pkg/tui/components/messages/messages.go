@@ -421,6 +421,10 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 }
 
 func (m *model) handleMouseClick(msg tea.MouseClickMsg) (model layout.Model, cmd tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+
 	var materializeCmd tea.Cmd
 	defer func() { cmd = tea.Batch(materializeCmd, cmd) }()
 	// Scrollbar hit-testing and thumb geometry must use the exact tail height.
@@ -431,10 +435,6 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (model layout.Model, cmd
 	}
 	if m.isMouseOnScrollbar(msg.X, msg.Y) {
 		return m.handleScrollviewUpdate(msg)
-	}
-
-	if msg.Button != tea.MouseLeft {
-		return m, nil
 	}
 
 	line, col := m.mouseToLineCol(msg.X, msg.Y)
@@ -606,8 +606,11 @@ func (m *model) handleMouseMotion(msg tea.MouseMotionMsg) (layout.Model, tea.Cmd
 }
 
 func (m *model) handleMouseRelease(msg tea.MouseReleaseMsg) (layout.Model, tea.Cmd) {
-	if updated, cmd := m.handleScrollviewUpdate(msg); cmd != nil {
-		return updated, cmd
+	// Unrelated releases must not restore scroll state from a deferred frame.
+	if m.scrollview.IsDragging() {
+		if updated, cmd := m.handleScrollviewUpdate(msg); cmd != nil {
+			return updated, cmd
+		}
 	}
 
 	if msg.Button == tea.MouseLeft && m.selection.mouseButtonDown {
@@ -2619,6 +2622,10 @@ func (m *model) handleScrollviewUpdate(msg tea.Msg) (layout.Model, tea.Cmd) {
 	if m.scrollview.IsDragging() {
 		materializeCmd = m.materializeDeferredTailForInteraction()
 	}
+	// Streaming can advance geometry without View, even with no deferred tail.
+	m.updateScrollState()
+	m.scrollview.SetContent(m.renderedLines, m.totalScrollableHeight())
+	m.scrollview.SetScrollOffset(m.scrollOffset)
 	_, cmd := m.scrollview.UpdateMouse(msg)
 	m.scrollOffset = m.scrollview.ScrollOffset()
 	if m.isAtBottom() {

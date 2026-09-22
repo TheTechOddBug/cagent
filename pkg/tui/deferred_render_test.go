@@ -202,3 +202,35 @@ func TestActualProgramBlurSuppressesStreamWrites(t *testing.T) {
 	programAck(t, program)
 	require.Contains(t, ansi.Strip(programFrame(t, program)), "FOCUS-CATCHUP")
 }
+
+func TestRootBlurMouseReleasePreservesFollowTail(t *testing.T) {
+	for _, releaseBeforeFocus := range []bool{false, true} {
+		t.Run(map[bool]string{false: "release after focus", true: "release before focus"}[releaseBeforeFocus], func(t *testing.T) {
+			root, _, _ := frozenClockRoot(t, 120, 40)
+			_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"))
+			before := root.View().Content
+			_, _ = root.Update(tea.BlurMsg{})
+			for range 40 {
+				_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "background paragraph\n\n"))
+				require.Equal(t, before, root.View().Content)
+			}
+			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "LATEST-RESPONSE\n\n"))
+
+			if !releaseBeforeFocus {
+				_, _ = root.Update(tea.FocusMsg{})
+			}
+			// A focus click can release before the next frame is composed.
+			_, _ = root.Update(tea.MouseReleaseMsg{X: 40, Y: 15, Button: tea.MouseLeft})
+			if releaseBeforeFocus {
+				_, _ = root.Update(tea.FocusMsg{})
+			}
+			after := ansi.Strip(root.View().Content)
+			require.Contains(t, after, "LATEST-RESPONSE")
+			require.NotContains(t, after, "START-OF-CONVERSATION")
+
+			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "STILL-FOLLOWING\n\n"))
+			require.Contains(t, ansi.Strip(root.View().Content), "STILL-FOLLOWING")
+		})
+	}
+}
