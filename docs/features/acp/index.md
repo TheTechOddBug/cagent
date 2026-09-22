@@ -60,8 +60,14 @@ Host Application
 - **Session persistence** — SQLite-backed sessions survive process restarts
 - **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied MCP servers and audio prompts are not supported; use `session/resume`, not `session/load`, for persisted sessions.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
-- **Filesystem operations** — Agents can read/write files relative to the host's working directory
+- **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
+
+## Session Workspaces
+
+New sessions and resumes that reconstruct a runtime load the agent configuration again and create independent teams and toolsets. Configuration changes affect subsequent loads, not teams already serving sessions. Config-relative paths, such as instruction files, remain relative to the agent configuration file.
+
+The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. If a client omits `cwd` when creating a session, tools use the configured working directory or the subprocess directory; the saved session retains an empty `cwd` rather than inventing workspace provenance. A resume without `cwd` uses the saved working directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
 
 ## CLI Flags
 
