@@ -397,18 +397,18 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 
 	workingDir, err := resolveWorkingDir(params.Cwd)
 	if err != nil {
-		return acp.NewSessionResponse{}, err
+		return acp.NewSessionResponse{}, acp.NewInvalidParams(err.Error())
 	}
 
 	// Direct Go callers retain the legacy empty-cwd fallback; the SDK requires
 	// cwd on the wire. Keep fallback execution paths out of saved provenance.
 	if err := validateWorkingDir(workingDir); err != nil {
-		return acp.NewSessionResponse{}, err
+		return acp.NewSessionResponse{}, acp.NewInvalidParams(err.Error())
 	}
 
 	additionalDirs, err := resolveAdditionalDirectories(params.AdditionalDirectories)
 	if err != nil {
-		return acp.NewSessionResponse{}, err
+		return acp.NewSessionResponse{}, acp.NewInvalidParams(err.Error())
 	}
 
 	sess := session.New(session.WithWorkingDir(workingDir))
@@ -562,6 +562,9 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 
 	sess, err := a.sessionStore.GetSession(ctx, sid)
 	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return acp.ResumeSessionResponse{}, sessionNotFound(sid)
+		}
 		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to load session %s: %w", sid, err)
 	}
 	if err := validateResumeWorkingDir(sess.WorkingDir, workingDir); err != nil {
@@ -635,13 +638,13 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	a.mu.Unlock()
 
 	if !ok {
-		return acp.PromptResponse{}, fmt.Errorf("session %s not found", sid)
+		return acp.PromptResponse{}, sessionNotFound(sid)
 	}
 
 	turnCtx, finish, err := acpSess.startTurn(ctx)
 	if err != nil {
 		if errors.Is(err, errSessionClosed) {
-			return acp.PromptResponse{}, fmt.Errorf("session %s not found", sid)
+			return acp.PromptResponse{}, sessionNotFound(sid)
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
@@ -655,14 +658,15 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 		acpSess.sess.AddMessage(userMsg)
 	}
 
-	if err := a.runAgent(turnCtx, acpSess); err != nil {
-		if turnCtx.Err() != nil {
-			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
-		}
+	stopReason, err := a.runAgent(turnCtx, acpSess)
+	if turnCtx.Err() != nil {
+		return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
+	}
+	if err != nil {
 		return acp.PromptResponse{}, err
 	}
 
-	return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	return acp.PromptResponse{StopReason: stopReason}, nil
 }
 
 // buildUserContent constructs user message text from ACP content blocks.
@@ -831,7 +835,7 @@ func (a *Agent) sendUpdate(ctx context.Context, sessionID string, update acp.Ses
 }
 
 // runAgent runs a single agent loop and streams updates to the ACP client.
-func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
+func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason, error) {
 	slog.DebugContext(ctx, "Running agent turn", "session_id", acpSess.id)
 
 	ctx = withSessionID(ctx, acpSess.id)
@@ -849,61 +853,63 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
 		}
 	}()
 	toolCallArgs := map[string]string{}
+	outcome := promptOutcome{sessionID: acpSess.sess.ID}
 
 	for event := range eventsChan {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return "", ctx.Err()
 		}
 
+		outcome.observe(event)
 		switch e := event.(type) {
 		case *runtime.AgentChoiceEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(e.Content)); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.AgentChoiceReasoningEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentThoughtText(e.Content)); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.ToolCallConfirmationEvent:
 			if err := a.handleToolCallConfirmation(ctx, acpSess, e); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.ToolCallEvent:
 			toolCallArgs[e.ToolCall.ID] = e.ToolCall.Function.Arguments
 			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallStart(e.ToolCall, e.ToolDefinition)); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.ToolCallResponseEvent:
 			args, ok := toolCallArgs[e.ToolCallID]
 			if !ok {
-				return fmt.Errorf("missing tool call arguments for tool call ID %s", e.ToolCallID)
+				return "", fmt.Errorf("missing tool call arguments for tool call ID %s", e.ToolCallID)
 			}
 			delete(toolCallArgs, e.ToolCallID)
 
 			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallComplete(args, e)); err != nil {
-				return err
+				return "", err
 			}
 
 			if isTodoTool(e.ToolDefinition.Name) && e.Result != nil && e.Result.Meta != nil {
 				if planUpdate := buildPlanUpdateFromTodos(e.Result.Meta); planUpdate != nil {
 					if err := a.sendUpdate(ctx, acpSess.id, *planUpdate); err != nil {
-						return err
+						return "", err
 					}
 				}
 			}
 
 		case *runtime.ErrorEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(fmt.Sprintf("\n\nError: %s\n", e.Error))); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.WarningEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(fmt.Sprintf("\nWarning: %s\n", e.Message))); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.SessionTitleEvent:
@@ -913,7 +919,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
 					Title:         &e.Title,
 				},
 			}); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.TokenUsageEvent:
@@ -930,7 +936,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
 					}
 				}
 				if err := a.sendUpdate(ctx, acpSess.id, acp.SessionUpdate{UsageUpdate: &usageUpdate}); err != nil {
-					return err
+					return "", err
 				}
 			}
 
@@ -938,20 +944,20 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(
 				fmt.Sprintf("\nModel %s failed, falling back to %s (%s)\n", e.FailedModel, e.FallbackModel, e.Reason),
 			)); err != nil {
-				return err
+				return "", err
 			}
 
 		case *runtime.MaxIterationsReachedEvent:
 			if err := a.handleMaxIterationsReached(ctx, acpSess, e); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	return outcome.result()
 }
 
 // handleToolCallConfirmation handles tool call permission requests.

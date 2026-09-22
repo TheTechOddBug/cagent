@@ -63,6 +63,22 @@ Host Application
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
+## Prompt Outcomes and Errors
+
+`session/prompt` reports why the root session stopped:
+
+| Stop reason | Meaning |
+| --- | --- |
+| `end_turn` | Normal completion |
+| `max_tokens` | The final model response reached its output-token limit |
+| `refusal` | The final model response was a refusal |
+| `max_turn_requests` | Execution stopped at the iteration limit, rather than being approved to continue |
+| `cancelled` | The prompt was canceled or its context expired |
+
+Cancellation takes precedence, and responses wait until runtime events have fully drained. Child-session outcomes, recoverable compaction diagnostics, warnings, and model fallbacks do not by themselves fail the root prompt. A later successful response supersedes an earlier model stop during a continued turn.
+
+Fatal root-runtime failures return JSON-RPC internal error `-32603` with `data.sessionId`, `data.runtimeCode`, and `data.error`. Budget termination is reported this way as `budget_exceeded`, not confused with an output-token or iteration limit. Diagnostic updates may already have streamed before the error response. Missing prompt/resume sessions return `-32002` (resource not found); invalid workspace parameters return `-32602` (invalid params).
+
 ## Client-Supplied MCP Servers
 
 Pass stdio MCP servers in `mcpServers` on `session/new` or `session/resume`:
