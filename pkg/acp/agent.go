@@ -310,6 +310,8 @@ func (a *Agent) newRuntime(ctx context.Context, workingDir string) (*Session, *a
 
 	rt, err := runtime.New(ctx, acpSess.team,
 		runtime.WithCurrentAgent(defaultAgent.Name()),
+		// Decline unsupported elicitation; keep session permission and iteration prompts interactive.
+		runtime.WithNonInteractive(true),
 		runtime.WithSessionStore(a.sessionStore),
 		runtime.WithProviderRegistry(loadResult.ProviderRegistry),
 		runtime.WithWorkingDir(workingDir),

@@ -63,6 +63,12 @@ Host Application
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
+## Elicitation
+
+ACP form and URL elicitation is not yet bridged to the client. Requests routed through the runtime are automatically declined instead of waiting for a response that cannot arrive. This also applies to interactive tool flows such as `user_prompt`, MCP authorization prompts, and sudo password prompts. Tools must handle the decline; operations that require the requested input may fail.
+
+Tool-permission requests and iteration-limit continuation prompts remain interactive through `session/request_permission`. Declining elicitation does not automatically approve tools, enable autonomous mode, or stop the session from continuing with other work. Full client-capability-negotiated elicitation support is separate from this fallback.
+
 ## Session Workspaces
 
 New sessions and resumes that reconstruct a runtime load the agent configuration again and create independent teams and toolsets. Configuration changes affect subsequent loads, not teams already serving sessions. Config-relative paths, such as instruction files, remain relative to the agent configuration file.
