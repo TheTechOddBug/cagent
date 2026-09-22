@@ -36,7 +36,11 @@ func (r *acpToolsetRegistry) CreateTool(ctx context.Context, toolset latest.Tool
 			}
 		}
 
-		return NewFilesystemToolset(r.agent, wd, filesystemOptions(toolset)...), nil
+		base, err := filesystem.NewFromConfig(toolset, runConfig)
+		if err != nil {
+			return nil, err
+		}
+		return &FilesystemToolset{ToolSet: base, agent: r.agent, workingDir: wd}, nil
 	}
 
 	return r.registry.CreateTool(ctx, toolset, parentDir, runConfig, agentName)
@@ -44,34 +48,4 @@ func (r *acpToolsetRegistry) CreateTool(ctx context.Context, toolset latest.Tool
 
 func (r *acpToolsetRegistry) Has(toolsetType string) bool {
 	return toolsetType == "filesystem" || r.registry.Has(toolsetType)
-}
-
-func filesystemOptions(toolset latest.Toolset) []filesystem.Opt {
-	opts := []filesystem.Opt{}
-
-	ignoreVCS := true
-	if toolset.IgnoreVCS != nil {
-		ignoreVCS = *toolset.IgnoreVCS
-	}
-	opts = append(opts, filesystem.WithIgnoreVCS(ignoreVCS))
-
-	if len(toolset.AllowList) > 0 {
-		opts = append(opts, filesystem.WithAllowList(toolset.AllowList))
-	}
-	if len(toolset.DenyList) > 0 {
-		opts = append(opts, filesystem.WithDenyList(toolset.DenyList))
-	}
-
-	if len(toolset.PostEdit) > 0 {
-		postEditConfigs := make([]filesystem.PostEditConfig, len(toolset.PostEdit))
-		for i, pe := range toolset.PostEdit {
-			postEditConfigs[i] = filesystem.PostEditConfig{
-				Path: pe.Path,
-				Cmd:  pe.Cmd,
-			}
-		}
-		opts = append(opts, filesystem.WithPostEditCommands(postEditConfigs))
-	}
-
-	return opts
 }

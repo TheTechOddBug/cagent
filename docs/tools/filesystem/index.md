@@ -137,6 +137,6 @@ toolsets:
 | `path` | string | Glob pattern matched against the file path. `*.go` matches any `.go` file; `src/*/*.ts` matches `.ts` files inside `src/`. |
 | `cmd` | string | Shell command to run. `${file}` expands to the absolute path of the just-edited file. |
 
-Post-edit commands run with the same working directory as the agent. If a command exits non-zero, the error is logged and surfaced to the model as a warning, but the edit is not rolled back.
+Post-edit commands run with the same working directory as the agent. If a command exits non-zero, the tool reports that the write or edit succeeded but the post-edit command failed. The edit is not rolled back.
 
 See [`examples/post_edit.yaml`](https://github.com/docker/docker-agent/blob/main/examples/post_edit.yaml) for a complete example.
