@@ -100,6 +100,7 @@ func clientServerSpec(t *testing.T, name, value string) acpsdk.McpServer {
 	}}
 }
 
+// Callers must defer Stop so subprocesses exit before TempDir cleanup runs.
 func clientMCPAgent(t *testing.T) *Agent {
 	t.Helper()
 	a := NewAgent(nil, &config.RuntimeConfig{}, session.NewInMemorySessionStore())
@@ -111,7 +112,6 @@ func clientMCPAgent(t *testing.T) *Agent {
 		agent.WithSubAgents(worker)(root)
 		return &teamloader.LoadResult{Team: team.New(team.WithAgents(root, worker))}, nil
 	}
-	t.Cleanup(func() { require.NoError(t, a.Stop(t.Context())) })
 	return a
 }
 
@@ -142,6 +142,7 @@ func TestClientMCPNewResumeAndIsolation(t *testing.T) {
 	t.Setenv("ACP_INHERITED", "inherited")
 	t.Setenv("ACP_VALUE", "parent")
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	wd, other := t.TempDir(), t.TempDir()
 	spec := clientServerSpec(t, "human readable name", "first")
 	spec.Stdio.Env = append(spec.Stdio.Env, acpsdk.EnvVariable{Name: "ACP_VALUE", Value: "override=value"})
@@ -155,9 +156,13 @@ func TestClientMCPNewResumeAndIsolation(t *testing.T) {
 	originalTeam, originalRuntime := s.team, s.rt
 	oldTool := clientTool(t, s, "inspect")
 	data := inspectClientTool(t, oldTool)
-	canonical, err := filepath.EvalSymlinks(wd)
+	expected, err := os.Stat(wd)
 	require.NoError(t, err)
-	assert.Equal(t, canonical, data["cwd"])
+	cwd, ok := data["cwd"].(string)
+	require.True(t, ok)
+	actual, err := os.Stat(cwd)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(expected, actual), "subprocess cwd must match the session workspace")
 	assert.Equal(t, "override=value", data["value"])
 	assert.Equal(t, "inherited", data["inherited"])
 	assert.Equal(t, []any{"with spaces", "${literal}", "$(literal)"}, data["args"].([]any)[3:])
@@ -204,6 +209,7 @@ func TestClientMCPNewResumeAndIsolation(t *testing.T) {
 func TestClientMCPSetupFailurePreservesSession(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	wd, originalRoot, replacementRoot := t.TempDir(), t.TempDir(), t.TempDir()
 	created, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{Cwd: wd, AdditionalDirectories: []string{originalRoot}, McpServers: []acpsdk.McpServer{clientServerSpec(t, "original", "original")}})
 	require.NoError(t, err)
@@ -238,6 +244,7 @@ func TestClientMCPSetupFailurePreservesSession(t *testing.T) {
 func TestClientMCPReplacementCancelsAdmittedCalls(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	wd := t.TempDir()
 	started := filepath.Join(t.TempDir(), "call-started")
 	spec := clientServerSpec(t, "wait", "wait")
@@ -272,6 +279,7 @@ func TestClientMCPValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := clientMCPAgent(t)
+			defer func() { require.NoError(t, a.Stop(t.Context())) }()
 			_, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{Cwd: t.TempDir(), McpServers: tc.servers})
 			var rpcErr *acpsdk.RequestError
 			require.ErrorAs(t, err, &rpcErr)
@@ -287,6 +295,7 @@ func TestClientMCPCanceledSetupAndClose(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 			a := clientMCPAgent(t)
+			defer func() { require.NoError(t, a.Stop(t.Context())) }()
 			wd, root := t.TempDir(), t.TempDir()
 			created, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{Cwd: wd, AdditionalDirectories: []string{root}})
 			require.NoError(t, err)
@@ -331,6 +340,7 @@ func TestClientMCPCanceledSetupAndClose(t *testing.T) {
 func TestClientMCPBusyResumeStartsNoProcess(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	wd := t.TempDir()
 	created, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{Cwd: wd})
 	require.NoError(t, err)
@@ -427,6 +437,7 @@ func (p *clientMCPProvider) CreateChatCompletionStream(_ context.Context, messag
 func TestClientMCPToolsReachRuntime(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	prov := &clientMCPProvider{mockProvider: mockProvider{id: modelsdev.NewID("test", "client-mcp")}}
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
 		return &teamloader.LoadResult{Team: team.New(team.WithAgents(agent.New("root", "test", agent.WithModel(prov))))}, nil
@@ -449,6 +460,7 @@ func TestClientMCPToolsReachRuntime(t *testing.T) {
 func TestClientMCPHonorsAgentReadOnly(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	load := a.loadTeam
 	a.loadTeam = func(ctx context.Context, wd string) (*teamloader.LoadResult, error) {
 		result, err := load(ctx, wd)
@@ -479,6 +491,7 @@ func TestClientMCPHonorsAgentReadOnly(t *testing.T) {
 func TestClientMCPLongToolNamesDispatchExactly(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	spec := clientServerSpec(t, "long names", "long")
 	spec.Stdio.Env = append(spec.Stdio.Env, acpsdk.EnvVariable{Name: "ACP_LONG_NAMES", Value: "1"})
 	created, err := a.NewSession(t.Context(), acpsdk.NewSessionRequest{Cwd: t.TempDir(), McpServers: []acpsdk.McpServer{spec}})
@@ -524,6 +537,7 @@ func TestClientMCPFailedSessionRejectsAlreadyAdmittedResume(t *testing.T) {
 func TestClientMCPPersistenceFailureStopsChild(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	a.sessionStore = failingAddStore{session.NewInMemorySessionStore()}
 	stopped := filepath.Join(t.TempDir(), "stopped")
 	spec := clientServerSpec(t, "rollback", "value")
@@ -571,6 +585,7 @@ func (*clientMCPWaitProvider) CreateChatCompletionStream(_ context.Context, _ []
 func TestClientMCPCloseStopsBackgroundCall(t *testing.T) {
 	t.Parallel()
 	a := clientMCPAgent(t)
+	defer func() { require.NoError(t, a.Stop(t.Context())) }()
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
 		worker := agent.New("worker", "test", agent.WithModel(&clientMCPWaitProvider{mockProvider{id: modelsdev.NewID("test", "worker")}}))
 		root := agent.New("root", "test", agent.WithModel(&clientMCPBackgroundProvider{mockProvider: mockProvider{id: modelsdev.NewID("test", "root")}}), agent.WithSubAgents(worker), agent.WithToolSets(agenttool.New()))
