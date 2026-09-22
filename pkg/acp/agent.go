@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -345,18 +346,18 @@ func (a *Agent) newRuntime(ctx context.Context, workingDir string) (*Session, *a
 }
 
 // registerSessionIfAbsent transfers ownership only if this session wins registration.
-func (a *Agent) registerSessionIfAbsent(acpSess *Session) (bool, error) {
+func (a *Agent) registerSessionIfAbsent(acpSess *Session) (*Session, bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.stopped {
-		return false, errors.New("agent stopped")
+		return nil, false, errors.New("agent stopped")
 	}
-	if _, ok := a.sessions[acpSess.id]; ok {
-		return false, nil
+	if existing, ok := a.sessions[acpSess.id]; ok {
+		return existing, false, nil
 	}
 	a.sessions[acpSess.id] = acpSess
 	a.owned[acpSess] = struct{}{}
-	return true, nil
+	return acpSess, true, nil
 }
 
 // NewSession implements [acp.Agent].
@@ -372,11 +373,8 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (a
 		return acp.NewSessionResponse{}, err
 	}
 
-	// An empty cwd is allowed: clients (e.g. zed) may not always supply a
-	// working directory at session creation. We persist it as empty and
-	// later prompts/tools fall back to the agent's default working dir.
-	// The persisted WorkingDir stays empty too: workspace provenance must
-	// come from the client, never be inferred from the server's process cwd.
+	// Direct Go callers retain the legacy empty-cwd fallback; the SDK requires
+	// cwd on the wire. Keep fallback execution paths out of saved provenance.
 	if err := validateWorkingDir(workingDir); err != nil {
 		return acp.NewSessionResponse{}, err
 	}
@@ -421,9 +419,12 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (a
 	acpSess.sess = sess
 	acpSess.workingDir = workingDir
 	acpSess.additionalDirs = additionalDirs
-	stored, err = a.registerSessionIfAbsent(acpSess)
+	_, stored, err = a.registerSessionIfAbsent(acpSess)
 	if err != nil {
 		return acp.NewSessionResponse{}, err
+	}
+	if !stored {
+		return acp.NewSessionResponse{}, session.ErrAlreadyExists
 	}
 
 	return acp.NewSessionResponse{SessionId: acp.SessionId(sess.ID)}, nil
@@ -506,33 +507,32 @@ func (a *Agent) ListSessions(ctx context.Context, _ acp.ListSessionsRequest) (ac
 func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
 	sid := string(params.SessionId)
 	slog.DebugContext(ctx, "ACP ResumeSession called", "session_id", sid)
+	if err := ctx.Err(); err != nil {
+		return acp.ResumeSessionResponse{}, err
+	}
+
+	workingDir, err := resolveWorkingDir(params.Cwd)
+	if err != nil {
+		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
+	}
+	additionalDirs, err := resolveAdditionalDirectories(params.AdditionalDirectories)
+	if err != nil {
+		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
+	}
 
 	a.mu.Lock()
-	_, alreadyRegistered := a.sessions[sid]
+	existing := a.sessions[sid]
 	a.mu.Unlock()
-	if alreadyRegistered {
-		return acp.ResumeSessionResponse{}, nil
+	if existing != nil {
+		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs)
 	}
 
 	sess, err := a.sessionStore.GetSession(ctx, sid)
 	if err != nil {
 		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to load session %s: %w", sid, err)
 	}
-
-	workingDir, err := resolveWorkingDir(params.Cwd)
-	if err != nil {
-		return acp.ResumeSessionResponse{}, err
-	}
-	if err := validateWorkingDir(workingDir); err != nil {
-		return acp.ResumeSessionResponse{}, err
-	}
-	if workingDir != "" {
-		sess.WorkingDir = workingDir
-	}
-
-	additionalDirs, err := resolveAdditionalDirectories(params.AdditionalDirectories)
-	if err != nil {
-		return acp.ResumeSessionResponse{}, err
+	if err := validateResumeWorkingDir(sess.WorkingDir, workingDir); err != nil {
+		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
 	}
 
 	if err := a.beginSessionConstruction(); err != nil {
@@ -544,16 +544,23 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 		return acp.ResumeSessionResponse{}, err
 	}
 
+	if err := ctx.Err(); err != nil {
+		<-acpSess.close(ctx)
+		return acp.ResumeSessionResponse{}, err
+	}
 	acpSess.id = sid
 	acpSess.sess = sess
 	acpSess.workingDir = sess.WorkingDir
 	acpSess.additionalDirs = additionalDirs
-	stored, err := a.registerSessionIfAbsent(acpSess)
+	existing, stored, err := a.registerSessionIfAbsent(acpSess)
 	if !stored {
 		<-acpSess.close(ctx)
 	}
 	if err != nil {
 		return acp.ResumeSessionResponse{}, err
+	}
+	if !stored {
+		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs)
 	}
 
 	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)
@@ -1045,8 +1052,8 @@ func (a *Agent) sessionListPaths(ctx context.Context, sessionID string) (string,
 	acpSess := a.sessions[sessionID]
 	a.mu.Unlock()
 	if acpSess != nil {
-		cwd, _ := acpSess.pathRoots(a.defaultWorkingDir())
-		return cwd, append([]string(nil), acpSess.additionalDirs...)
+		cwd, additionalDirs := acpSess.workspaceSnapshot()
+		return cmp.Or(cwd, a.defaultWorkingDir()), additionalDirs
 	}
 
 	cwd := a.defaultWorkingDir()
@@ -1075,20 +1082,25 @@ func (a *Agent) defaultWorkingDir() string {
 	return wd
 }
 
-func (s *Session) pathRoots(fallbackWorkingDir string) (string, []string) {
+func (s *Session) workspaceSnapshot() (string, []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	workingDir := s.workingDir
 	if workingDir == "" && s.sess != nil {
 		workingDir = s.sess.WorkingDir
 	}
-	if workingDir == "" {
-		workingDir = fallbackWorkingDir
-	}
+	return workingDir, slices.Clone(s.additionalDirs)
+}
 
-	roots := make([]string, 0, 1+len(s.additionalDirs))
+func (s *Session) pathRoots(fallbackWorkingDir string) (string, []string) {
+	workingDir, additionalDirs := s.workspaceSnapshot()
+	workingDir = cmp.Or(workingDir, fallbackWorkingDir)
+
+	roots := make([]string, 0, 1+len(additionalDirs))
 	if workingDir != "" {
 		roots = append(roots, workingDir)
 	}
-	roots = append(roots, s.additionalDirs...)
+	roots = append(roots, additionalDirs...)
 	return workingDir, dedupePaths(roots)
 }
 

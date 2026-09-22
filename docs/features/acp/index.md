@@ -67,7 +67,13 @@ Host Application
 
 New sessions and resumes that reconstruct a runtime load the agent configuration again and create independent teams and toolsets. Configuration changes affect subsequent loads, not teams already serving sessions. Config-relative paths, such as instruction files, remain relative to the agent configuration file.
 
-The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. If a client omits `cwd` when creating a session, tools use the configured working directory or the subprocess directory; the saved session retains an empty `cwd` rather than inventing workspace provenance. A resume without `cwd` uses the saved working directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
+The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. ACP wire requests require `cwd`; the SDK rejects omitted values. Direct Go callers retain the legacy empty-`cwd` fallback: new sessions use the configured or process directory without saving invented workspace provenance, and resumes use the saved directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
+
+A resume must name the same directory as the saved workspace. Filesystem aliases of the same directory are accepted, but the saved path is not rewritten. A legacy session with no saved workspace cannot adopt an explicit `cwd`; ACP clients must create a new session instead.
+
+Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
+
+Resuming a registered session while a foreground prompt is running, queued, or draining returns an error without canceling the prompt or changing roots. Retry after the prompt finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee. Closing and immediately reopening a session is likewise not a synchronization barrier for its old runtime.
 
 ## Filesystem Policies and Post-Edit Hooks
 
