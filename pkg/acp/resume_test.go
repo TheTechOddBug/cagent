@@ -392,7 +392,7 @@ func TestResumeRejectsRemovedRegistration(t *testing.T) {
 	a.mu.Lock()
 	delete(a.sessions, s.id)
 	a.mu.Unlock()
-	err := a.resumeRegisteredSession(t.Context(), s, "", nil)
+	err := a.resumeRegisteredSession(t.Context(), s, "", nil, nil, nil)
 	require.ErrorIs(t, err, errSessionClosed)
 	_, after := s.workspaceSnapshot()
 	assert.Equal(t, before, after)
