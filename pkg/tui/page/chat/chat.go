@@ -523,6 +523,11 @@ func Cleanup(page Page) {
 		if p.inputScope != nil {
 			p.inputScope.close()
 		}
+		// Cancel detached foreground work without advancing the UI message queue.
+		if p.msgCancel != nil {
+			p.msgCancel()
+			p.msgCancel = nil
+		}
 		p.cancel()
 	}
 }
@@ -1445,8 +1450,8 @@ func (p *chatPage) processMessage(msg msgtypes.SendMsg) tea.Cmd {
 	p.agentStack = nil
 	p.sidebar.ResetStreamTracking()
 
-	var ctx context.Context
-	ctx, p.msgCancel = context.WithCancel(p.ctx())
+	ctx, cancel := context.WithCancel(p.ctx())
+	p.msgCancel = cancel
 
 	// Start working state immediately to show the user something is happening.
 	// This provides visual feedback while the runtime loads tools and prepares the stream.
@@ -1466,10 +1471,10 @@ func (p *chatPage) processMessage(msg msgtypes.SendMsg) tea.Cmd {
 	go func() {
 		if skillName, task, ok := p.app.SkillCommandFork(ctx, msg.Content); ok {
 			// Fork-mode skill: run in an isolated sub-session.
-			p.app.RunSkillFork(ctx, p.msgCancel, skillName, task, msg.Attachments)
+			p.app.RunSkillFork(ctx, cancel, skillName, task, msg.Attachments)
 			return
 		}
-		p.app.Run(ctx, p.msgCancel, p.app.ResolveInput(ctx, msg.Content), msg.Attachments)
+		p.app.Run(ctx, cancel, p.app.ResolveInput(ctx, msg.Content), msg.Attachments)
 	}()
 
 	return tea.Batch(p.messages.ScrollToBottom(), spinnerCmd, loadingCmd)

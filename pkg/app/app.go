@@ -45,6 +45,8 @@ type App struct {
 	firstMessageAttach     string
 	queuedMessages         []string
 	events                 chan tea.Msg
+	eventsDone             <-chan struct{}
+	stopEvents             context.CancelFunc
 	throttleDuration       time.Duration
 	cancel                 context.CancelFunc
 	currentAgentModel      string                      // Tracks the current agent's model ID from AgentInfoEvent
@@ -139,11 +141,14 @@ func WithStreamGuard(l sync.Locker) Opt {
 }
 
 func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ...Opt) *App {
+	eventsCtx, stopEvents := context.WithCancel(ctx) //nolint:gosec // G118: Start binds cancellation to the App owner.
 	app := &App{
 		ctx:              func() context.Context { return context.WithoutCancel(ctx) },
 		runtime:          rt,
 		session:          sess,
 		events:           make(chan tea.Msg, 128),
+		eventsDone:       eventsCtx.Done(),
+		stopEvents:       stopEvents,
 		throttleDuration: 50 * time.Millisecond, // Throttle rapid events
 	}
 
@@ -156,9 +161,14 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 
 // Start begins App-owned background event producers. Construction stays cheap
 // and side-effect free; embedders call Start when the App enters a managed
-// lifecycle.
+// lifecycle. Canceling the first Start context also stops the shared event bus.
 func (a *App) Start(ctx context.Context) {
 	a.startOnce.Do(func() {
+		// The shared bus belongs to the App owner, not any one subscriber.
+		if a.stopEvents != nil {
+			context.AfterFunc(ctx, a.stopEvents)
+		}
+
 		// Emit startup info (agent, team, tools) through the events channel.
 		// This runs in the background so the TUI can start immediately while
 		// slow operations (like MCP tool loading) complete asynchronously.
@@ -173,31 +183,21 @@ func (a *App) Start(ctx context.Context) {
 				a.runtime.EmitStartupInfo(ctx, sess, runtime.NewChannelSink(startupEvents))
 			}()
 			for event := range startupEvents {
-				select {
-				case a.events <- event:
-				case <-ctx.Done():
-					return
-				}
+				a.sendEvent(ctx, event)
 			}
 		}()
 
 		// Subscribe to tool list changes so the sidebar updates immediately
 		// when an MCP server adds or removes tools (outside of a RunStream).
 		a.runtime.OnToolsChanged(func(event runtime.Event) {
-			select {
-			case a.events <- event:
-			case <-ctx.Done():
-			}
+			a.sendEvent(ctx, event)
 		})
 
 		// Forward events surfaced from detached background work (token usage
 		// from background agent tasks) so the sidebar and agent inspector can
 		// account for background agents' context usage.
 		a.runtime.OnBackgroundEvent(func(event runtime.Event) {
-			select {
-			case a.events <- event:
-			case <-ctx.Done():
-			}
+			a.sendEvent(ctx, event)
 		})
 
 		// Forward elicitation requests raised anywhere in the runtime —
@@ -745,8 +745,14 @@ func (a *App) processFileAttachment(ctx context.Context, att messages.Attachment
 // avoid blocking on the channel when the consumer has stopped reading.
 func (a *App) sendEvent(ctx context.Context, event tea.Msg) {
 	select {
+	case <-a.eventsDone:
+		return
+	default:
+	}
+	select {
 	case a.events <- event:
 	case <-ctx.Done():
+	case <-a.eventsDone:
 	}
 }
 
@@ -1008,7 +1014,7 @@ func (a *App) RunWithMessage(ctx context.Context, cancel context.CancelFunc, msg
 func (a *App) RunBangCommand(ctx context.Context, command string) {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		a.events <- runtime.ShellOutput("Error: empty command")
+		a.sendEvent(ctx, runtime.ShellOutput("Error: empty command"))
 		return
 	}
 
@@ -1018,7 +1024,7 @@ func (a *App) RunBangCommand(ctx context.Context, command string) {
 	if err != nil && len(out) == 0 {
 		output = "$ " + command + "\nError: " + err.Error()
 	}
-	a.events <- runtime.ShellOutput(output)
+	a.sendEvent(ctx, runtime.ShellOutput(output))
 }
 
 // InjectUserMessage feeds content into the app exactly as if the user had
@@ -1051,6 +1057,8 @@ func (a *App) SubscribeWith(ctx context.Context, send func(tea.Msg)) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-a.eventsDone:
 			return
 		case msg := <-ch:
 			send(msg)
@@ -1301,10 +1309,13 @@ func (a *App) pumpToEvents(ctx context.Context, emit func(runtime.EventSink)) {
 			emit(runtime.NewChannelSink(ch))
 		}()
 		for event := range ch {
+			if ctx.Err() != nil {
+				continue
+			}
 			select {
 			case a.events <- event:
 			case <-ctx.Done():
-				return
+			case <-a.eventsDone:
 			default:
 			}
 		}
@@ -1697,7 +1708,7 @@ func (a *App) CompactSession(ctx context.Context, cancel context.CancelFunc, add
 		}()
 		for event := range events {
 			if ctx.Err() != nil {
-				return
+				continue
 			}
 			if e, ok := event.(*runtime.SessionCompactionEvent); ok && e.Status == "completed" {
 				completed = true
@@ -1764,7 +1775,7 @@ func (a *App) applySessionModelOverrides(ctx context.Context, sess *session.Sess
 		if err := a.runtime.SetAgentModel(ctx, agentName, modelRef); err != nil {
 			// Log but don't fail - the session can still be used with default models
 			slog.WarnContext(ctx, "Failed to apply model override from session", "agent", agentName, "model", modelRef, "error", err)
-			a.events <- runtime.Warning(fmt.Sprintf("Failed to apply model override for agent %q: %v", agentName, err), agentName)
+			a.sendEvent(ctx, runtime.Warning(fmt.Sprintf("Failed to apply model override for agent %q: %v", agentName, err), agentName))
 		} else {
 			slog.InfoContext(ctx, "Applied model override from session", "agent", agentName, "model", modelRef)
 		}
@@ -1787,6 +1798,8 @@ func (a *App) throttleEvents(ctx context.Context, in <-chan tea.Msg) <-chan tea.
 				case out <- msg:
 				case <-ctx.Done():
 					return
+				case <-a.eventsDone:
+					return
 				}
 			}
 			buffer = buffer[:0]
@@ -1796,6 +1809,8 @@ func (a *App) throttleEvents(ctx context.Context, in <-chan tea.Msg) <-chan tea.
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-a.eventsDone:
 				return
 
 			case msg, ok := <-in:
@@ -2047,7 +2062,7 @@ func (a *App) UpdateSessionTitle(ctx context.Context, title string) error {
 	}
 
 	// Emit a SessionTitleEvent to update the UI consistently
-	a.events <- runtime.SessionTitle(a.session.ID, title)
+	a.sendEvent(ctx, runtime.SessionTitle(a.session.ID, title))
 	return nil
 }
 
@@ -2066,10 +2081,7 @@ func (a *App) generateTitle(ctx context.Context, sess *session.Session, userMess
 	if a.titleGen == nil {
 		slog.DebugContext(ctx, "No title generator available, skipping title generation")
 		// Emit empty title event so the UI clears any title-generation spinner
-		select {
-		case a.events <- runtime.SessionTitle(sess.ID, ""):
-		case <-ctx.Done():
-		}
+		a.sendEvent(ctx, runtime.SessionTitle(sess.ID, ""))
 		return
 	}
 
@@ -2077,19 +2089,13 @@ func (a *App) generateTitle(ctx context.Context, sess *session.Session, userMess
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to generate session title", "session_id", sess.ID, "error", err)
 		// Emit empty title event so the UI clears any title-generation spinner
-		select {
-		case a.events <- runtime.SessionTitle(sess.ID, ""):
-		case <-ctx.Done():
-		}
+		a.sendEvent(ctx, runtime.SessionTitle(sess.ID, ""))
 		return
 	}
 
 	if title == "" {
 		// Emit empty title event so the UI clears any title-generation spinner
-		select {
-		case a.events <- runtime.SessionTitle(sess.ID, ""):
-		case <-ctx.Done():
-		}
+		a.sendEvent(ctx, runtime.SessionTitle(sess.ID, ""))
 		return
 	}
 
@@ -2099,10 +2105,7 @@ func (a *App) generateTitle(ctx context.Context, sess *session.Session, userMess
 	}
 
 	// Emit the title event to update the UI
-	select {
-	case a.events <- runtime.SessionTitle(sess.ID, title):
-	case <-ctx.Done():
-	}
+	a.sendEvent(ctx, runtime.SessionTitle(sess.ID, title))
 }
 
 // RegenerateSessionTitle triggers AI-based title regeneration for the current session.
