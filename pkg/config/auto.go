@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/chatgpt"
@@ -222,6 +223,11 @@ func AvailableProviders(ctx context.Context, modelsGateway string, env environme
 	for _, p := range cloudProviders {
 		for _, envVar := range p.envVars {
 			if key, _ := env.Get(ctx, envVar); key != "" {
+				if envVar == "GOOGLE_GENAI_USE_VERTEXAI" {
+					if enabled, _ := strconv.ParseBool(key); !enabled {
+						continue
+					}
+				}
 				providers = append(providers, p.name)
 				break // found one, no need to check other env vars for this provider
 			}

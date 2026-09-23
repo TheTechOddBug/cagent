@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,17 +13,19 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
 func TestNewClient_TokenKey(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	type testCase struct {
 		name     string
 		tokenKey string
 		env      map[string]string
 		wantKey  string
 		wantErr  string
-	}{
+	}
+	tests := []testCase{
 		{
 			name:     "token_key wins over the native variable",
 			tokenKey: "OPENCODE_API_KEY",
@@ -63,6 +66,14 @@ func TestNewClient_TokenKey(t *testing.T) {
 			wantErr: "GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required",
 		},
 	}
+	for _, value := range []string{"false", "False", "FALSE", "0", "", "invalid"} {
+		tests = append(tests, testCase{
+			name:     "disabled Vertex flag " + value,
+			tokenKey: "OPENCODE_API_KEY",
+			env:      map[string]string{"OPENCODE_API_KEY": "opencode-key", "GOOGLE_GENAI_USE_VERTEXAI": value},
+			wantKey:  "opencode-key",
+		})
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -96,6 +107,36 @@ func TestNewClient_TokenKey(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			assert.Equal(t, []string{tt.wantKey}, seen)
+		})
+	}
+}
+
+func TestNewClient_VertexAIFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		flag string
+		opts map[string]any
+	}{
+		{name: "true", flag: "true"},
+		{name: "uppercase true", flag: "TRUE"},
+		{name: "one", flag: "1"},
+		{name: "explicit options override false", flag: "false", opts: map[string]any{"project": "test-project", "location": "us-central1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &latest.ModelConfig{Provider: "google", Model: "gemini-2.5-flash", ProviderOpts: tt.opts}
+			env := environment.NewMapEnvProvider(map[string]string{
+				"GOOGLE_GENAI_USE_VERTEXAI": tt.flag,
+				"GOOGLE_CLOUD_PROJECT":      "test-project",
+				"GOOGLE_CLOUD_LOCATION":     "us-central1",
+			})
+			client, err := NewClient(t.Context(), cfg, env,
+				options.WithTokenSource(func(context.Context) (string, error) { return "test-token", nil }))
+			require.NoError(t, err)
+			assert.Equal(t, apiSurfaceVertexAI, client.apiSurface)
 		})
 	}
 }

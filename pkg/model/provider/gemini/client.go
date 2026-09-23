@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"google.golang.org/genai"
@@ -70,7 +71,8 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		// The Vertex AI backend relies on ADC-managed HTTP clients that bypass
 		// http.RoundTripper, so the wrapper cannot be applied there. With an
 		// explicit token source we own the HTTP client and the wrapper applies.
-		_, useVertexAIEnv := env.Get(ctx, "GOOGLE_GENAI_USE_VERTEXAI")
+		value, _ := env.Get(ctx, "GOOGLE_GENAI_USE_VERTEXAI")
+		useVertexAIEnv, _ := strconv.ParseBool(value)
 		wantVertexAI := cfg.ProviderOpts["project"] != nil || cfg.ProviderOpts["location"] != nil || useVertexAIEnv
 		tokenSource := globalOptions.TokenSource()
 		useVertexAI := wantVertexAI && (globalOptions.TransportWrapper() == nil || tokenSource != nil)
