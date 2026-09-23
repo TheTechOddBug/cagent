@@ -166,6 +166,18 @@ These are path checks, not an atomic sandbox around client I/O. The ACP client m
 
 Configured `post_edit` commands run **locally**, in the session toolset's working directory, only after a successful client write. They receive the checked target path in `${file}` and match patterns against that target, not a symlink alias. Hooks require the client and agent to share a coherent on-disk filesystem; editor-buffer-only writes are not mirrored to local disk. A hook failure reports that the write succeeded but the hook failed, without retrying or rolling back the write.
 
+## Tool Locations and File Diffs
+
+Tool-start and permission updates report absolute file locations. Relative paths are resolved lexically against the session's known workspace, with home-directory expansion; this display metadata does not read files or grant access. URI-shaped values and relative paths without an absolute workspace are omitted.
+
+Successful ACP `edit_file` operations can include a full-file diff captured from the client-read content and the exact content sent in the write. The completion retains its textual response as well. Snapshots preserve untouched text and newline conventions; they are not reconstructed from replacement snippets or reread when the result is displayed.
+
+Diffs are omitted when filesystem `post_edit` commands are configured, the checked target changes between read and write, the snapshots contain invalid UTF-8, or the combined JSON-encoded diff exceeds 1 MiB. The edit still runs normally when its diff is omitted. These snapshots are not atomic filesystem history or a guarantee of final content after later runtime hooks or other writers.
+
+`write_file` completions remain text-only: ACP offers no byte-bounded, atomic before-state read, and an optional full read could disconnect the client on a large file and prevent an otherwise valid overwrite. Unknown old content is never presented as a newly created file. Other tools without captured ACP edit metadata also remain text-only.
+
+Captured file contents are presentation-only metadata, excluded from generic result/event JSON, model tool output, and persisted tool messages. The explicit ACP diff returns those unredacted file snapshots to the originating client; tool-response text transformations do not rewrite the diff. Raw output continues to contain only the normal transformed response text.
+
 ## CLI Flags
 
 ```bash

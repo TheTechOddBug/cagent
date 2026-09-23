@@ -2,11 +2,13 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/coder/acp-go-sdk"
 
@@ -226,6 +228,63 @@ func (t *FilesystemToolset) handleReadFile(ctx context.Context, toolCall tools.T
 	return tools.ResultSuccess(resp.Content), nil
 }
 
+// fileChange is presentation-only: never serialize file contents as generic tool metadata.
+type fileChange struct {
+	path    string
+	oldText *string
+	newText string
+}
+
+const maxFileDiffBytes = 1 << 20
+
+func capturedFileChange(path, before, after string) *fileChange {
+	// Include JSON escaping in the cap before allocating the encoded snapshot.
+	remaining := maxFileDiffBytes - len(`{"type":"diff","path":"","oldText":"","newText":""}`)
+	for _, part := range []string{path, before, after} {
+		var ok bool
+		remaining, ok = consumeJSONStringBudget(part, remaining)
+		if !ok {
+			return nil
+		}
+	}
+	change := &fileChange{path: path, oldText: &before, newText: after}
+	encoded, err := json.Marshal(acp.ToolCallContentDiff{Type: "diff", Path: path, OldText: &before, NewText: after})
+	if err != nil || len(encoded) > maxFileDiffBytes {
+		return nil
+	}
+	return change
+}
+
+func consumeJSONStringBudget(text string, remaining int) (int, bool) {
+	if len(text) > remaining {
+		return 0, false
+	}
+	for i := 0; i < len(text); {
+		cost, width := 1, 1
+		switch c := text[i]; {
+		case c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' || c == '\b' || c == '\f':
+			cost = 2
+		case c < 0x20 || c == '<' || c == '>' || c == '&':
+			cost = 6
+		case c >= utf8.RuneSelf:
+			r, size := utf8.DecodeRuneInString(text[i:])
+			width, cost = size, size
+			if r == utf8.RuneError && size == 1 {
+				return 0, false
+			}
+			if r == '\u2028' || r == '\u2029' {
+				cost = 6
+			}
+		}
+		remaining -= cost
+		if remaining < 0 {
+			return 0, false
+		}
+		i += width
+	}
+	return remaining, true
+}
+
 func (t *FilesystemToolset) handleWriteFile(ctx context.Context, toolCall tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
 	var args filesystem.WriteFileArgs
 	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
@@ -291,6 +350,7 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 		return tools.ResultError(fmt.Sprintf("Error reading file: %s", err)), nil
 	}
 
+	readPath := resolvedPath
 	modifiedContent := resp.Content
 
 	for i, edit := range args.Edits {
@@ -323,5 +383,11 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 	if err := t.ExecutePostEditCommands(ctx, resolvedPath); err != nil {
 		return tools.ResultError(fmt.Sprintf("File edited successfully but post-edit command failed: %s", err)), nil
 	}
-	return tools.ResultSuccess("File edited successfully"), nil
+	result := tools.ResultSuccess("File edited successfully")
+	if !t.HasPostEditCommands() && readPath == resolvedPath {
+		if change := capturedFileChange(resolvedPath, resp.Content, modifiedContent); change != nil {
+			result.Meta = change
+		}
+	}
+	return result, nil
 }

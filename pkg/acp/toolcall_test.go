@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"path/filepath"
 	"testing"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -129,98 +130,23 @@ func TestExtractLocations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, extractLocations(tt.args))
-		})
-	}
-}
-
-func TestExtractDiffContent(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		toolName  string
-		arguments string
-		want      *acpsdk.ToolCallContentDiff
-	}{
-		{
-			name:      "edit_file single edit",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":[{"oldText":"a","newText":"b"}]}`,
-			want:      &acpsdk.ToolCallContentDiff{Path: "/f.go", OldText: new("a\n"), NewText: "b\n", Type: "diff"},
-		},
-		{
-			name:      "edit_file concatenates edits",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]}`,
-			want:      &acpsdk.ToolCallContentDiff{Path: "/f.go", OldText: new("a\nc\n"), NewText: "b\nd\n", Type: "diff"},
-		},
-		{
-			name:      "edit_file skips non-object edits",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":["bogus",{"oldText":"a","newText":"b"}]}`,
-			want:      &acpsdk.ToolCallContentDiff{Path: "/f.go", OldText: new("a\n"), NewText: "b\n", Type: "diff"},
-		},
-		{
-			name:      "edit_file all edits invalid",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":["bogus"]}`,
-			want:      nil,
-		},
-		{
-			name:      "edit_file no edits",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":[]}`,
-			want:      nil,
-		},
-		{
-			name:      "edit_file edits wrong outer type",
-			toolName:  "edit_file",
-			arguments: `{"path":"/f.go","edits":{"oldText":"a","newText":"b"}}`,
-			want:      nil,
-		},
-		{
-			name:      "edit_file missing path",
-			toolName:  "edit_file",
-			arguments: `{"edits":[{"oldText":"a","newText":"b"}]}`,
-			want:      nil,
-		},
-		{
-			name:      "write_file with content",
-			toolName:  "write_file",
-			arguments: `{"path":"/f.go","content":"hello"}`,
-			want:      &acpsdk.ToolCallContentDiff{Path: "/f.go", NewText: "hello", Type: "diff"},
-		},
-		{
-			name:      "write_file without content",
-			toolName:  "write_file",
-			arguments: `{"path":"/f.go"}`,
-			want:      nil,
-		},
-		{
-			name:      "write_file content wrong outer type",
-			toolName:  "write_file",
-			arguments: `{"path":"/f.go","content":["hello"]}`,
-			want:      nil,
-		},
-		{
-			name:      "unrelated tool",
-			toolName:  "read_file",
-			arguments: `{"path":"/f.go","content":"hello"}`,
-			want:      nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := extractDiffContent(tt.toolName, tt.arguments)
-			if tt.want == nil {
-				assert.Nil(t, got)
-				return
+			root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+			for key, value := range tt.args {
+				if path, ok := value.(string); ok && path != "" && path[0] == '/' {
+					tt.args[key] = filepath.Join(root, path[1:])
+				}
+				if paths, ok := value.([]any); ok {
+					for i, p := range paths {
+						if path, ok := p.(string); ok && path != "" && path[0] == '/' {
+							paths[i] = filepath.Join(root, path[1:])
+						}
+					}
+				}
 			}
-			require.NotNil(t, got)
-			assert.Equal(t, tt.want, got.Diff)
+			for i := range tt.want {
+				tt.want[i].Path = filepath.Join(root, tt.want[i].Path[1:])
+			}
+			assert.Equal(t, tt.want, extractLocations(tt.args, ""))
 		})
 	}
 }
@@ -228,18 +154,16 @@ func TestExtractDiffContent(t *testing.T) {
 func TestBuildToolCallComplete(t *testing.T) {
 	t.Parallel()
 
-	editArgs := `{"path":"/f.go","edits":[{"oldText":"a","newText":"b"}]}`
+	path := filepath.Join(t.TempDir(), "f.go")
 
 	tests := []struct {
 		name       string
-		arguments  string
 		event      *runtime.ToolCallResponseEvent
 		wantStatus acpsdk.ToolCallStatus
 		wantDiff   bool
 	}{
 		{
-			name:      "nil result completes with text content",
-			arguments: `{"command":"ls"}`,
+			name: "nil result completes with text content",
 			event: &runtime.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "shell"},
@@ -248,8 +172,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 			wantStatus: acpsdk.ToolCallStatusCompleted,
 		},
 		{
-			name:      "error result fails",
-			arguments: `{"command":"ls"}`,
+			name: "error result fails",
 			event: &runtime.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "shell"},
@@ -259,20 +182,18 @@ func TestBuildToolCallComplete(t *testing.T) {
 			wantStatus: acpsdk.ToolCallStatusFailed,
 		},
 		{
-			name:      "successful edit_file uses diff content",
-			arguments: editArgs,
+			name: "successful edit_file uses diff content",
 			event: &runtime.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
 				Response:       "edited",
-				Result:         tools.ResultSuccess("edited"),
+				Result:         &tools.ToolCallResult{Output: "edited", Meta: &fileChange{path: path, oldText: new("a"), newText: "b"}},
 			},
 			wantStatus: acpsdk.ToolCallStatusCompleted,
 			wantDiff:   true,
 		},
 		{
-			name:      "failed edit_file keeps text content",
-			arguments: editArgs,
+			name: "failed edit_file keeps text content",
 			event: &runtime.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
@@ -282,8 +203,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 			wantStatus: acpsdk.ToolCallStatusFailed,
 		},
 		{
-			name:      "edit_file without diffable args falls back to text",
-			arguments: `{"path":"/f.go","edits":[]}`,
+			name: "edit_file without snapshot metadata falls back to text",
 			event: &runtime.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
@@ -298,7 +218,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			update := buildToolCallComplete(tt.arguments, tt.event)
+			update := buildToolCallComplete(tt.event)
 			require.NotNil(t, update.ToolCallUpdate)
 			tc := update.ToolCallUpdate
 
@@ -307,14 +227,15 @@ func TestBuildToolCallComplete(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, *tc.Status)
 			assert.Equal(t, map[string]any{"content": tt.event.Response}, tc.RawOutput)
 
-			require.Len(t, tc.Content, 1)
 			if tt.wantDiff {
-				require.NotNil(t, tc.Content[0].Diff)
-				assert.Equal(t, "/f.go", tc.Content[0].Diff.Path)
-				assert.Equal(t, "b\n", tc.Content[0].Diff.NewText)
-				require.NotNil(t, tc.Content[0].Diff.OldText)
-				assert.Equal(t, "a\n", *tc.Content[0].Diff.OldText)
+				require.Len(t, tc.Content, 2)
+				require.NotNil(t, tc.Content[1].Diff)
+				assert.Equal(t, path, tc.Content[1].Diff.Path)
+				assert.Equal(t, "b", tc.Content[1].Diff.NewText)
+				require.NotNil(t, tc.Content[1].Diff.OldText)
+				assert.Equal(t, "a", *tc.Content[1].Diff.OldText)
 			} else {
+				require.Len(t, tc.Content, 1)
 				require.NotNil(t, tc.Content[0].Content)
 				require.NotNil(t, tc.Content[0].Content.Content.Text)
 				assert.Equal(t, tt.event.Response, tc.Content[0].Content.Content.Text.Text)
@@ -331,11 +252,12 @@ func TestBuildToolCallStart(t *testing.T) {
 
 		toolCall := tools.ToolCall{
 			ID:       "call-1",
-			Function: tools.FunctionCall{Name: "read_file", Arguments: `{"path":"/a.txt"}`},
+			Function: tools.FunctionCall{Name: "read_file", Arguments: `{"path":"a.txt"}`},
 		}
 		tool := tools.Tool{Name: "read_file", Annotations: tools.ToolAnnotations{Title: "Read File", ReadOnlyHint: true}}
 
-		update := buildToolCallStart(toolCall, tool)
+		wd := t.TempDir()
+		update := buildToolCallStart(toolCall, tool, wd)
 		require.NotNil(t, update.ToolCall)
 		tc := update.ToolCall
 
@@ -343,8 +265,8 @@ func TestBuildToolCallStart(t *testing.T) {
 		assert.Equal(t, "Read File", tc.Title)
 		assert.Equal(t, acpsdk.ToolKindRead, tc.Kind)
 		assert.Equal(t, acpsdk.ToolCallStatusPending, tc.Status)
-		assert.Equal(t, map[string]any{"path": "/a.txt"}, tc.RawInput)
-		assert.Equal(t, []acpsdk.ToolCallLocation{{Path: "/a.txt"}}, tc.Locations)
+		assert.Equal(t, map[string]any{"path": "a.txt"}, tc.RawInput)
+		assert.Equal(t, []acpsdk.ToolCallLocation{{Path: filepath.Join(wd, "a.txt")}}, tc.Locations)
 	})
 
 	t.Run("falls back to function name without locations", func(t *testing.T) {
@@ -355,7 +277,7 @@ func TestBuildToolCallStart(t *testing.T) {
 			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`},
 		}
 
-		update := buildToolCallStart(toolCall, tools.Tool{Name: "shell"})
+		update := buildToolCallStart(toolCall, tools.Tool{Name: "shell"}, "")
 		require.NotNil(t, update.ToolCall)
 		tc := update.ToolCall
 
@@ -373,7 +295,7 @@ func TestBuildToolCallUpdate(t *testing.T) {
 		Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`},
 	}
 
-	update := buildToolCallUpdate(toolCall, tools.Tool{Name: "shell"}, acpsdk.ToolCallStatusPending)
+	update := buildToolCallUpdate(toolCall, tools.Tool{Name: "shell"}, acpsdk.ToolCallStatusPending, "")
 	assert.Equal(t, acpsdk.ToolCallId("call-1"), update.ToolCallId)
 	require.NotNil(t, update.Title)
 	assert.Equal(t, "shell", *update.Title)
@@ -384,7 +306,7 @@ func TestBuildToolCallUpdate(t *testing.T) {
 	assert.Equal(t, map[string]any{"command": "ls"}, update.RawInput)
 
 	readOnly := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{ReadOnlyHint: true}}
-	update = buildToolCallUpdate(toolCall, readOnly, acpsdk.ToolCallStatusCompleted)
+	update = buildToolCallUpdate(toolCall, readOnly, acpsdk.ToolCallStatusCompleted, "")
 	require.NotNil(t, update.Kind)
 	assert.Equal(t, acpsdk.ToolKindRead, *update.Kind)
 }

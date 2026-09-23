@@ -831,7 +831,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 		for range eventsChan {
 		}
 	}()
-	toolCallArgs := map[string]string{}
+	toolCalls := map[string]struct{}{}
 	outcome := promptOutcome{sessionID: acpSess.sess.ID}
 
 	for event := range eventsChan {
@@ -857,19 +857,20 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 			}
 
 		case *runtime.ToolCallEvent:
-			toolCallArgs[e.ToolCall.ID] = e.ToolCall.Function.Arguments
-			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallStart(e.ToolCall, e.ToolDefinition)); err != nil {
+			toolCalls[e.ToolCall.ID] = struct{}{}
+			workingDir, _ := acpSess.workspaceSnapshot()
+			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallStart(e.ToolCall, e.ToolDefinition, workingDir)); err != nil {
 				return "", err
 			}
 
 		case *runtime.ToolCallResponseEvent:
-			args, ok := toolCallArgs[e.ToolCallID]
+			_, ok := toolCalls[e.ToolCallID]
 			if !ok {
 				return "", fmt.Errorf("missing tool call arguments for tool call ID %s", e.ToolCallID)
 			}
-			delete(toolCallArgs, e.ToolCallID)
+			delete(toolCalls, e.ToolCallID)
 
-			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallComplete(args, e)); err != nil {
+			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallComplete(e)); err != nil {
 				return "", err
 			}
 
@@ -934,7 +935,8 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 
 // handleToolCallConfirmation handles tool call permission requests.
 func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session, e *runtime.ToolCallConfirmationEvent) error {
-	toolCallUpdate := buildToolCallUpdate(e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending)
+	workingDir, _ := acpSess.workspaceSnapshot()
+	toolCallUpdate := buildToolCallUpdate(e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending, workingDir)
 
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 		SessionId: acp.SessionId(acpSess.id),

@@ -773,12 +773,15 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 
 	shellTool := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{Title: "Run Shell"}}
 	editTool := tools.Tool{Name: "edit_file"}
+	wd := t.TempDir()
+	editPath := filepath.Join(wd, "f.go")
+	editResult := &tools.ToolCallResult{Output: "ok", Meta: &fileChange{path: editPath, oldText: new("a"), newText: "b"}}
 	editArgs := `{"path":"/tmp/f.go","edits":[{"oldText":"a","newText":"b"}]}`
 
 	rt := &fakeRuntime{events: []runtime.Event{
 		runtime.ToolCall(tools.ToolCall{
 			ID:       "call-1",
-			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls","path":"/tmp"}`},
+			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls","path":"."}`},
 		}, shellTool, "root"),
 		runtime.ToolCallResponse("call-1", shellTool, tools.ResultSuccess("file.txt"), "file.txt", "root"),
 		runtime.ToolCall(tools.ToolCall{
@@ -790,9 +793,10 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 			ID:       "call-3",
 			Function: tools.FunctionCall{Name: "edit_file", Arguments: editArgs},
 		}, editTool, "root"),
-		runtime.ToolCallResponse("call-3", editTool, tools.ResultSuccess("ok"), "ok", "root"),
+		runtime.ToolCallResponse("call-3", editTool, editResult, "ok", "root"),
 	}}
 	f := newRunAgentFixture(t, rt, &captureWriter{})
+	f.sess.workingDir = wd
 
 	require.NoError(t, f.runAgent(t.Context(), f.sess))
 
@@ -806,8 +810,8 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	assert.Equal(t, "Run Shell", start.Title)
 	assert.Equal(t, acpsdk.ToolKindExecute, start.Kind)
 	assert.Equal(t, acpsdk.ToolCallStatusPending, start.Status)
-	assert.Equal(t, map[string]any{"command": "ls", "path": "/tmp"}, start.RawInput)
-	assert.Equal(t, []acpsdk.ToolCallLocation{{Path: "/tmp"}}, start.Locations)
+	assert.Equal(t, map[string]any{"command": "ls", "path": "."}, start.RawInput)
+	assert.Equal(t, []acpsdk.ToolCallLocation{{Path: wd}}, start.Locations)
 
 	completed := updates[2].ToolCallUpdate
 	require.NotNil(t, completed)
@@ -835,13 +839,13 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	require.NotNil(t, editDone)
 	require.NotNil(t, editDone.Status)
 	assert.Equal(t, acpsdk.ToolCallStatusCompleted, *editDone.Status)
-	require.Len(t, editDone.Content, 1)
-	diff := editDone.Content[0].Diff
+	require.Len(t, editDone.Content, 2)
+	diff := editDone.Content[1].Diff
 	require.NotNil(t, diff)
-	assert.Equal(t, "/tmp/f.go", diff.Path)
-	assert.Equal(t, "b\n", diff.NewText)
+	assert.Equal(t, editPath, diff.Path)
+	assert.Equal(t, "b", diff.NewText)
 	require.NotNil(t, diff.OldText)
-	assert.Equal(t, "a\n", *diff.OldText)
+	assert.Equal(t, "a", *diff.OldText)
 
 	assert.Empty(t, rt.resumeRequests())
 }
