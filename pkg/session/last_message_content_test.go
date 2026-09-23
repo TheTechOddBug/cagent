@@ -128,7 +128,6 @@ func TestGetLastMessageContent_Concurrent(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	writer := func(s *Session, role chat.MessageRole) {
-		defer wg.Done()
 		<-start
 		for i := range iterations {
 			content := fmt.Sprintf("%s-%d", role, i)
@@ -139,7 +138,6 @@ func TestGetLastMessageContent_Concurrent(t *testing.T) {
 		}
 	}
 	reader := func(s *Session) {
-		defer wg.Done()
 		<-start
 		for range iterations {
 			_ = s.GetLastAssistantMessageContent()
@@ -147,11 +145,10 @@ func TestGetLastMessageContent_Concurrent(t *testing.T) {
 		}
 	}
 	for _, s := range []*Session{parent, child, grandchild} {
-		wg.Add(4)
-		go writer(s, chat.MessageRoleUser)
-		go writer(s, chat.MessageRoleAssistant)
-		go reader(s)
-		go reader(parent)
+		wg.Go(func() { writer(s, chat.MessageRoleUser) })
+		wg.Go(func() { writer(s, chat.MessageRoleAssistant) })
+		wg.Go(func() { reader(s) })
+		wg.Go(func() { reader(parent) })
 	}
 	close(start)
 

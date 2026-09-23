@@ -239,12 +239,10 @@ func TestStartableToolSet_BackoffNoDoubleStartWithinWindow(t *testing.T) {
 
 	const goroutines = 20
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 	for range goroutines {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = s.TryStart(t.Context())
-		}()
+		})
 	}
 	wg.Wait()
 

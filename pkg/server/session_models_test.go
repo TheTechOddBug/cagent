@@ -695,9 +695,7 @@ func TestSessionManager_ModelSwitchConcurrentSessionSaves(t *testing.T) {
 	const iterations = 100
 	errs := make(chan error, 3)
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range iterations {
 			_, _, err := sm.SetSessionAgentModel(ctx, sess.ID, fmt.Sprintf("openai/model-%d", i))
 			if err != nil {
@@ -705,9 +703,8 @@ func TestSessionManager_ModelSwitchConcurrentSessionSaves(t *testing.T) {
 				return
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for i := range iterations {
 			if err := sm.UpdateSessionPermissions(ctx, sess.ID, &session.PermissionsConfig{
 				Allow: []string{fmt.Sprintf("tool-%d", i)},
@@ -716,9 +713,8 @@ func TestSessionManager_ModelSwitchConcurrentSessionSaves(t *testing.T) {
 				return
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for i := range iterations {
 			policy := session.SafetyPolicyStrict
 			if i%2 == 0 {
@@ -729,7 +725,7 @@ func TestSessionManager_ModelSwitchConcurrentSessionSaves(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 	wg.Wait()
 	close(errs)
 	for err := range errs {

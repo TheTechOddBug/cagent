@@ -820,12 +820,10 @@ func TestSupervisor_StopConcurrent(t *testing.T) {
 	const n = 4
 	errs := make(chan error, n)
 	var wg sync.WaitGroup
-	wg.Add(n)
 	for range n {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			errs <- s.Stop(t.Context())
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

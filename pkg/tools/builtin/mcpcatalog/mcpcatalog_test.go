@@ -765,21 +765,18 @@ func TestConcurrentEnableDisable(t *testing.T) {
 	var wg sync.WaitGroup
 	enableErrs := make(chan error, 2)
 
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, err := ts.handleEnable(ctx, EnableArgs{ID: id1})
 		if err != nil {
 			enableErrs <- err
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		_, err := ts.handleEnable(ctx, EnableArgs{ID: id2})
 		if err != nil {
 			enableErrs <- err
 		}
-	}()
+	})
 	wg.Wait()
 	close(enableErrs)
 	for err := range enableErrs {
@@ -794,21 +791,18 @@ func TestConcurrentEnableDisable(t *testing.T) {
 	assert.True(t, exists2)
 
 	disableErrs := make(chan error, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, err := ts.handleDisable(ctx, DisableArgs{ID: id1})
 		if err != nil {
 			disableErrs <- err
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		_, err := ts.handleDisable(ctx, DisableArgs{ID: id2})
 		if err != nil {
 			disableErrs <- err
 		}
-	}()
+	})
 	wg.Wait()
 	close(disableErrs)
 	for err := range disableErrs {

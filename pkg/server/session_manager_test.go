@@ -709,23 +709,20 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ch, err := sm.RunSession(ctx, sess1.ID, "agent", "root", []api.Message{{Content: "a"}}, "")
 		assert.NoError(t, err)
 		for range ch {
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ch, err := sm.RunSession(ctx, sess2.ID, "agent", "root", []api.Message{{Content: "b"}}, "")
 		assert.NoError(t, err)
 		for range ch {
 		}
-	}()
+	})
 
 	wg.Wait()
 
@@ -1161,9 +1158,7 @@ func TestUpdateSessionPermissionsConcurrentReads(t *testing.T) {
 	const iterations = 100
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range iterations {
 			if err := sm.UpdateSessionPermissions(t.Context(), live.ID, &session.PermissionsConfig{
 				Allow: []string{strconv.Itoa(i)},
@@ -1172,9 +1167,8 @@ func TestUpdateSessionPermissionsConcurrentReads(t *testing.T) {
 				return
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for range iterations {
 			got, err := sm.GetSession(t.Context(), live.ID)
 			if err != nil {
@@ -1192,7 +1186,7 @@ func TestUpdateSessionPermissionsConcurrentReads(t *testing.T) {
 				_ = snapshot.Permissions.Allow
 			}
 		}
-	}()
+	})
 	wg.Wait()
 	close(errs)
 	for err := range errs {

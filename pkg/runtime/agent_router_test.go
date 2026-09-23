@@ -123,9 +123,7 @@ func TestAgentRouter_ConcurrentSafety(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(3)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range 200 {
 				if i%2 == 0 {
 					r.Set("root")
@@ -133,19 +131,17 @@ func TestAgentRouter_ConcurrentSafety(t *testing.T) {
 					r.Set("child")
 				}
 			}
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			for range 200 {
 				_ = r.Name()
 			}
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			for range 200 {
 				_ = r.Current()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

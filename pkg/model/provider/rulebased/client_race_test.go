@@ -30,16 +30,13 @@ func TestLastSelectedModelID_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 100 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			messages := []chat.Message{{Role: chat.MessageRoleUser, Content: "hello"}}
 			_, _ = client.CreateChatCompletionStream(t.Context(), messages, nil)
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			_ = client.LastSelectedModelID()
-		}()
+		})
 	}
 	wg.Wait()
 }
