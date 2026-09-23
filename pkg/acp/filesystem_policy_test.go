@@ -31,6 +31,7 @@ type policyFilePeer struct {
 	content       string
 	failRead      bool
 	failWrite     bool
+	readResponse  func(acpsdk.ReadTextFileRequest) (acpsdk.ReadTextFileResponse, *acpsdk.RequestError)
 	onRead        func()
 	onWrite       func(acpsdk.WriteTextFileRequest)
 
@@ -66,6 +67,9 @@ func (p *policyFilePeer) Write(b []byte) (int, error) {
 			p.onRead()
 		}
 		result = acpsdk.ReadTextFileResponse{Content: p.content}
+		if p.readResponse != nil {
+			result, rpcErr = p.readResponse(req)
+		}
 		if p.failRead {
 			rpcErr = acpsdk.NewInternalError("read failed")
 		}
@@ -142,6 +146,8 @@ func callPolicyFileTool(t *testing.T, ctx context.Context, fs *FilesystemToolset
 	t.Helper()
 	args := map[string]any{"path": path}
 	switch name {
+	case filesystem.ToolNameReadMultipleFiles:
+		args = map[string]any{"paths": []string{path}}
 	case filesystem.ToolNameWriteFile:
 		args["content"] = "updated"
 	case filesystem.ToolNameEditFile:
@@ -158,6 +164,14 @@ func callPolicyFileTool(t *testing.T, ctx context.Context, fs *FilesystemToolset
 		result, err := tool.Handler(ctx, tools.ToolCall{Function: tools.FunctionCall{Name: name, Arguments: string(data)}}, tools.NopRuntime{})
 		require.NoError(t, err)
 		require.NotNil(t, result)
+		if name == filesystem.ToolNameReadMultipleFiles {
+			meta, ok := result.Meta.(filesystem.ReadMultipleFilesMeta)
+			require.True(t, ok)
+			require.Len(t, meta.Files, 1)
+			assert.False(t, result.IsError, "batch failures are per-file")
+			// Share single-path policy assertions with the batch tool.
+			result.IsError = meta.Files[0].Error != ""
+		}
 		return result
 	}
 	t.Fatalf("tool %s not found", name)
@@ -189,7 +203,7 @@ func TestFilesystemPolicyRejectsBeforeRPC(t *testing.T) {
 			}
 			tc.cfg.PostEdit = []latest.PostEditConfig{{Path: "*", Cmd: "exit 99"}}
 			fs, ctx, peer := newPolicyFileFixture(t, wd, tc.cfg)
-			for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
+			for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameReadMultipleFiles, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
 				result := callPolicyFileTool(t, ctx, fs, name, tc.path)
 				assert.True(t, result.IsError, name)
 				assert.Contains(t, result.Output, tc.wantErr, name)
@@ -213,13 +227,13 @@ func TestFilesystemPolicyAdditionalRoots(t *testing.T) {
 				roots = append(roots, extra)
 			}
 			fs, ctx, peer := newPolicyFileFixture(t, wd, latest.Toolset{AllowList: roots}, extra)
-			for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
+			for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameReadMultipleFiles, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
 				result := callPolicyFileTool(t, ctx, fs, name, filepath.Join(extra, "file.txt"))
 				assert.Equal(t, !allowed, result.IsError, result.Output)
 			}
 			reads, writes := peer.counts()
 			if allowed {
-				assert.Equal(t, 2, reads)
+				assert.Equal(t, 3, reads)
 				assert.Equal(t, 2, writes)
 			} else {
 				assert.Zero(t, reads)
@@ -249,7 +263,7 @@ func TestFilesystemPolicySymlinks(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(outside, "missing-dir"), filepath.Join(wd, "dangling-dir")))
 	fs, ctx, peer := newPolicyFileFixture(t, wd, latest.Toolset{AllowList: []string{"."}, DenyList: []string{"denied"}})
 	for _, path := range []string{"alias/secret.txt", "dangling", "dangling-dir/file.txt"} {
-		for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
+		for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameReadMultipleFiles, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
 			result := callPolicyFileTool(t, ctx, fs, name, path)
 			assert.True(t, result.IsError, "%s %s: %s", name, path, result.Output)
 		}
@@ -428,13 +442,13 @@ func TestFilesystemPolicyAllowsUnignoredPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(wd, ".agentsignore"), []byte("*.txt\n!allowed.txt\n"), 0o600))
 	fs, ctx, peer := newPolicyFileFixture(t, wd, latest.Toolset{AllowList: []string{"."}})
 	for _, path := range []string{"allowed.txt", filepath.Join(wd, "allowed.txt")} {
-		for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
+		for _, name := range []string{filesystem.ToolNameReadFile, filesystem.ToolNameReadMultipleFiles, filesystem.ToolNameWriteFile, filesystem.ToolNameEditFile} {
 			result := callPolicyFileTool(t, ctx, fs, name, path)
 			assert.False(t, result.IsError, result.Output)
 		}
 	}
 	reads, writes := peer.counts()
-	assert.Equal(t, 4, reads)
+	assert.Equal(t, 6, reads)
 	assert.Equal(t, 4, writes)
 }
 

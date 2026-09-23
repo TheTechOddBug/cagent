@@ -158,9 +158,26 @@ Concurrent close requests join the same cleanup. Canceling a close request only 
 
 Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
 
+## Client Filesystem Capabilities
+
+The ACP `filesystem` toolset exposes text operations according to the client's negotiated `fs` capabilities:
+
+| Client support | Available client-backed tools |
+| --- | --- |
+| Neither read nor write | None |
+| `readTextFile` only | `read_file`, `read_multiple_files` |
+| `writeTextFile` only | `write_file` |
+| Both | `read_file`, `read_multiple_files`, `write_file`, `edit_file` |
+
+Configured tool filters and `readonly` restrictions still apply. Unsupported operations are omitted from normal and deferred discovery. These tools never fall back to host file contents when a capability is missing or a client request fails; edits require both client capabilities rather than mixing editor and disk content.
+
+Single- and multi-file reads use client-provided text, including unsaved editor buffers and files not yet saved to disk. `read_multiple_files` makes one request per permitted path, in input order, preserving duplicate paths and the existing text/JSON output format. Ordinary errors are recorded per file without discarding other results. Cancellation stops further requests once observed; it cannot revoke an already-issued read or impose a hard timeout on the transport. These APIs are text-only, not image or binary reads.
+
+Filesystem capabilities describe client methods, not authorization or a read-only sandbox. Search, directory listing, and directory mutation tools still run on the agent host with their existing policies. Disk-backed search does not include unsaved editor buffers, and large client reads remain subject to transport message-size limits.
+
 ## Filesystem Policies and Post-Edit Hooks
 
-The ACP `filesystem` toolset's `read_file`, `write_file`, and `edit_file` operations enforce `allow_list`, `deny_list`, and `.agentsignore` before requesting client I/O. Session workspace roots remain an additional restriction: adding a workspace root does not override a deny rule or expand the configured allow list. Invalid allow/deny configuration disables these operations.
+The ACP `filesystem` toolset's `read_file`, `read_multiple_files`, `write_file`, and `edit_file` operations enforce `allow_list`, `deny_list`, and `.agentsignore` before requesting client I/O. Session workspace roots remain an additional restriction: adding a workspace root does not override a deny rule or expand the configured allow list. Invalid allow/deny configuration disables these operations.
 
 These are path checks, not an atomic sandbox around client I/O. The ACP client must enforce access boundaries when opening files; the agent cannot apply local `os.Root` protections to another process's file operations. User-supplied `resource_link` attachments follow a separate, session-root-checked path and are not governed by a filesystem toolset's policy.
 
