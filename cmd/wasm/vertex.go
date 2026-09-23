@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
@@ -17,7 +18,8 @@ const vertexTokenEnv = "GOOGLE_OAUTH_ACCESS_TOKEN"
 // wantsVertexAI mirrors the Vertex AI detection of gemini.NewClient and adds
 // the Model Garden publisher, without linking the Vertex SDKs.
 func wantsVertexAI(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider) bool {
-	_, useVertexAIEnv := env.Get(ctx, "GOOGLE_GENAI_USE_VERTEXAI")
+	value, _ := env.Get(ctx, "GOOGLE_GENAI_USE_VERTEXAI")
+	useVertexAIEnv, _ := strconv.ParseBool(value)
 	publisher, _ := cfg.ProviderOpts["publisher"].(string)
 	return cfg.ProviderOpts["project"] != nil || cfg.ProviderOpts["location"] != nil || useVertexAIEnv ||
 		(publisher != "" && !strings.EqualFold(publisher, "google"))
