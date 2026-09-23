@@ -367,8 +367,8 @@ func escapeError(requested string, cause error) error {
 // against a stdlib sentinel if a future release adds one.
 func isPathEscape(err error) bool {
 	for err != nil {
-		var pathErr *fs.PathError
-		if !errors.As(err, &pathErr) || pathErr.Err == nil {
+		pathErr, ok := errors.AsType[*fs.PathError](err)
+		if !ok || pathErr.Err == nil {
 			return false
 		}
 		if pathErr.Err.Error() == "path escapes from parent" {

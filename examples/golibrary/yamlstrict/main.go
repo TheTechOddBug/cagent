@@ -80,8 +80,7 @@ func run(ctx context.Context, ref string) error {
 		teamloader.WithStrict(),
 	)
 	if err != nil {
-		var unsupported *config.UnsupportedError
-		if errors.As(err, &unsupported) {
+		if _, ok := errors.AsType[*config.UnsupportedError](err); ok {
 			return fmt.Errorf("this binary cannot run %s:\n%w", ref, err)
 		}
 		return err

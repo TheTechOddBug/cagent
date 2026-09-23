@@ -66,16 +66,14 @@ func (e *AuthorizationRequiredError) Error() string {
 // plain errors.As would hide the non-auth causes behind the silent
 // auth-deferral handling.
 func IsAuthorizationRequired(err error) bool {
-	var partial *PartialStartError
-	if errors.As(err, &partial) {
+	if partial, ok := errors.AsType[*PartialStartError](err); ok {
 		return partial.AuthOnly
 	}
-	var total *TotalStartError
-	if errors.As(err, &total) {
+	if total, ok := errors.AsType[*TotalStartError](err); ok {
 		return total.AuthOnly
 	}
-	var target *AuthorizationRequiredError
-	return errors.As(err, &target)
+	_, ok := errors.AsType[*AuthorizationRequiredError](err)
+	return ok
 }
 
 // OAuthDeclinedError is returned by the transport when the user explicitly
@@ -110,6 +108,6 @@ func (e *OAuthDeclinedError) Error() string {
 // "Tools() -> Start() -> OAuth elicitation" retry loop so the dismissed
 // dialog does not immediately re-appear on the next loop iteration.
 func IsOAuthDeclined(err error) bool {
-	var target *OAuthDeclinedError
-	return errors.As(err, &target)
+	_, ok := errors.AsType[*OAuthDeclinedError](err)
+	return ok
 }

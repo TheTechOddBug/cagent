@@ -245,8 +245,7 @@ func (m *appModel) handlePlanRefreshed(msg planRefreshedMsg) (tea.Model, tea.Cmd
 			if viewer, ok := m.dialogMgr.TopDialog().(dialog.PlanDetailViewer); !ok || viewer.PlanRef() != fetch.ref {
 				continue
 			}
-			var notFound *plans.NotFoundError
-			if errors.As(fetch.err, &notFound) {
+			if _, ok := errors.AsType[*plans.NotFoundError](fetch.err); ok {
 				cmds = append(cmds, core.CmdHandler(dialog.ClosePlanDetailMsg{Ref: fetch.ref}))
 			}
 			cmds = append(cmds, m.planReadFailureCmd(fetch.err))
@@ -823,8 +822,7 @@ func (m *appModel) planEditorFailureCmd(err error, draftPath string) tea.Cmd {
 	if timeout := m.planTimeoutCmd(err); timeout != nil {
 		return tea.Sequence(timeout, notification.InfoCmd("Your draft is kept at "+draftPath))
 	}
-	var conflict *plans.ConflictError
-	if errors.As(err, &conflict) {
+	if conflict, ok := errors.AsType[*plans.ConflictError](err); ok {
 		text := fmt.Sprintf(
 			"Version conflict on %q: it is at v%d, you edited v%d. Your draft is kept at %s — refresh and retry from it.",
 			conflict.Name, conflict.Current, conflict.Expected, draftPath,
@@ -848,8 +846,7 @@ func (m *appModel) planWriteFailureCmd(err error) tea.Cmd {
 	if timeout := m.planTimeoutCmd(err); timeout != nil {
 		return timeout
 	}
-	var conflict *plans.ConflictError
-	if errors.As(err, &conflict) {
+	if conflict, ok := errors.AsType[*plans.ConflictError](err); ok {
 		cmds := []tea.Cmd{notification.ErrorCmd(fmt.Sprintf(
 			"Version conflict on %q: it changed to v%d since you read v%d. Data refreshed — review and retry.",
 			conflict.Name, conflict.Current, conflict.Expected,

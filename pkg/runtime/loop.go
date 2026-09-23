@@ -860,8 +860,7 @@ func (r *LocalRuntime) runTurn(
 		return nil
 	}
 	res, usedModel, err := r.fallback.execute(streamCtx, a, model, messages, agentTools, sess, events, ls.idleRetry, admitIdleRetry)
-	var budgetStop budgetAdmissionError
-	if errors.As(err, &budgetStop) {
+	if _, ok := errors.AsType[budgetAdmissionError](err); ok {
 		endStreamSpan()
 		endReason = turnEndReasonBudgetExceeded
 		return turnExit

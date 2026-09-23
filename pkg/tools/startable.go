@@ -145,8 +145,8 @@ func (e *PartialStartError) Unwrap() error { return e.Err }
 // that a composite toolset started with only part of its inner toolsets
 // available.
 func IsPartialStart(err error) bool {
-	var target *PartialStartError
-	return errors.As(err, &target)
+	_, ok := errors.AsType[*PartialStartError](err)
+	return ok
 }
 
 // TotalStartError is the total-failure counterpart of PartialStartError,

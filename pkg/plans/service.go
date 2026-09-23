@@ -204,12 +204,10 @@ func checkRef(ref Ref) error {
 // sharedError maps a plan.Storage failure to this package's typed errors by
 // the storage contract's own types, never by matching error text.
 func sharedError(op, name string, err error) error {
-	var conflict *plan.VersionConflictError
-	if errors.As(err, &conflict) {
+	if conflict, ok := errors.AsType[*plan.VersionConflictError](err); ok {
 		return &ConflictError{Name: conflict.Name, Expected: conflict.Expected, Current: conflict.Current}
 	}
-	var corrupt *plan.CorruptPlanError
-	if errors.As(err, &corrupt) {
+	if _, ok := errors.AsType[*plan.CorruptPlanError](err); ok {
 		return &CorruptError{Scope: ScopeShared, Name: name, Err: err}
 	}
 	if errors.Is(err, plan.ErrPlanNotFound) {

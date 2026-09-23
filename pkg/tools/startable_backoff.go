@@ -52,8 +52,8 @@ func startBackoffRetryable(err error) bool {
 	if errors.Is(err, lifecycle.ErrCrashLooping) {
 		return true
 	}
-	var se *modelerrors.StatusError
-	if !errors.As(err, &se) {
+	se, ok := errors.AsType[*modelerrors.StatusError](err)
+	if !ok {
 		return false
 	}
 	return modelerrors.RetryableHTTPStatus(se)
@@ -91,8 +91,7 @@ func additiveJitter(d time.Duration) time.Duration {
 // retryAfterHint extracts the Retry-After duration from a *StatusError in the
 // chain. Returns 0 if absent or if the error is not a *StatusError.
 func retryAfterHint(err error) time.Duration {
-	var se *modelerrors.StatusError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*modelerrors.StatusError](err); ok {
 		return se.RetryAfter
 	}
 	return 0

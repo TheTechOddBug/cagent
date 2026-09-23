@@ -138,8 +138,7 @@ func (o *plansOptions) runPlans(sub string, jsonOut *bool, handler func(cmd *cob
 }
 
 func plansExitCode(err error) int {
-	var conflict *plans.ConflictError
-	if errors.As(err, &conflict) {
+	if _, ok := errors.AsType[*plans.ConflictError](err); ok {
 		return plansConflictExitCode
 	}
 	return 1

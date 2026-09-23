@@ -663,8 +663,7 @@ func (t *oauthTransport) startInteractiveFlowLocked(ctx context.Context, authSer
 		// next iteration. Setting this after returning would race: the queued
 		// goroutine could acquire the mutex first and start a fresh flow while
 		// we are still bubbling the error up the stack.
-		var declinedErr *OAuthDeclinedError
-		if errors.As(err, &declinedErr) {
+		if _, ok := errors.AsType[*OAuthDeclinedError](err); ok {
 			t.mu.Lock()
 			t.lastOAuthDeclined = true
 			t.mu.Unlock()
@@ -785,8 +784,7 @@ func (t *oauthTransport) roundTrip(req *http.Request, isRetry bool) (*http.Respo
 				// for the user). Treat the same as the explicit non-interactive
 				// path: flag the toolset as needing auth and let it retry on
 				// the next conversation turn with a properly-wired bridge.
-				var authErr *AuthorizationRequiredError
-				if errors.As(err, &authErr) {
+				if authErr, ok := errors.AsType[*AuthorizationRequiredError](err); ok {
 					slog.Debug("OAuth flow deferred: elicitation bridge not ready", "url", sanitizeURLForLog(t.baseURL))
 					if authErr.URL == "" {
 						authErr.URL = t.baseURL
@@ -803,8 +801,7 @@ func (t *oauthTransport) roundTrip(req *http.Request, isRetry bool) (*http.Respo
 				// "%w: %v") otherwise destroys the unwrap chain. See
 				// remote.go enrichConnectError + the lastAuthRequired
 				// pattern this mirrors.
-				var declinedErr *OAuthDeclinedError
-				if errors.As(err, &declinedErr) {
+				if declinedErr, ok := errors.AsType[*OAuthDeclinedError](err); ok {
 					slog.Debug("OAuth flow declined by user", "url", sanitizeURLForLog(t.baseURL))
 					if declinedErr.URL == "" {
 						declinedErr.URL = t.baseURL

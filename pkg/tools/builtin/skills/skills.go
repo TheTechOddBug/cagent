@@ -437,8 +437,8 @@ func (s *ToolSet) PrepareForkSubSession(ctx context.Context, args RunSkillArgs, 
 }
 
 func abortsExpansion(err error) bool {
-	var abort skills.ExpansionAbort
-	return errors.As(err, &abort) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	_, abort := errors.AsType[skills.ExpansionAbort](err)
+	return abort || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
