@@ -301,8 +301,7 @@ func extractHTTPStatusCode(err error) int {
 	}
 
 	// Check for *StatusError first (preferred structured path).
-	var statusErr *StatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*StatusError](err); ok {
 		return statusErr.StatusCode
 	}
 
@@ -595,8 +594,7 @@ func ClassifyModelError(err error) (retryable, rateLimited bool, retryAfter time
 	}
 
 	// Primary path: typed StatusError wrapped by provider adapters.
-	var statusErr *StatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*StatusError](err); ok {
 		if statusErr.StatusCode == http.StatusTooManyRequests {
 			return false, true, statusErr.RetryAfter
 		}

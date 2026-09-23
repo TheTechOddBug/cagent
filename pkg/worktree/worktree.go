@@ -338,8 +338,7 @@ func validateName(name string) error {
 func repoRoot(ctx context.Context, dir string) (string, error) {
 	out, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			return "", ErrNotGitRepository
 		}
 		return "", err

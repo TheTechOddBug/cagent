@@ -51,8 +51,7 @@ func resolveFirstAvailableModel(ctx context.Context, cfg *latest.Config, name st
 	m := cfg.Models[name]
 	chosen, ref, err := selectFirstAvailable(ctx, cfg, m.FirstAvailable, selectors, modelsGateway, env)
 	if err != nil {
-		var missingErr *firstAvailableMissingEnvError
-		if errors.As(err, &missingErr) {
+		if missingErr, ok := errors.AsType[*firstAvailableMissingEnvError](err); ok {
 			return missingErr
 		}
 		return fmt.Errorf("model '%s': %w", name, err)

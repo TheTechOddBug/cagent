@@ -25,8 +25,8 @@ var unknownFieldNamePattern = regexp.MustCompile(`unknown field "([^"]*)"`)
 // lowering the top-level 'version' field (which would just move the problem
 // to whichever version the config is eventually run against).
 func removedFieldHint(version string, parseErr error) string {
-	var unknownField *yaml.UnknownFieldError
-	if !errors.As(parseErr, &unknownField) {
+	unknownField, ok := errors.AsType[*yaml.UnknownFieldError](parseErr)
+	if !ok {
 		return ""
 	}
 

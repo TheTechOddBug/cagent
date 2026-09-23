@@ -262,8 +262,8 @@ func (s *session) remoteOptions(auth authn.Authenticator) []remote.Option {
 // (401 Unauthorized or 403 Forbidden) or rate-limited the anonymous request
 // (429 Too Many Requests, since authenticated accounts get higher limits).
 func shouldRetryWithCredentials(err error) bool {
-	var terr *transport.Error
-	if !errors.As(err, &terr) {
+	terr, ok := errors.AsType[*transport.Error](err)
+	if !ok {
 		return false
 	}
 	switch terr.StatusCode {

@@ -39,8 +39,8 @@ func (r *retryAfterRecorder) snapshot() (status int, retryAfter string) {
 func enrichCardError(err error, rec *retryAfterRecorder) error {
 	wrapped := fmt.Errorf("failed to fetch A2A agent card: %w", err)
 
-	var statusErr *agentcard.ErrStatusNotOK
-	if !errors.As(err, &statusErr) {
+	statusErr, ok := errors.AsType[*agentcard.ErrStatusNotOK](err)
+	if !ok {
 		return wrapped
 	}
 

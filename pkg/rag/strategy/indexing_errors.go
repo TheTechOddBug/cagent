@@ -51,8 +51,8 @@ func isIndexingAborted(err error) bool {
 // function's own *modelerrors.StatusError pre-filter so plain-text errors
 // (port numbers, chunk counters) can never arm the gate here either.
 func isGateArmingTransientError(err error) bool {
-	var se *modelerrors.StatusError
-	if !errors.As(err, &se) {
+	se, ok := errors.AsType[*modelerrors.StatusError](err)
+	if !ok {
 		return false
 	}
 	return modelerrors.RetryableHTTPStatus(se)

@@ -68,8 +68,7 @@ func ExpandCommandsWithError(ctx context.Context, content string, run Runner) (s
 
 		output, err := run(ctx, command)
 		if err != nil {
-			var abort ExpansionAbort
-			if errors.As(err, &abort) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if _, abort := errors.AsType[ExpansionAbort](err); abort || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return "", err
 			}
 			slog.WarnContext(ctx, "Skill command expansion failed", "command", command, "error", err)

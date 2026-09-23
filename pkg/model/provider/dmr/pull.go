@@ -63,8 +63,8 @@ func pullWithRecovery(ctx context.Context, model string, stdout, stderr io.Write
 	// remote object, so the resume Range is unsatisfiable and the pull loops on
 	// the same error forever. Offer to remove the exact file (parsed from the
 	// failure) and retry once.
-	var pfe *PullFailedError
-	if !errors.As(err, &pfe) {
+	pfe, ok := errors.AsType[*PullFailedError](err)
+	if !ok {
 		return err
 	}
 	if path, size, ok := corruptPartial(pfe.Detail); ok {
