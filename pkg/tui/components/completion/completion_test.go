@@ -458,7 +458,7 @@ func extractSequenceCmds(c tea.Cmd) []tea.Cmd {
 	var cmds []tea.Cmd
 	if v.Kind() == reflect.Slice {
 		for i := range v.Len() {
-			cmd, ok := v.Index(i).Interface().(tea.Cmd)
+			cmd, ok := reflect.TypeAssert[tea.Cmd](v.Index(i))
 			if ok {
 				cmds = append(cmds, cmd)
 			}
