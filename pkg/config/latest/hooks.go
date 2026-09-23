@@ -16,13 +16,13 @@ func (h *HooksConfig) Events() iter.Seq2[string, HookMatcherConfigs] {
 			return
 		}
 		v := reflect.ValueOf(h).Elem()
-		for i := range v.NumField() {
-			if v.Field(i).Len() == 0 {
+		for metadata, field := range v.Fields() {
+			if field.Len() == 0 {
 				continue
 			}
-			name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
+			name, _, _ := strings.Cut(metadata.Tag.Get("json"), ",")
 			var matchers HookMatcherConfigs
-			switch hooks := v.Field(i).Interface().(type) {
+			switch hooks := field.Interface().(type) {
 			case HookDefinitions:
 				matchers = HookMatcherConfigs{{Hooks: hooks}}
 			case HookMatcherConfigs:
