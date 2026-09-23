@@ -632,6 +632,11 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 	}, nil
 }
 
+// HasPostEditCommands reports whether writes may be changed by configured commands.
+func (t *ToolSet) HasPostEditCommands() bool {
+	return len(t.postEditCommands) > 0
+}
+
 // ExecutePostEditCommands runs hooks after a transport writes a checked, canonical path.
 func (t *ToolSet) ExecutePostEditCommands(ctx context.Context, path string) error {
 	if len(t.postEditCommands) == 0 {

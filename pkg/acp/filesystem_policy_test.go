@@ -26,12 +26,13 @@ import (
 )
 
 type policyFilePeer struct {
-	peer      io.Writer
-	content   string
-	failRead  bool
-	failWrite bool
-	onRead    func()
-	onWrite   func(acpsdk.WriteTextFileRequest)
+	notifications io.Writer
+	peer          io.Writer
+	content       string
+	failRead      bool
+	failWrite     bool
+	onRead        func()
+	onWrite       func(acpsdk.WriteTextFileRequest)
 
 	mu     sync.Mutex
 	reads  []acpsdk.ReadTextFileRequest
@@ -46,6 +47,9 @@ func (p *policyFilePeer) Write(b []byte) (int, error) {
 	}
 	if err := json.Unmarshal(b, &msg); err != nil {
 		return 0, err
+	}
+	if len(msg.ID) == 0 && p.notifications != nil {
+		return p.notifications.Write(b)
 	}
 	var result any
 	var rpcErr *acpsdk.RequestError

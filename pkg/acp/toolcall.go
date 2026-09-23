@@ -5,23 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/coder/acp-go-sdk"
 
+	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/todo"
 )
 
 // buildToolCallStart creates a tool call start update.
-func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpdate {
+func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool, workingDir string) acp.SessionUpdate {
 	kind := determineToolKind(toolCall.Function.Name, tool)
 	title := cmp.Or(tool.Annotations.Title, toolCall.Function.Name)
 
 	args := parseToolCallArguments(toolCall.Function.Arguments)
-	locations := extractLocations(args)
+	locations := extractLocations(args, workingDir)
 
 	opts := []acp.ToolCallStartOpt{
 		acp.WithStartKind(kind),
@@ -41,33 +45,29 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpd
 }
 
 // buildToolCallComplete creates a tool call completion update.
-func buildToolCallComplete(arguments string, event *runtime.ToolCallResponseEvent) acp.SessionUpdate {
+func buildToolCallComplete(event *runtime.ToolCallResponseEvent) acp.SessionUpdate {
 	status := acp.ToolCallStatusCompleted
 	if event.Result != nil && event.Result.IsError {
 		status = acp.ToolCallStatusFailed
 	}
-
-	if status == acp.ToolCallStatusCompleted && isFileEditTool(event.ToolDefinition.Name) {
-		if diffContent := extractDiffContent(event.ToolDefinition.Name, arguments); diffContent != nil {
-			return acp.UpdateToolCall(
-				acp.ToolCallId(event.ToolCallID),
-				acp.WithUpdateStatus(status),
-				acp.WithUpdateContent([]acp.ToolCallContent{*diffContent}),
-				acp.WithUpdateRawOutput(map[string]any{"content": event.Response}),
-			)
+	content := []acp.ToolCallContent{acp.ToolContent(acp.TextBlock(event.Response))}
+	if status == acp.ToolCallStatusCompleted && event.Result != nil {
+		if change, ok := event.Result.Meta.(*fileChange); ok && change != nil && filepath.IsAbs(change.path) {
+			content = append(content, acp.ToolCallContent{Diff: &acp.ToolCallContentDiff{
+				Type: "diff", Path: change.path, OldText: change.oldText, NewText: change.newText,
+			}})
 		}
 	}
-
 	return acp.UpdateToolCall(
 		acp.ToolCallId(event.ToolCallID),
 		acp.WithUpdateStatus(status),
-		acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock(event.Response))}),
+		acp.WithUpdateContent(content),
 		acp.WithUpdateRawOutput(map[string]any{"content": event.Response}),
 	)
 }
 
 // buildToolCallUpdate creates a tool call update for permission requests.
-func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus) acp.ToolCallUpdate {
+func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus, workingDir string) acp.ToolCallUpdate {
 	kind := acp.ToolKindExecute
 	title := cmp.Or(tool.Annotations.Title, toolCall.Function.Name)
 
@@ -75,12 +75,14 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 		kind = acp.ToolKindRead
 	}
 
+	args := parseToolCallArguments(toolCall.Function.Arguments)
 	return acp.ToolCallUpdate{
 		ToolCallId: acp.ToolCallId(toolCall.ID),
 		Title:      &title,
 		Kind:       &kind,
 		Status:     &status,
-		RawInput:   parseToolCallArguments(toolCall.Function.Arguments),
+		RawInput:   args,
+		Locations:  extractLocations(args, workingDir),
 	}
 }
 
@@ -138,26 +140,36 @@ func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
 }
 
 // extractLocations extracts file locations from tool call arguments.
-func extractLocations(args map[string]any) []acp.ToolCallLocation {
+func extractLocations(args map[string]any, workingDir string) []acp.ToolCallLocation {
 	var locations []acp.ToolCallLocation
 
 	pathKeys := []string{"path", "file", "filepath", "filename", "file_path"}
 	for _, key := range pathKeys {
-		if pathVal, ok := args[key].(string); ok && pathVal != "" {
-			loc := acp.ToolCallLocation{Path: pathVal}
-			if line, ok := args["line"].(float64); ok {
-				lineInt := int(line)
-				loc.Line = &lineInt
-			}
-			locations = append(locations, loc)
+		pathVal, ok := args[key].(string)
+		if !ok || pathVal == "" {
+			continue
+		}
+		path := toolLocationPath(pathVal, workingDir)
+		if path == "" {
 			break
 		}
+		loc := acp.ToolCallLocation{Path: path}
+		if line, ok := args["line"].(float64); ok && line >= 1 && line < float64(int(^uint(0)>>1)) && line == math.Trunc(line) {
+			lineInt := int(line)
+			loc.Line = &lineInt
+		}
+		locations = append(locations, loc)
+		break
 	}
 
 	if paths, ok := args["paths"].([]any); ok {
 		for _, p := range paths {
-			if pathStr, ok := p.(string); ok && pathStr != "" {
-				locations = append(locations, acp.ToolCallLocation{Path: pathStr})
+			pathStr, ok := p.(string)
+			if !ok {
+				continue
+			}
+			if path := toolLocationPath(pathStr, workingDir); path != "" {
+				locations = append(locations, acp.ToolCallLocation{Path: path})
 			}
 		}
 	}
@@ -165,57 +177,28 @@ func extractLocations(args map[string]any) []acp.ToolCallLocation {
 	return locations
 }
 
-func isFileEditTool(toolName string) bool {
-	return slices.Contains([]string{"edit_file", "write_file"}, toolName)
-}
-
-// extractDiffContent tries to create a diff content block from edit tool arguments.
-func extractDiffContent(toolCallName, arguments string) *acp.ToolCallContent {
-	args := parseToolCallArguments(arguments)
-
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return nil
+// toolLocationPath normalizes display metadata without accessing the filesystem.
+func toolLocationPath(path, workingDir string) string {
+	if path == "" || strings.ContainsRune(path, 0) {
+		return ""
 	}
-
-	if toolCallName == "edit_file" {
-		edits, ok := args["edits"].([]any)
-		if !ok || len(edits) == 0 {
-			return nil
-		}
-
-		var oldTextSb, newTextSb strings.Builder
-		for _, edit := range edits {
-			editMap, ok := edit.(map[string]any)
-			if !ok {
-				continue
-			}
-			if old, ok := editMap["oldText"].(string); ok {
-				oldTextSb.WriteString(old)
-				oldTextSb.WriteByte('\n')
-			}
-			if newVal, ok := editMap["newText"].(string); ok {
-				newTextSb.WriteString(newVal)
-				newTextSb.WriteByte('\n')
-			}
-		}
-		oldText := oldTextSb.String()
-		newText := newTextSb.String()
-
-		if oldText != "" || newText != "" {
-			diff := acp.ToolDiffContent(path, newText, oldText)
-			return &diff
-		}
+	path, err := pathx.ExpandHomeDir(path)
+	if err != nil {
+		return ""
 	}
-
-	if toolCallName == "write_file" {
-		if content, ok := args["content"].(string); ok {
-			diff := acp.ToolDiffContent(path, content)
-			return &diff
-		}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
 	}
-
-	return nil
+	if filepath.VolumeName(path) != "" || (filepath.Separator == '\\' && strings.ContainsAny(path[:1], `/\`)) {
+		return ""
+	}
+	if uri, err := url.Parse(path); err == nil && uri.Scheme != "" {
+		return ""
+	}
+	if !filepath.IsAbs(workingDir) {
+		return ""
+	}
+	return filepath.Clean(filepath.Join(workingDir, path))
 }
 
 func parseToolCallArguments(argsJSON string) map[string]any {
