@@ -604,19 +604,17 @@ func TestRemoteClientUnixSocket(t *testing.T) {
 	assert.Equal(t, []string{"ping"}, names)
 }
 
-// TestRemoteClientCallToolAbortsOnContextDeadline verifies the transport-level
-// assumption the call_timeout design relies on: canceling the context passed
-// to a real remoteMCPClient.CallTool (streamable transport) aborts the
-// client's POST promptly, and the server observes that abort as its own
-// request context being canceled — rather than the tool call running to
-// completion in the background while the client just stops waiting.
-func TestRemoteClientCallToolAbortsOnContextDeadline(t *testing.T) {
+// TestRemoteClientCallToolAbortsOnContextCancellation verifies that canceling
+// an in-flight call aborts the client's POST and reaches the server handler.
+func TestRemoteClientCallToolAbortsOnContextCancellation(t *testing.T) {
 	t.Parallel()
 
+	serverStarted := make(chan struct{})
 	serverSawCancel := make(chan struct{})
 	server := gomcp.NewServer(&gomcp.Implementation{Name: "test-server", Version: "1.0.0"}, nil)
 	gomcp.AddTool(server, &gomcp.Tool{Name: "hang", Description: "hangs until canceled"},
 		func(ctx context.Context, _ *gomcp.CallToolRequest, _ struct{}) (*gomcp.CallToolResult, struct{}, error) {
+			close(serverStarted)
 			<-ctx.Done()
 			close(serverSawCancel)
 			return nil, struct{}{}, ctx.Err()
@@ -630,20 +628,33 @@ func TestRemoteClientCallToolAbortsOnContextDeadline(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close(context.WithoutCancel(t.Context())) }()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	start := time.Now()
-	_, err = client.CallTool(ctx, &gomcp.CallToolParams{Name: "hang"})
-	elapsed := time.Since(start)
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := client.CallTool(ctx, &gomcp.CallToolParams{Name: "hang"})
+		callDone <- err
+	}()
 
-	require.Error(t, err)
-	assert.Less(t, elapsed, 5*time.Second, "CallTool must abort promptly at the context deadline, not hang until the server responds")
+	select {
+	case <-serverStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server-side tool handler never started")
+	}
+	cancel()
+
+	select {
+	case err := <-callDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("CallTool did not abort after context cancellation")
+	}
 
 	select {
 	case <-serverSawCancel:
 	case <-time.After(5 * time.Second):
-		t.Fatal("server-side tool handler never observed context cancellation; the client's POST was not aborted at the deadline")
+		t.Fatal("server-side tool handler never observed context cancellation")
 	}
 }
 
