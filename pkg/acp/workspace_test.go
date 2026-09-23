@@ -99,7 +99,8 @@ func checkWorkspaceTools(t *testing.T, s *Session, marker string) {
 		cmd = "type marker.txt"
 	}
 	for _, cwd := range []string{"", "nested"} {
-		args, err := json.Marshal(map[string]any{"cmd": cmd, "cwd": cwd})
+		// Hosted Windows shell startup can exceed the production 30s default.
+		args, err := json.Marshal(map[string]any{"cmd": cmd, "cwd": cwd, "timeout": 120})
 		require.NoError(t, err)
 		expected := marker
 		if cwd != "" {
