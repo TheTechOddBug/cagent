@@ -202,6 +202,14 @@ comparison ID skips the comparison. Expired diagnostic records and unavailable
 results are logged without failing the conversation. This option is ignored for
 Chat Completions, the `chatgpt` provider, and custom `base_url` endpoints.
 
+## Extra Request Body
+
+Use [`provider_opts.extra_body`](../../configuration/models/index.md#extra-request-body)
+to pass backend-specific fields to Chat Completions requests, including when you
+use a custom `base_url`. For example, a local Qwen server may support
+`chat_template_kwargs: {enable_thinking: false}`. Explicit fields override
+generated values. This option does not apply to the Responses API.
+
 ## Reasoning State Preservation
 
 Reasoning replay is opt-in, so existing configurations keep their request and

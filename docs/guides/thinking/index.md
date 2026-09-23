@@ -293,7 +293,7 @@ Grok and Mistral reasoning models (e.g. `grok-3-mini`, `magistral`) manage reaso
 
 <a id="disabling-thinking-1"></a>
 
-Use `none` or `0` to disable thinking on any provider:
+Use `none` or `0` to clear Docker Agent's thinking configuration. Whether this disables the model's reasoning depends on the backend:
 
 ```yaml
 models:
@@ -308,7 +308,15 @@ models:
     thinking_budget: 0
 ```
 
-`none` and `0` clear Docker Agent's thinking configuration — no thinking parameter is sent. Models that always reason (OpenAI o-series, gpt-5 through gpt-5.5, Gemini 3) then fall back to the API's default behavior and still reason internally; gpt-5.6+ (Sol/Terra/Luna) sends `none` as a real API value that genuinely disables reasoning. Models with optional thinking (Gemini 2.5, Claude, local models) are also fully disabled.
+`none` and `0` clear Docker Agent's thinking configuration — no thinking parameter is sent. Models that always reason (OpenAI o-series, gpt-5 through gpt-5.5, Gemini 3) then fall back to the API's default behavior and still reason internally; gpt-5.6+ (Sol/Terra/Luna) sends `none` as a real API value that genuinely disables reasoning.
+
+Local models and other OpenAI-compatible backends may reason by default even when
+`thinking_budget` is cleared. Use
+[`provider_opts.extra_body`](../../configuration/models/index.md#extra-request-body)
+to send the backend's explicit off switch, such as
+`chat_template_kwargs: {enable_thinking: false}`, on Chat Completions requests.
+This also works with Docker Model Runner when its engine and model template
+support that field.
 
 ## Choosing an Effort Level
 

@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 	"github.com/docker/docker-agent/pkg/model/provider/oaistream"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
 	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -303,6 +304,9 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, messages []chat
 		}
 	}
 
+	if err := providerutil.MergeExtraBody(extraFields, c.ModelConfig.ProviderOpts); err != nil {
+		return nil, err
+	}
 	if len(extraFields) > 0 {
 		params.SetExtraFields(extraFields)
 		slog.DebugContext(ctx, "DMR extra request fields applied", "fields", extraFields)

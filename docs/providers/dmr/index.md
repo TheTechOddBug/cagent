@@ -53,6 +53,14 @@ Any model available through Docker Model Runner can be used. Common options:
 | `ai/qwen3`    | Qwen 3 — versatile, good for coding and general tasks |
 | `ai/llama3.2` | Llama 3.2 — Meta's open-source model                  |
 
+## Extra Request Body
+
+Use [`provider_opts.extra_body`](../../configuration/models/index.md#extra-request-body)
+to send backend-specific fields on each Chat Completions request. For example,
+`extra_body: {chat_template_kwargs: {enable_thinking: false}}` disables thinking
+when the engine and model template support it. These fields are not sent to the
+model-wide `_configure` endpoint.
+
 ## Runtime Flags
 
 Pass flags to the underlying inference runtime (e.g., llama.cpp) using `provider_opts.runtime_flags`:
