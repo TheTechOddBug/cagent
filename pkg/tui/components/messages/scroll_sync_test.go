@@ -119,3 +119,114 @@ func TestScrollbarUsesCurrentGeometryBeforeView(t *testing.T) {
 		})
 	}
 }
+
+func TestScrollToBottomReconcilesDirtyGeometry(t *testing.T) {
+	t.Parallel()
+
+	for _, hover := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without hover", true: "with hover"}[hover], func(t *testing.T) {
+			m := NewScrollableView(animation.NewRuntime(), 80, 12, &service.SessionState{}).(*model)
+			t.Cleanup(m.ar.Stop)
+			m.AppendToLastMessage("root", "START-OF-CONVERSATION\n\n"+strings.Repeat("history paragraph\n\n", 40))
+			m.AddAssistantMessage("root", "")
+			m.View()
+			require.Positive(t, m.scrollOffset)
+
+			// Replacing the spinner invalidates geometry while blurred View is deferred.
+			m.AppendToLastMessage("root", "LATEST-RESPONSE\n\n")
+			require.Zero(t, m.totalHeight)
+			_, _ = m.Update(m.ScrollToBottom()())
+			require.Positive(t, m.scrollOffset, "bottom-scroll must not clamp against invalidated height")
+			if hover {
+				_, _ = m.Update(tea.MouseMotionMsg{X: 20, Y: 6})
+			}
+			frame := m.View()
+			require.Contains(t, frame, "LATEST-RESPONSE")
+			require.NotContains(t, frame, "START-OF-CONVERSATION")
+			require.False(t, m.userHasScrolled)
+			require.Equal(t, m.totalScrollableHeight()-m.height, m.scrollOffset)
+
+			m.AppendToLastMessage("root", strings.Repeat("new paragraph\n\n", 20)+"STILL-FOLLOWING\n\n")
+			require.Contains(t, m.View(), "STILL-FOLLOWING")
+		})
+	}
+}
+
+func TestInteractionReconcilesDirtyGeometryWithoutScrollCommand(t *testing.T) {
+	t.Parallel()
+
+	for _, interaction := range []struct {
+		name string
+		run  func(*testing.T, *model)
+	}{
+		{"hover", func(_ *testing.T, m *model) {
+			_, _ = m.Update(tea.MouseMotionMsg{X: 20, Y: 6})
+		}},
+		{"click", func(t *testing.T, m *model) {
+			t.Helper()
+			_, _ = m.Update(tea.MouseClickMsg{X: 20, Y: 6, Button: tea.MouseLeft})
+			require.Equal(t, m.scrollOffset+6, m.selection.startLine, "hit-testing must use the reconciled offset")
+		}},
+		{"copy", func(t *testing.T, m *model) {
+			t.Helper()
+			m.selectRange(5, 0, 5, 30)
+			_, cmd := m.Update(DebouncedCopyMsg{ClickID: m.selection.pendingCopyID})
+			require.NotNil(t, cmd)
+		}},
+	} {
+		t.Run(interaction.name, func(t *testing.T) {
+			for _, scrolled := range []bool{false, true} {
+				t.Run(map[bool]string{false: "following", true: "scrolled up"}[scrolled], func(t *testing.T) {
+					m := NewScrollableView(animation.NewRuntime(), 80, 12, &service.SessionState{}).(*model)
+					t.Cleanup(m.ar.Stop)
+					m.AppendToLastMessage("root", strings.Repeat("history paragraph\n\n", 40))
+					m.AddAssistantMessage("root", "")
+					m.View()
+					if scrolled {
+						m.scrollPageUp()
+					}
+					offset := m.scrollOffset
+					require.Positive(t, offset)
+
+					cmd := m.AppendToLastMessage("root", strings.Repeat("new paragraph\n\n", 40)+"LATEST-RESPONSE\n\n")
+					require.Nil(t, cmd, "this append has no bottom-scroll command to reconcile geometry")
+					require.True(t, m.renderDirty)
+					interaction.run(t, m)
+					frame := m.View()
+					require.Equal(t, scrolled, m.userHasScrolled)
+					if scrolled {
+						require.Equal(t, offset, m.scrollOffset)
+						if interaction.name == "hover" {
+							require.NotEmpty(t, m.deferredTail, "hover must not materialize the tail")
+						}
+						require.NotContains(t, frame, "LATEST-RESPONSE")
+					} else {
+						require.Contains(t, frame, "LATEST-RESPONSE")
+						require.Equal(t, m.totalScrollableHeight()-m.height, m.scrollOffset)
+						m.AppendToLastMessage("root", strings.Repeat("new paragraph\n\n", 20)+"STILL-FOLLOWING\n\n")
+						require.Contains(t, m.View(), "STILL-FOLLOWING")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestGeometryReconciliationPreservesKeyboardMessageSelection(t *testing.T) {
+	t.Parallel()
+
+	m := NewScrollableView(animation.NewRuntime(), 80, 12, &service.SessionState{}).(*model)
+	t.Cleanup(m.ar.Stop)
+	m.AppendToLastMessage("root", "EARLIER-MESSAGE\n\n"+strings.Repeat("history paragraph\n\n", 40))
+	m.AddUserMessage("next question")
+	m.AppendToLastMessage("root", "LATEST-RESPONSE\n\n")
+	m.View()
+	m.Focus()
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	require.Zero(t, m.selectedMessageIndex)
+	require.False(t, m.userHasScrolled, "keyboard message selection does not set the manual scroll flag")
+	offset := m.scrollOffset
+	_, _ = m.Update(tea.MouseMotionMsg{X: 20, Y: 6})
+	require.Contains(t, m.View(), "EARLIER-MESSAGE")
+	require.Equal(t, offset, m.scrollOffset, "reconciliation must not unconditionally follow the bottom")
+}

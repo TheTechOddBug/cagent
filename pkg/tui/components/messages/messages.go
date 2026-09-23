@@ -531,7 +531,7 @@ func (m *model) globalLineToMessageLine(globalLine int) (msgIdx, localLine int, 
 // visual-only operation: it may restyle an already materialized line, but it
 // must not make offscreen content become geometry.
 func (m *model) globalLineToMessageLineCached(globalLine int) (msgIdx, localLine int) {
-	m.ensureAllItemsRendered()
+	m.updateScrollState()
 
 	if len(m.lineOffsets) == 0 || globalLine < 0 || globalLine >= m.totalHeight {
 		return -1, -1
@@ -836,9 +836,8 @@ func (m *model) renderedLine(global int) string {
 }
 
 // updateScrollState recomputes rendered content, bottom slack and scroll
-// offset from the current state of the message list. Called both from View()
-// and from Update() on animation ticks so that the slack subscription is
-// registered before tui.go schedules the next tick.
+// offset together, so interaction-driven rebuilds cannot consume pending
+// content growth before follow-tail has been applied.
 func (m *model) updateScrollState() {
 	prevTotalHeight := m.totalHeight
 	prevScrollableHeight := m.totalHeight + m.bottomSlack
@@ -1160,7 +1159,9 @@ func (m *model) scrollToBottom() tea.Cmd {
 	if !hadDeferredTail && len(m.views) > 0 {
 		m.refreshRenderedItem(len(m.views) - 1)
 	}
-	m.setScrollOffset(9_999_999) // Will be clamped in View()
+	// Background updates can invalidate geometry before this command runs.
+	m.updateScrollState()
+	m.setScrollOffset(m.totalScrollableHeight())
 	return cmd
 }
 
@@ -1319,7 +1320,7 @@ func (m *model) scrollToSelectedMessage() {
 	}
 
 	// Ensure all items are rendered so lineOffsets and totalHeight are accurate
-	m.ensureAllItemsRendered()
+	m.updateScrollState()
 
 	if m.selectedMessageIndex >= len(m.lineOffsets) {
 		return
@@ -2588,6 +2589,7 @@ func (m *model) copyMessageToClipboard(msgIdx int) tea.Cmd {
 }
 
 func (m *model) mouseToLineCol(x, y int) (line, col int) {
+	m.updateScrollState()
 	adjustedX := max(0, x-m.xPos)
 	adjustedY := max(0, y-m.yPos)
 	return m.scrollOffset + adjustedY, adjustedX
