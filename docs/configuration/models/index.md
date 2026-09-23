@@ -508,6 +508,45 @@ See [`examples/task_budget.yaml`](https://github.com/docker/docker-agent/blob/ma
 
 `provider_opts.thinking_display` controls the thinking content returned in responses. See [Anthropic: Thinking Display](../../providers/anthropic/index.md#thinking-display) for accepted values, defaults, an override example, and startup validation.
 
+## Extra Request Body
+
+For OpenAI-compatible providers and Docker Model Runner, `provider_opts.extra_body`
+adds arbitrary top-level fields to **Chat Completions** request bodies. Use it for
+backend-specific options that Docker Agent does not expose directly:
+
+```yaml
+models:
+  local:
+    provider: openai
+    model: mlx-community/Qwen3.6-35B-A3B-8bit
+    base_url: http://localhost:8080/v1
+    provider_opts:
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+```
+
+Choose the switch your server supports. Other backends may accept
+`extra_body: {reasoning_effort: none}` or
+`extra_body: {thinking: {type: disabled}}` instead. Docker Agent does not translate
+these options or infer them from `thinking_budget: none`.
+
+`extra_body` must be an object; other values cause a request error. Its contents
+are merged at the top level, without an `extra_body` wrapper. Nested objects are
+replaced, not deep-merged. Explicit values override generated fields, including
+sampling parameters, token limits, and internal no-thinking settings. These
+overrides also apply to title generation, compaction, and OpenAI-client reranking
+when they use the configured model's Chat Completions endpoint. Streaming calls
+always force `stream: true`, regardless of `extra_body`. Only set fields your
+server accepts, and avoid overriding request structure such as `messages`.
+
+This option does not apply to the Responses API, embeddings, or DMR's model-wide
+`_configure` endpoint. Other `provider_opts` keys remain client-side unless
+explicitly supported.
+
+See [`examples/extra_body.yaml`](https://github.com/docker/docker-agent/blob/main/examples/extra_body.yaml)
+for a complete local-server configuration.
+
 ## Custom HTTP Headers
 
 For OpenAI-compatible providers (`openai`, `github-copilot`, `mistral`, `xai`,
