@@ -91,7 +91,7 @@ func TestBuildUserMessage_ImageContent(t *testing.T) {
 	acpAgent := &Agent{sessions: make(map[string]*Session)}
 	msg := acpAgent.buildUserMessage(t.Context(), "session-id", []acpsdk.ContentBlock{
 		acpsdk.TextBlock("look at this"),
-		acpsdk.ImageBlock("AAAA", "image/png"),
+		acpsdk.ImageBlock(testPNGBase64(t, 1), "image/png"),
 	})
 
 	require.NotNil(t, msg)
@@ -99,9 +99,9 @@ func TestBuildUserMessage_ImageContent(t *testing.T) {
 	require.Len(t, msg.Message.MultiContent, 2)
 	assert.Equal(t, chat.MessagePartTypeText, msg.Message.MultiContent[0].Type)
 	assert.Equal(t, "look at this", msg.Message.MultiContent[0].Text)
-	assert.Equal(t, chat.MessagePartTypeImageURL, msg.Message.MultiContent[1].Type)
-	require.NotNil(t, msg.Message.MultiContent[1].ImageURL)
-	assert.Equal(t, "data:image/png;base64,AAAA", msg.Message.MultiContent[1].ImageURL.URL)
+	assert.Equal(t, chat.MessagePartTypeDocument, msg.Message.MultiContent[1].Type)
+	require.NotNil(t, msg.Message.MultiContent[1].Document)
+	assert.Equal(t, "image/png", msg.Message.MultiContent[1].Document.MimeType)
 }
 
 func TestResolveSessionPathUsesSessionRoots(t *testing.T) {

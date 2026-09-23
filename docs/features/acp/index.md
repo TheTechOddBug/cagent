@@ -158,6 +158,20 @@ Concurrent close requests join the same cleanup. Canceling a close request only 
 
 Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
 
+## Prompt Attachments
+
+ACP text remains text. Embedded text resources, binary resources, images, and successfully read file links become ordered document attachments with safe display names, MIME types, actual byte sizes, and inline payloads. Duplicate resources remain separate attachments. Text resources such as `application/json` are sent as text even when the model does not support that MIME as a binary format. Binary document support still depends on the selected model/provider.
+
+Images are validated and normalized using the attachment pipeline; resizing includes a coordinate-mapping note. Per-attachment limits are 5 MiB for text, 20 MiB for decoded binary data, and 16 million pixels for locally decoded images. The transport's message-size limit still applies before these checks. Invalid or oversized attachments produce a bounded unavailable-content notice without exposing the payload or full source URI.
+
+File resource links are read only through a client that advertises `fs.readTextFile`, after session-root validation. File URIs are decoded once, so a literal `%20` in a filename is not changed into a space. Remote authorities and non-file URIs are not fetched, and unavailable links never fall back to host file contents. Resource links retain the separate session-root policy described below, not a filesystem toolset's allow/deny policy.
+
+This preserves payloads rather than providing lossless protocol round-tripping: arbitrary ACP annotations, `_meta`, titles/descriptions, and original source URIs are not persisted as document metadata. Image encoding may change during normalization. Audio prompts remain unsupported. The secret-redaction builtin scans document text and labels before model calls without changing stored history; it does not scan inside binary files or images.
+
+Attachment-bearing prompts bypass lookup and storage in the agent response cache, whose keys contain only text. This does not disable provider-side prompt caching.
+
+Tool-result presentation remains transformed text plus eligible edit diffs. Raw tool media, documents, and structured results are not forwarded to ACP, because the current output-transform contract covers text only.
+
 ## Client Filesystem Capabilities
 
 The ACP `filesystem` toolset exposes text operations according to the client's negotiated `fs` capabilities:

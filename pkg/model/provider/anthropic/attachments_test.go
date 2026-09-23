@@ -172,3 +172,13 @@ func TestConvertDocumentAnthropic_Drop_UnsupportedMIME(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "image should be dropped for text-only model")
 }
+
+func TestConvertDocument_JSONText(t *testing.T) {
+	t.Parallel()
+	doc := chat.Document{Name: "settings.json", MimeType: "application/json", Source: chat.DocumentSource{InlineText: `{"enabled":true}`}}
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	require.NotNil(t, parts[0].OfText)
+	assert.Contains(t, parts[0].OfText.Text, doc.Source.InlineText)
+}

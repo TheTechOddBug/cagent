@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,7 +58,7 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	events EventSink,
 ) bool {
 	c := a.Cache()
-	if c == nil {
+	if c == nil || promptHasAttachments(sess) {
 		return false
 	}
 	question := sess.GetLastUserMessageContent()
@@ -129,7 +130,7 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 // where [LocalRuntime.tryReplayCachedResponse] fires stop hooks for the
 // cached answer — free of redundant disk writes.
 func (r *LocalRuntime) cacheResponseBuiltin(ctx context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
-	if in == nil || in.AgentName == "" || in.LastUserMessage == "" ||
+	if ctx.Value(responseCacheBypassKey{}) == true || in == nil || in.AgentName == "" || in.LastUserMessage == "" ||
 		strings.TrimSpace(in.StopResponse) == "" {
 		return nil, nil
 	}
@@ -152,4 +153,19 @@ func (r *LocalRuntime) cacheResponseBuiltin(ctx context.Context, in *hooks.Input
 		storeSpan.End()
 	}
 	return nil, nil
+}
+
+type responseCacheBypassKey struct{}
+
+// The response cache keys only on text, not the payloads in MultiContent.
+func promptHasAttachments(sess *session.Session) bool {
+	for _, msg := range slices.Backward(sess.GetAllMessages()) {
+		if msg.Message.Role != chat.MessageRoleUser {
+			continue
+		}
+		return slices.ContainsFunc(msg.Message.MultiContent, func(part chat.MessagePart) bool {
+			return part.Type != chat.MessagePartTypeText
+		})
+	}
+	return false
 }

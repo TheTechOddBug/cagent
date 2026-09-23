@@ -352,6 +352,9 @@ func (r *LocalRuntime) executeSessionEndHooks(ctx context.Context, sess *session
 // are populated so builtins like cache_response can key on the user's
 // question and resolve the agent through the runtime closure.
 func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Session, a *agent.Agent, responseContent string, events EventSink) {
+	if a.Cache() != nil {
+		ctx = context.WithValue(ctx, responseCacheBypassKey{}, promptHasAttachments(sess))
+	}
 	r.dispatchHook(ctx, a, hooks.EventStop, &hooks.Input{
 		SessionID:       sess.ID,
 		AgentName:       a.Name(),

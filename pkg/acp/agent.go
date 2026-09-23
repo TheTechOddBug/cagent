@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,7 +17,6 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/docker/docker-agent/pkg/agent"
-	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
@@ -646,157 +644,6 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	}
 
 	return acp.PromptResponse{StopReason: stopReason}, nil
-}
-
-// buildUserContent constructs user message text from ACP content blocks.
-func (a *Agent) buildUserContent(ctx context.Context, sessionID string, prompt []acp.ContentBlock) string {
-	msg := a.buildUserMessage(ctx, sessionID, prompt)
-	if msg == nil {
-		return ""
-	}
-	return msg.Message.Content
-}
-
-func (a *Agent) buildUserMessage(ctx context.Context, sessionID string, prompt []acp.ContentBlock) *session.Message {
-	var (
-		parts          []string
-		multiContent   []chat.MessagePart
-		hasRichContent bool
-	)
-
-	appendText := func(text string) {
-		if text == "" {
-			return
-		}
-		parts = append(parts, text)
-		multiContent = append(multiContent, chat.MessagePart{Type: chat.MessagePartTypeText, Text: text})
-	}
-
-	for _, content := range prompt {
-		switch {
-		case content.Text != nil:
-			appendText(content.Text.Text)
-
-		case content.ResourceLink != nil:
-			rl := content.ResourceLink
-			slog.DebugContext(ctx, "Processing resource link", "uri", rl.Uri, "name", rl.Name)
-
-			if fileContent, ok := a.readResourceLink(ctx, sessionID, rl); ok {
-				appendText(fmt.Sprintf("\n\n--- File: %s ---\n%s\n--- End File ---\n", resourceLinkName(rl), fileContent))
-			} else {
-				appendText(fmt.Sprintf("\n[Referenced file: %s (content unavailable)]\n", resourceLinkName(rl)))
-			}
-
-		case content.Resource != nil:
-			res := content.Resource.Resource
-			if res.TextResourceContents != nil {
-				slog.DebugContext(ctx, "Processing embedded text resource", "uri", res.TextResourceContents.Uri)
-				appendText(fmt.Sprintf("\n\n--- Resource: %s ---\n%s\n--- End Resource ---\n",
-					res.TextResourceContents.Uri, res.TextResourceContents.Text))
-			} else if res.BlobResourceContents != nil {
-				slog.DebugContext(ctx, "Processing embedded blob resource", "uri", res.BlobResourceContents.Uri)
-				appendText(fmt.Sprintf("\n[Binary resource: %s (type: %s)]\n",
-					res.BlobResourceContents.Uri, stringOrDefault(res.BlobResourceContents.MimeType, "unknown")))
-			}
-
-		case content.Image != nil:
-			img := content.Image
-			slog.DebugContext(ctx, "Processing image content", "mime_type", img.MimeType)
-			hasRichContent = true
-			multiContent = append(multiContent, chat.MessagePart{
-				Type: chat.MessagePartTypeImageURL,
-				ImageURL: &chat.MessageImageURL{
-					URL:    imageDataURL(img.MimeType, img.Data),
-					Detail: chat.ImageURLDetailAuto,
-				},
-			})
-
-		case content.Audio != nil:
-			slog.DebugContext(ctx, "Audio content received but not yet supported")
-			appendText("[Audio content provided]")
-		}
-	}
-
-	content := strings.Join(parts, "")
-	if !hasRichContent {
-		return session.UserMessage(content)
-	}
-	return session.UserMessage(content, multiContent...)
-}
-
-// readResourceLink attempts to read a text file referenced by an ACP resource link.
-func (a *Agent) readResourceLink(ctx context.Context, sessionID string, rl *acp.ContentBlockResourceLink) (string, bool) {
-	if !a.supportsClientReadTextFile() {
-		slog.DebugContext(ctx, "ACP client does not support reading resource links")
-		return "", false
-	}
-
-	path, ok := resourceLinkPath(rl.Uri)
-	if !ok {
-		slog.DebugContext(ctx, "Unsupported ACP resource link URI", "uri", rl.Uri)
-		return "", false
-	}
-
-	resolvedPath, err := a.resolveSessionPath(sessionID, path)
-	if err != nil {
-		slog.WarnContext(ctx, "Blocked unsafe file resource link", "path", path, "error", err)
-		return "", false
-	}
-
-	resp, err := a.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
-		SessionId: acp.SessionId(sessionID),
-		Path:      resolvedPath,
-	})
-	if err != nil {
-		slog.DebugContext(ctx, "Failed to read resource link", "path", resolvedPath, "error", err)
-		return "", false
-	}
-
-	return resp.Content, true
-}
-
-func resourceLinkName(rl *acp.ContentBlockResourceLink) string {
-	if name := chat.SanitizeDisplayName(rl.Name); name != "" {
-		return name
-	}
-	if path, ok := resourceLinkPath(rl.Uri); ok {
-		if base := chat.SanitizeDisplayName(filepath.Base(path)); base != "" && base != "." && base != string(filepath.Separator) {
-			return base
-		}
-	}
-	return "resource"
-}
-
-func resourceLinkPath(rawURI string) (string, bool) {
-	u, err := url.Parse(rawURI)
-	if err != nil || u.Scheme == "" {
-		return rawURI, rawURI != ""
-	}
-	if u.Scheme != "file" {
-		return "", false
-	}
-	if u.Host != "" && u.Host != "localhost" {
-		return "", false
-	}
-	path, err := url.PathUnescape(u.Path)
-	if err != nil {
-		return "", false
-	}
-	return path, path != ""
-}
-
-func imageDataURL(mimeType, data string) string {
-	if strings.HasPrefix(data, "data:") {
-		return data
-	}
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, data)
-}
-
-func stringOrDefault(s *string, def string) string {
-	if s == nil {
-		return def
-	}
-	return *s
 }
 
 // SetSessionMode implements acp.Agent (optional).
