@@ -67,7 +67,7 @@ agents:
 			"serve", "chat",
 			"--listen", addr,
 			"--conversations-max", "10",
-			"--request-timeout", "2s",
+			"--request-timeout", "30s",
 			agentFile,
 		)
 	}()
@@ -87,20 +87,19 @@ agents:
 
 	convID := "e2e-failed-turn"
 	postChatCompletion(t, baseURL, convID, http.StatusOK, "first")
-	postChatCompletion(t, baseURL, convID, http.StatusInternalServerError, "please fail")
+	responseBody := postChatCompletion(t, baseURL, convID, http.StatusInternalServerError, "please fail")
+	require.Contains(t, string(responseBody), "forced failure")
 	postChatCompletion(t, baseURL, convID, http.StatusOK, "after failure")
 
 	requests := modelServer.requests()
-	require.GreaterOrEqual(t, len(requests), 3)
+	require.Len(t, requests, 3)
 	assert.Equal(t, []string{"first"}, requests[0].userMessages())
-	for _, req := range requests[1 : len(requests)-1] {
-		assert.Equal(t, []string{"first", "please fail"}, req.userMessages())
-	}
+	assert.Equal(t, []string{"first", "please fail"}, requests[1].userMessages())
 
 	// This is the end-to-end assertion for #2890: the failed "please fail"
 	// turn must not have been committed to the X-Conversation-Id cache, so the
 	// following successful turn resumes from the last successful state.
-	assert.Equal(t, []string{"first", "after failure"}, requests[len(requests)-1].userMessages())
+	assert.Equal(t, []string{"first", "after failure"}, requests[2].userMessages())
 }
 
 type recordingChatCompletionsServer struct {
@@ -140,8 +139,9 @@ func newRecordingChatCompletionsServer(t *testing.T) *recordingChatCompletionsSe
 
 		if lastUserMessage(req.Messages) == "please fail" {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = io.WriteString(w, `{"error":{"message":"forced failure","type":"server_error"}}`)
+			// Fail without SDK/runtime retries; cache rollback must not depend on a timeout.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"forced failure","type":"invalid_request_error"}}`)
 			return
 		}
 
@@ -277,11 +277,12 @@ func waitForChatServer(t *testing.T, baseURL string) {
 			return false
 		}
 		defer resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
+		_, err = io.Copy(io.Discard, resp.Body)
+		return err == nil && resp.StatusCode == http.StatusOK
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
-func postChatCompletion(t *testing.T, baseURL, conversationID string, expectedStatus int, userMessage string) {
+func postChatCompletion(t *testing.T, baseURL, conversationID string, expectedStatus int, userMessage string) []byte {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"model": "root",
@@ -302,5 +303,6 @@ func postChatCompletion(t *testing.T, baseURL, conversationID string, expectedSt
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	assert.Equal(t, expectedStatus, resp.StatusCode, "response body: %s", string(responseBody))
+	require.Equal(t, expectedStatus, resp.StatusCode, "response body: %s", string(responseBody))
+	return responseBody
 }
