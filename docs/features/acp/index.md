@@ -70,7 +70,7 @@ ACP advertises supported commands when a session is created or resumed, at turn 
 | Command | Behavior |
 | --- | --- |
 | `/compact [instructions]` | Runs manual compaction of the root session using the existing runtime hooks and persistence. Reports applied, skipped, or failed rather than starting an ordinary model turn. |
-| `/usage` | Reports current context-token counts and the session cost snapshot without adding history or calling the model. The context limit is the last value reported for the selected agent, not a fresh provider lookup; it is unknown until a usage event supplies it and may lag a model change. Live child-session costs are not aggregated into this snapshot. |
+| `/usage` | Reports current context-token counts and the session cost snapshot without adding history or calling the model. The context limit is the last value reported for the selected agent, not a fresh provider lookup; it is unknown until a usage event supplies it and may lag a model change. Recorded live child-session costs are included. |
 | Configured literal-prompt commands | Replace the leading slash command with its instruction and append trailing arguments literally. Subsequent attachments are preserved. |
 | Configured agent-switch commands | Switch the active agent after looking up the command in the original agent's table. A switch without text or attachments starts no model turn. The selection lasts for the active runtime; cold resume still starts its default agent. |
 
@@ -157,6 +157,16 @@ A successful `session/close` response means the foreground turn has drained, the
 Concurrent close requests join the same cleanup. Canceling a close request only stops that caller's wait: cleanup continues, and resume remains blocked until it succeeds. After a successful close, an explicit resume may reconstruct the session. Cleanup failures are returned and retained; the same session cannot reopen in that agent process when cleanup is uncertain.
 
 Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
+
+## Context and Cost Accounting
+
+The context gauge describes the root ACP conversation, not a delegated or background agent's separate context window. Child usage updates can change the displayed cost without replacing the root's token count or limit. Context changes reported for an in-place root handoff or compaction replace the root snapshot.
+
+Cost is the sum of the latest cumulative runtime-session snapshots, keyed by session ID rather than agent name. Repeated snapshots replace previous values; parallel children using the same agent remain distinct. Restored descendant costs are already included in the root's initial contribution and are not added a second time. Compaction and evaluator costs follow the runtime's existing accounting; unpriced work is not estimated by ACP.
+
+Background usage is recorded without unsolicited client writes. It appears on the next foreground usage update or `/usage`; the latter refreshes root counters and uses the same aggregate for its text and structured response. Accounting continues while canceled or failed streams drain, including nested background children, without changing prompt outcomes or adding teardown notifications.
+
+No `usage_update` is emitted until a positive root context-window limit is known. `/usage` can still report text with an unknown limit and recorded cost. The last limit may lag a model change; switching the selected agent without a matching root usage observation makes it unknown. Agent names and child context windows are not inferred from each other's usage events.
 
 ## Prompt Attachments
 

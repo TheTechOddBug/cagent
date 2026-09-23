@@ -131,14 +131,8 @@ func (a *Agent) dispatchCommand(ctx context.Context, s *Session, prompt []acp.Co
 }
 
 func (a *Agent) showUsage(ctx context.Context, s *Session) error {
-	name := s.rt.CurrentAgentName(ctx)
-	s.mu.Lock()
-	limit := s.contextLimit
-	if s.usageAgent != name {
-		limit = 0
-	}
-	s.mu.Unlock()
-	usage := runtime.SessionUsage(s.sess, limit)
+	usage := s.currentUsage(s.rt.CurrentAgentName(ctx))
+	limit := usage.ContextLimit
 	if err := a.emitUsage(ctx, s.id, usage); err != nil {
 		return err
 	}
@@ -150,6 +144,9 @@ func (a *Agent) showUsage(ctx context.Context, s *Session) error {
 }
 
 func (a *Agent) emitUsage(ctx context.Context, sid string, usage *runtime.Usage) error {
+	if usage == nil || usage.ContextLimit <= 0 {
+		return nil
+	}
 	update := acp.SessionUsageUpdate{SessionUpdate: "usage_update", Size: int(usage.ContextLimit), Used: int(usage.ContextLength)}
 	if usage.Cost > 0 {
 		update.Cost = &acp.Cost{Amount: usage.Cost, Currency: "USD"}
@@ -166,6 +163,10 @@ func (a *Agent) compactSession(ctx context.Context, s *Session, instruction stri
 	s.rt.Summarize(compactCtx, s.sess, instruction, runtime.EventSinkFunc(func(event runtime.Event) {
 		mu.Lock()
 		defer mu.Unlock()
+		var usage *runtime.Usage
+		if e, ok := event.(*runtime.TokenUsageEvent); ok {
+			usage = s.recordUsage(e)
+		}
 		if resultErr != nil || compactCtx.Err() != nil {
 			return
 		}
@@ -180,10 +181,7 @@ func (a *Agent) compactSession(ctx context.Context, s *Session, instruction stri
 				outcome = e.Outcome
 			}
 		case *runtime.TokenUsageEvent:
-			if e.Usage != nil {
-				s.recordUsage(e)
-				resultErr = a.emitUsage(compactCtx, s.id, e.Usage)
-			}
+			resultErr = a.emitUsage(compactCtx, s.id, usage)
 		case *runtime.WarningEvent:
 			resultErr = a.sendUpdate(compactCtx, s.id, acp.UpdateAgentMessageText("Warning: "+e.Message))
 		}
@@ -207,14 +205,4 @@ func (a *Agent) compactSession(ctx context.Context, s *Session, instruction stri
 		return runtimePromptError(s.sess.ID, "compaction_failed", "Session compaction failed")
 	}
 	return a.sendUpdate(ctx, s.id, acp.UpdateAgentMessageText(message))
-}
-
-func (s *Session) recordUsage(event *runtime.TokenUsageEvent) {
-	if event.SessionID != s.sess.ID || event.Usage == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.usageAgent = event.AgentName
-	s.contextLimit = event.Usage.ContextLimit
 }
