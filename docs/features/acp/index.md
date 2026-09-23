@@ -115,13 +115,23 @@ Tool-permission requests and iteration-limit continuation prompts remain interac
 
 New sessions and resumes that reconstruct a runtime load the agent configuration again and create independent teams and toolsets. Configuration changes affect subsequent loads, not teams already serving sessions. Config-relative paths, such as instruction files, remain relative to the agent configuration file.
 
-The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. ACP wire requests require `cwd`; the SDK rejects omitted values. Direct Go callers retain the legacy empty-`cwd` fallback: new sessions use the configured or process directory without saving invented workspace provenance, and resumes use the saved directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
+The session's `cwd` is the execution directory, independent of where the ACP subprocess was launched. ACP `session/new` and `session/resume` wire requests require `cwd`; the SDK rejects omitted values. Direct Go callers retain the legacy empty-`cwd` fallback: new sessions use the configured or process directory without saving invented workspace provenance, and resumes use the saved directory when available. Workspace selection does not by itself sandbox tools or make explicitly shared storage private.
 
 A resume must name the same directory as the saved workspace. Filesystem aliases of the same directory are accepted, but the saved path is not rewritten. A legacy session with no saved workspace cannot adopt an explicit `cwd`; ACP clients must create a new session instead.
 
 Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
 
 Resuming a registered session while a foreground prompt is running, queued, or draining, or another resume holds the setup reservation, returns a busy error without canceling that work or changing roots. Retry after it finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
+
+## Listing Sessions
+
+`session/list` returns up to **50 sessions per page**, ordered by creation time (newest first), then by session ID ascending to break ties. To fetch the next page, pass the returned opaque `nextCursor` as `cursor` and keep the same `cwd` filter. An absent `nextCursor` marks the end; no matches return `sessions: []`. Invalid cursors or a changed filter return invalid params (`-32602`).
+
+The optional `cwd` filter must be an absolute path. Matching uses cleaned, exact path strings, not prefixes, case folding, or symlink resolution. The directory need not still exist, so historical workspaces remain discoverable. Sessions with unknown or non-absolute workspace metadata are omitted rather than attributed to the server's current directory.
+
+Listings use stored summaries, not conversation histories. The optional `updatedAt` is omitted because the store does not track last activity; creation time is used only for ordering, not reported as activity. Additional roots are reported from active session state and omitted for inactive sessions.
+
+Pagination does not freeze a snapshot across requests: changes to history or metadata between pages can affect results. Page size bounds the response, while the store still retrieves all session summaries for filtering and ordering.
 
 ## Closing Sessions
 

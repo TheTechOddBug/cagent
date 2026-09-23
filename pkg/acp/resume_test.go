@@ -246,7 +246,7 @@ func TestResumeRootsSnapshotsAreIndependent(t *testing.T) {
 	t.Parallel()
 	wd, first, second := t.TempDir(), t.TempDir(), t.TempDir()
 	a, s := newResumeFixture(t, wd, first)
-	_, snapshot := a.sessionListPaths(t.Context(), s.id)
+	_, snapshot := a.sessionListPaths(session.Summary{ID: s.id, WorkingDir: wd})
 	_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id), AdditionalDirectories: []string{second}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{first}, snapshot)
@@ -266,7 +266,7 @@ func TestResumeRootsSnapshotsAreIndependent(t *testing.T) {
 					_, err := a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id), AdditionalDirectories: []string{root}})
 					errs <- err
 				case 1:
-					_, roots := a.sessionListPaths(t.Context(), s.id)
+					_, roots := a.sessionListPaths(session.Summary{ID: s.id, WorkingDir: wd})
 					if assert.Len(t, roots, 1) {
 						assert.Contains(t, []string{first, second}, roots[0])
 					}
