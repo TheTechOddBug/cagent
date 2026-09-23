@@ -34,6 +34,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 	"github.com/docker/docker-agent/pkg/tools/builtin/skills"
@@ -2078,6 +2079,17 @@ func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace
 // Internal callers (proactive threshold, overflow recovery) use
 // [LocalRuntime.compactWithReason] directly to forward a more specific reason.
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events EventSink) {
+	// Manual compaction bypasses RunStream, but native compaction may start tools.
+	ctx = genai.WithConversationID(ctx, sess.ID)
+	ctx = tools.WithHandlerScope(ctx, tools.HandlerScope{
+		Elicitation:       r.elicitationHandler,
+		Sampling:          r.samplingHandler,
+		SamplingWithTools: r.samplingWithToolsHandler,
+		OAuthSuccess: func() {
+			events.Emit(Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
+		},
+	})
+	r.configureToolsetHandlers(r.resolveSessionAgent(sess))
 	r.compactWithReason(ctx, sess, additionalPrompt, compactionReasonManual, events)
 }
 
