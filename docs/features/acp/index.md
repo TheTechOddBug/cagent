@@ -63,6 +63,23 @@ Host Application
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
+## Slash Commands
+
+ACP advertises supported commands when a session is created or resumed, at turn start, and when agent information changes. Discovery reads command metadata only; it does not start tools or expand command instructions.
+
+| Command | Behavior |
+| --- | --- |
+| `/compact [instructions]` | Runs manual compaction of the root session using the existing runtime hooks and persistence. Reports applied, skipped, or failed rather than starting an ordinary model turn. |
+| `/usage` | Reports current context-token counts and the session cost snapshot without adding history or calling the model. The context limit is the last value reported for the selected agent, not a fresh provider lookup; it is unknown until a usage event supplies it and may lag a model change. Live child-session costs are not aggregated into this snapshot. |
+| Configured literal-prompt commands | Replace the leading slash command with its instruction and append trailing arguments literally. Subsequent attachments are preserved. |
+| Configured agent-switch commands | Switch the active agent after looking up the command in the original agent's table. A switch without text or attachments starts no model turn. The selection lasts for the active runtime; cold resume still starts its default agent. |
+
+`compact`, `usage`, and `new` are reserved names. `/new` is not advertised or executed: clients must use `session/new` to create a fresh conversation without destroying existing history. `/usage` accepts no arguments, and both built-ins reject attachments rather than silently dropping them.
+
+Only directly supplied leading text is parsed as a command. Text inside attached resources is never interpreted as a command. Unknown slash-prefixed messages pass through as ordinary chat. Known commands requiring URL opening, JavaScript `${...}`, or bang-tool expansion are not advertised and return an explicit error if invoked; those expansion paths are not yet integrated with ACP's permission flow.
+
+Commands share the session's normal turn admission, cancellation, and cleanup. Manual compaction errors are fatal for that command (`compaction_failed`), even though the same diagnostic during automatic compaction can be recoverable for an ordinary prompt. A skipped compaction does not claim to have changed history. Built-in invocations and their status messages are not added to conversation history.
+
 ## Prompt Outcomes and Errors
 
 `session/prompt` reports why the root session stopped:

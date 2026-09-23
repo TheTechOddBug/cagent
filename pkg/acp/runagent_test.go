@@ -634,7 +634,7 @@ func requireAvailableCommands(t *testing.T, update acpsdk.SessionUpdate) {
 	for _, cmd := range update.AvailableCommandsUpdate.AvailableCommands {
 		names = append(names, cmd.Name)
 	}
-	assert.Equal(t, []string{"new", "compact", "usage"}, names)
+	assert.Equal(t, []string{"compact", "usage"}, names)
 }
 
 func agentMessageText(t *testing.T, update acpsdk.SessionUpdate) string {

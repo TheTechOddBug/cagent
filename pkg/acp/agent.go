@@ -64,8 +64,11 @@ type Session struct {
 	clientMCP      *clientMCPTools
 	workingDir     string
 	additionalDirs []string
+	usageAgent     string
+	contextLimit   int64
 
-	mu sync.Mutex
+	mu        sync.Mutex
+	commandMu sync.Mutex
 
 	turns       chan struct{}
 	cancel      context.CancelFunc
@@ -456,6 +459,7 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 		return acp.NewSessionResponse{}, session.ErrAlreadyExists
 	}
 
+	a.refreshCommands(ctx, acpSess)
 	return acp.NewSessionResponse{SessionId: acp.SessionId(sess.ID)}, nil
 }
 
@@ -567,7 +571,7 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 	}
 
 	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)
-
+	a.refreshCommands(ctx, acpSess)
 	return acp.ResumeSessionResponse{}, nil
 }
 
@@ -617,8 +621,18 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 		return acp.PromptResponse{}, err
 	}
 	defer finish()
-
-	userMsg := a.buildUserMessage(turnCtx, sid, params.Prompt)
+	turnCtx = withSessionID(turnCtx, sid)
+	prompt, handled, err := a.dispatchCommand(turnCtx, acpSess, params.Prompt)
+	if turnCtx.Err() != nil {
+		return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
+	}
+	if err != nil {
+		return acp.PromptResponse{}, err
+	}
+	if handled {
+		return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
+	userMsg := a.buildUserMessage(turnCtx, sid, prompt)
 	if userMsg != nil && (userMsg.Message.Content != "" || len(userMsg.Message.MultiContent) > 0) {
 		acpSess.sess.AddMessage(userMsg)
 	}
@@ -887,20 +901,13 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 				return "", err
 			}
 
+		case *runtime.AgentInfoEvent:
+			a.refreshCommands(ctx, acpSess)
+
 		case *runtime.TokenUsageEvent:
 			if e.Usage != nil {
-				usageUpdate := acp.SessionUsageUpdate{
-					SessionUpdate: "usage_update",
-					Size:          int(e.Usage.ContextLimit),
-					Used:          int(e.Usage.ContextLength),
-				}
-				if e.Usage.Cost > 0 {
-					usageUpdate.Cost = &acp.Cost{
-						Amount:   e.Usage.Cost,
-						Currency: "USD",
-					}
-				}
-				if err := a.sendUpdate(ctx, acpSess.id, acp.SessionUpdate{UsageUpdate: &usageUpdate}); err != nil {
+				acpSess.recordUsage(e)
+				if err := a.emitUsage(ctx, acpSess.id, e.Usage); err != nil {
 					return "", err
 				}
 			}
@@ -1013,20 +1020,6 @@ func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session
 	}
 
 	return nil
-}
-
-// emitAvailableCommands sends the list of available slash commands to the client.
-func (a *Agent) emitAvailableCommands(ctx context.Context, acpSess *Session) error {
-	return a.sendUpdate(ctx, acpSess.id, acp.SessionUpdate{
-		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
-			SessionUpdate: "available_commands_update",
-			AvailableCommands: []acp.AvailableCommand{
-				{Name: "new", Description: "Clear session history and start fresh"},
-				{Name: "compact", Description: "Generate summary and compact session history"},
-				{Name: "usage", Description: "Display token usage statistics"},
-			},
-		},
-	})
 }
 
 func (a *Agent) supportsClientReadTextFile() bool {

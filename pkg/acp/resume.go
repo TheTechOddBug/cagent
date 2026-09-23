@@ -81,7 +81,11 @@ func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, working
 	if commitErr != nil {
 		return errors.Join(commitErr, a.discardClientMCP(ctx, op, s, next))
 	}
-	return a.discardClientMCP(ctx, op, s, previous)
+	if err := a.discardClientMCP(ctx, op, s, previous); err != nil {
+		return err
+	}
+	a.refreshCommands(ctx, s)
+	return nil
 }
 
 func (a *Agent) discardClientMCP(ctx context.Context, op *agentOperation, s *Session, generation *clientMCPGeneration) error {
