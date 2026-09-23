@@ -87,7 +87,6 @@ func createWorkspace(t *testing.T, marker string) string {
 
 func checkWorkspaceTools(t *testing.T, s *Session, marker string) {
 	t.Helper()
-	assert.Contains(t, workspaceTool(t, s, "read_multiple_files", `{"paths":["marker.txt"]}`).Output, marker)
 	assert.Contains(t, workspaceTool(t, s, "list_directory", `{"path":"."}`).Output, marker+".txt")
 	assert.Contains(t, workspaceTool(t, s, "directory_tree", `{"path":"."}`).Output, marker+".txt")
 	query, err := json.Marshal(map[string]any{"path": ".", "query": marker})

@@ -31,8 +31,7 @@ func getSessionID(ctx context.Context) (string, bool) {
 	return sid, ok
 }
 
-// FilesystemToolset wraps a standard Tool and overrides read_file, write_file,
-// and edit_file to use the ACP connection for file operations
+// FilesystemToolset routes supported text operations through the ACP client.
 type FilesystemToolset struct {
 	*filesystem.ToolSet
 
@@ -58,18 +57,38 @@ func (t *FilesystemToolset) Tools(ctx context.Context) ([]tools.Tool, error) {
 		return nil, err
 	}
 
-	for i := range baseTools {
-		switch baseTools[i].Name {
+	canRead := t.agent != nil && t.agent.supportsClientReadTextFile()
+	canWrite := t.agent != nil && t.agent.supportsClientWriteTextFile()
+	available := baseTools[:0]
+	for _, tool := range baseTools {
+		switch tool.Name {
 		case filesystem.ToolNameReadFile:
-			baseTools[i].Handler = t.handleReadFile
+			if !canRead {
+				continue
+			}
+			tool.Handler = t.handleReadFile
+			tool.Description = "Read a text file through the ACP client, including unsaved editor content. By default the complete file is returned; optional line (1-based start line) and limit (maximum number of lines) select a line range."
+		case filesystem.ToolNameReadMultipleFiles:
+			if !canRead {
+				continue
+			}
+			tool.Handler = t.handleReadMultipleFiles
+			tool.Description = "Read multiple text files through the ACP client, including unsaved editor content. Results are returned in input order, with per-file errors."
 		case filesystem.ToolNameWriteFile:
-			baseTools[i].Handler = t.handleWriteFile
+			if !canWrite {
+				continue
+			}
+			tool.Handler = t.handleWriteFile
 		case filesystem.ToolNameEditFile:
-			baseTools[i].Handler = t.handleEditFile
+			if !canRead || !canWrite {
+				continue
+			}
+			tool.Handler = t.handleEditFile
 		}
+		available = append(available, tool)
 	}
 
-	return baseTools, nil
+	return available, nil
 }
 
 // resolvePath resolves a user-supplied path relative to the working directory
@@ -226,6 +245,76 @@ func (t *FilesystemToolset) handleReadFile(ctx context.Context, toolCall tools.T
 	}
 
 	return tools.ResultSuccess(resp.Content), nil
+}
+
+func (t *FilesystemToolset) handleReadMultipleFiles(ctx context.Context, toolCall tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+	var args filesystem.ReadMultipleFilesArgs
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sessionID, ok := getSessionID(ctx)
+	if !ok {
+		return tools.ResultError("Error: session ID not found in context"), nil
+	}
+	if !t.agent.supportsClientReadTextFile() {
+		return tools.ResultError("Error: ACP client does not support reading files"), nil
+	}
+
+	type pathContent struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	var contents []pathContent
+	var meta filesystem.ReadMultipleFilesMeta
+	for _, path := range args.Paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resolvedPath, err := t.resolvePathForSession(ctx, path)
+		var response acp.ReadTextFileResponse
+		if err == nil {
+			// The SDK can send a request even when its context is already canceled.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			response, err = t.agent.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
+				SessionId: acp.SessionId(sessionID),
+				Path:      resolvedPath,
+			})
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		entry := filesystem.ReadFileMeta{Path: path}
+		content := response.Content
+		if err != nil {
+			entry.Error = err.Error()
+			content = entry.Error
+		} else {
+			entry.LineCount = strings.Count(content, "\n") + 1
+		}
+		contents = append(contents, pathContent{Path: path, Content: content})
+		meta.Files = append(meta.Files, entry)
+	}
+
+	var output string
+	if args.JSON {
+		encoded, err := json.Marshal(contents)
+		if err != nil {
+			return tools.ResultError(fmt.Sprintf("Error formatting JSON: %s", err)), nil
+		}
+		output = string(encoded)
+	} else {
+		var result strings.Builder
+		for _, content := range contents {
+			fmt.Fprintf(&result, "=== %s ===\n%s\n\n", content.Path, content.Content)
+		}
+		output = result.String()
+	}
+	return &tools.ToolCallResult{Output: output, Meta: meta}, nil
 }
 
 // fileChange is presentation-only: never serialize file contents as generic tool metadata.
