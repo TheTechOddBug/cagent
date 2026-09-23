@@ -34,6 +34,8 @@ func TestDrainRunStreamBeforeRelease(t *testing.T) {
 		{name: "conditional defer", body: `events := r.RunStream(); if stop { defer func(){ for range events {} }() }; for range events { return }`, want: 1},
 		{name: "unrelated channel defer", body: `events := r.RunStream(); defer func(){ for range other {} }(); for range events { return }`, want: 1},
 		{name: "deferred drain can return early", body: `events := r.RunStream(); defer func(){ for range events { return } }(); for range events { return }`, want: 1},
+		{name: "deferred drain can break", body: `events := r.RunStream(); defer func(){ for range events { cancel(); break } }(); for range events { return }`, want: 1},
+		{name: "deferred drain can nil channel", body: `events := r.RunStream(); defer func(){ events = nil; for range events { cancel() } }(); for range events { return }`, want: 1},
 		{name: "closure return does not drain owner", body: `events := r.RunStream(); _ = func(){ for range events {} }; for range events { return }`, want: 1},
 		{name: "shadowed stream", body: `events := r.RunStream(); for range events { events := other; for range events {}; return }`, want: 1},
 		{name: "select cancellation", body: `events := r.RunStream(); for events != nil { select { case _, ok := <-events: if !ok { events = nil; continue }; if stop { return }; case <-other: return } }`, want: 1},
@@ -51,6 +53,8 @@ func TestDrainRunStreamBeforeRelease(t *testing.T) {
 		{name: "nested loop break", body: `events := r.RunStream(); for range events { for { break } }`},
 		{name: "nested function return", body: `events := r.RunStream(); for range events { func(){ return }() }`},
 		{name: "deferred drain", body: `events := r.RunStream(); defer func(){ cancel(); for range events {} }(); for range events { return }`},
+		{name: "deferred drain retains results", body: `events := r.RunStream(); defer func(){ cancel(); for event := range events { retain(event) } }(); for range events { return }`},
+		{name: "deferred snapshot retains results", body: `events := r.RunStream(); defer func(ch <-chan Event){ cancel(); for event := range ch { retain(event) } }(events); for range events { return }`},
 		{name: "deferred snapshot", body: `events := r.RunStream(); defer func(ch <-chan Event){ cancel(); for range ch {} }(events); for range events { return }`},
 		{name: "select until closed", body: `events := r.RunStream(); for events != nil { select { case _, ok := <-events: if !ok { events = nil; continue } } }`},
 		{name: "return only after closed", body: `events := r.RunStream(); for { _, ok := <-events; if !ok { return } }`},
@@ -84,6 +88,7 @@ func runDrainCop(t *testing.T, filename, body string) []cop.Offense {
 	func (otherRuntime) RunStream() <-chan int { return nil }
 	func cancel() {}
 	func consume(<-chan Event) {}
+	func retain(Event) {}
 	func run(r Runtime, other <-chan Event, stop bool) { ` + body + ` }
 	`
 	fset := token.NewFileSet()

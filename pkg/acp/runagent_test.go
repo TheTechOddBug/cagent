@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -806,16 +807,16 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 
 	start := updates[1].ToolCall
 	require.NotNil(t, start)
-	assert.Equal(t, acpsdk.ToolCallId("call-1"), start.ToolCallId)
+	assert.NotEmpty(t, start.ToolCallId)
 	assert.Equal(t, "Run Shell", start.Title)
 	assert.Equal(t, acpsdk.ToolKindExecute, start.Kind)
-	assert.Equal(t, acpsdk.ToolCallStatusPending, start.Status)
+	assert.Equal(t, acpsdk.ToolCallStatusInProgress, start.Status)
 	assert.Equal(t, map[string]any{"command": "ls", "path": "."}, start.RawInput)
 	assert.Equal(t, []acpsdk.ToolCallLocation{{Path: wd}}, start.Locations)
 
 	completed := updates[2].ToolCallUpdate
 	require.NotNil(t, completed)
-	assert.Equal(t, acpsdk.ToolCallId("call-1"), completed.ToolCallId)
+	assert.Equal(t, start.ToolCallId, completed.ToolCallId)
 	require.NotNil(t, completed.Status)
 	assert.Equal(t, acpsdk.ToolCallStatusCompleted, *completed.Status)
 	require.Len(t, completed.Content, 1)
@@ -827,7 +828,7 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	require.NotNil(t, updates[3].ToolCall)
 	failed := updates[4].ToolCallUpdate
 	require.NotNil(t, failed)
-	assert.Equal(t, acpsdk.ToolCallId("call-2"), failed.ToolCallId)
+	assert.Equal(t, updates[3].ToolCall.ToolCallId, failed.ToolCallId)
 	require.NotNil(t, failed.Status)
 	assert.Equal(t, acpsdk.ToolCallStatusFailed, *failed.Status)
 
@@ -850,22 +851,29 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	assert.Empty(t, rt.resumeRequests())
 }
 
-func TestRunAgent_ToolCallResponseWithoutStartFails(t *testing.T) {
+func TestRunAgent_ToolCallResponseWithoutStartCreatesTerminalCall(t *testing.T) {
 	t.Parallel()
-
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, tools.ResultSuccess("ok"), "ok", "root"),
-		runtime.AgentChoice("root", testSessionID, "never emitted"),
-	}}
-	f := newRunAgentFixture(t, rt, &captureWriter{})
-
-	err := f.runAgent(t.Context(), f.sess)
-	require.EqualError(t, err, "missing tool call arguments for tool call ID orphan")
-
-	// The failure must stop the loop before later events are mapped.
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 1)
-	requireAvailableCommands(t, updates[0])
+	for _, failed := range []bool{false, true} {
+		result := tools.ResultSuccess("result")
+		status := acpsdk.ToolCallStatusCompleted
+		if failed {
+			result = tools.ResultError("rejected")
+			status = acpsdk.ToolCallStatusFailed
+		}
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, result, result.Output, "root"),
+			runtime.AgentChoice("root", testSessionID, "continued"),
+		}}
+		f := newRunAgentFixture(t, rt, &captureWriter{})
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 3)
+		require.NotNil(t, updates[1].ToolCall)
+		assert.Equal(t, status, updates[1].ToolCall.Status)
+		assert.Equal(t, "shell", updates[1].ToolCall.Title)
+		assert.Nil(t, updates[1].ToolCall.RawInput)
+		assert.Equal(t, "continued", agentMessageText(t, updates[2]))
+	}
 }
 
 func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
@@ -890,7 +898,7 @@ func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 	require.Len(t, reqs, 1)
 	req := reqs[0]
 	assert.Equal(t, acpsdk.SessionId(testSessionID), req.SessionId)
-	assert.Equal(t, acpsdk.ToolCallId("confirm-1"), req.ToolCall.ToolCallId)
+	assert.NotEmpty(t, req.ToolCall.ToolCallId)
 	require.NotNil(t, req.ToolCall.Title)
 	assert.Equal(t, "Run Shell", *req.ToolCall.Title)
 	require.NotNil(t, req.ToolCall.Kind)
@@ -909,9 +917,14 @@ func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 	// The turn keeps streaming after the permission round trip and the
 	// interleaved request does not disturb the captured notifications.
 	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 2)
+	require.Len(t, updates, 4)
 	requireAvailableCommands(t, updates[0])
-	assert.Equal(t, "approved", agentMessageText(t, updates[1]))
+	require.NotNil(t, updates[1].ToolCall)
+	assert.Equal(t, req.ToolCall.ToolCallId, updates[1].ToolCall.ToolCallId)
+	assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
+	assert.Equal(t, "approved", agentMessageText(t, updates[2]))
+	assert.Equal(t, req.ToolCall.ToolCallId, updates[3].ToolCallUpdate.ToolCallId)
+	assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[3].ToolCallUpdate.Status)
 }
 
 func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
@@ -1001,48 +1014,52 @@ func (p *approvalTestProvider) CreateChatCompletionStream(context.Context, []cha
 func TestRunAgent_AlwaysAllowKeepsOtherToolsGated(t *testing.T) {
 	t.Parallel()
 
-	var executed []string
-	handler := func(_ context.Context, call tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
-		executed = append(executed, call.Function.Name)
-		return tools.ResultSuccess("ok"), nil
-	}
-	prov := &approvalTestProvider{
-		mockProvider: mockProvider{id: modelsdev.NewID("test", "approval")},
-		toolNames:    []string{"allowed_tool", "allowed_tool", "other_tool"},
-	}
-	root := agentpkg.New("root", "You are a test agent", agentpkg.WithModel(prov), agentpkg.WithTools(
-		tools.Tool{Name: "allowed_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
-		tools.Tool{Name: "other_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
-	))
-	rt, err := runtime.New(t.Context(), team.New(team.WithAgents(root)), runtime.WithSessionCompaction(false))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rt.Close()) })
-
-	f := newRunAgentFixtureWithPermissions(t, &fakeRuntime{}, &captureWriter{}, func(req acpsdk.RequestPermissionRequest) any {
-		if req.ToolCall.ToolCallId == "call-1" {
-			return permissionSelected("allow-always")
+	synctest.Test(t, func(t *testing.T) {
+		var executed []string
+		handler := func(_ context.Context, call tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+			executed = append(executed, call.Function.Name)
+			return tools.ResultSuccess("ok"), nil
 		}
-		return permissionSelected("allow")
+		prov := &approvalTestProvider{
+			mockProvider: mockProvider{id: modelsdev.NewID("test", "approval")},
+			toolNames:    []string{"allowed_tool", "allowed_tool", "other_tool"},
+		}
+		root := agentpkg.New("root", "You are a test agent", agentpkg.WithModel(prov), agentpkg.WithTools(
+			tools.Tool{Name: "allowed_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
+			tools.Tool{Name: "other_tool", Parameters: map[string]any{"type": "object"}, Handler: handler},
+		))
+		rt, err := runtime.New(t.Context(), team.New(team.WithAgents(root)), runtime.WithSessionCompaction(false))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, rt.Close()) })
+
+		f := newRunAgentFixtureWithPermissions(t, &fakeRuntime{}, &captureWriter{}, func(req acpsdk.RequestPermissionRequest) any {
+			synctest.Wait()
+			if req.ToolCall.Title != nil && *req.ToolCall.Title == "allowed_tool" {
+				return permissionSelected("allow-always")
+			}
+			return permissionSelected("allow")
+		})
+		f.sess.rt = rt
+		f.sess.sess = session.New(
+			session.WithUserMessage("Run the tools"),
+			session.WithSafetyPolicy(session.SafetyPolicyStrict),
+		)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, f.runAgent(ctx, f.sess))
+
+		assert.Equal(t, []string{"allowed_tool", "allowed_tool", "other_tool"}, executed)
+		reqs := f.peer.recordedRequests()
+		require.Len(t, reqs, 2)
+		assert.Equal(t, "allowed_tool", *reqs[0].ToolCall.Title)
+		assert.Equal(t, "other_tool", *reqs[1].ToolCall.Title)
+		assert.NotEqual(t, reqs[0].ToolCall.ToolCallId, reqs[1].ToolCall.ToolCallId)
+		assert.Equal(t, session.SafetyPolicyStrict, f.sess.sess.GetSafetyPolicy())
+		perms := f.sess.sess.ClonePermissions()
+		require.NotNil(t, perms)
+		assert.Equal(t, []string{"allowed_tool"}, perms.Allow)
 	})
-	f.sess.rt = rt
-	f.sess.sess = session.New(
-		session.WithUserMessage("Run the tools"),
-		session.WithSafetyPolicy(session.SafetyPolicyStrict),
-	)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, f.runAgent(ctx, f.sess))
-
-	assert.Equal(t, []string{"allowed_tool", "allowed_tool", "other_tool"}, executed)
-	reqs := f.peer.recordedRequests()
-	require.Len(t, reqs, 2)
-	assert.Equal(t, acpsdk.ToolCallId("call-1"), reqs[0].ToolCall.ToolCallId)
-	assert.Equal(t, acpsdk.ToolCallId("call-3"), reqs[1].ToolCall.ToolCallId)
-	assert.Equal(t, session.SafetyPolicyStrict, f.sess.sess.GetSafetyPolicy())
-	perms := f.sess.sess.ClonePermissions()
-	require.NotNil(t, perms)
-	assert.Equal(t, []string{"allowed_tool"}, perms.Allow)
 }
 
 func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
@@ -1089,8 +1106,12 @@ func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
 			assert.Empty(t, rt.resumeRequests())
 			// The failure must stop the loop before later events are mapped.
 			updates := f.sessionUpdates(t)
-			require.Len(t, updates, 1)
+			require.Len(t, updates, 3)
 			requireAvailableCommands(t, updates[0])
+			require.NotNil(t, updates[1].ToolCall)
+			assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
+			require.NotNil(t, updates[2].ToolCallUpdate)
+			assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[2].ToolCallUpdate.Status)
 		})
 	}
 }

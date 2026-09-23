@@ -180,7 +180,8 @@ func TestPromptDeclinesUnsupportedElicitation(t *testing.T) {
 						assert.Equal(t, "Done", s.sess.GetLastAssistantMessageContent())
 						reqs := peer.recordedRequests()
 						require.Len(t, reqs, (turn+1)*2, "only permission and max-iteration requests should reach the client")
-						assert.Equal(t, acpsdk.ToolCallId("call-1"), reqs[turn*2].ToolCall.ToolCallId)
+						assert.NotEmpty(t, reqs[turn*2].ToolCall.ToolCallId)
+						assert.Equal(t, "ask_user", *reqs[turn*2].ToolCall.Title)
 						assert.Equal(t, acpsdk.ToolCallId("max_iterations"), reqs[turn*2+1].ToolCall.ToolCallId)
 					}
 					assert.Equal(t, 2, loads)
