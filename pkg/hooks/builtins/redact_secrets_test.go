@@ -525,3 +525,50 @@ func TestRedactSecretsBeforeLLMCallKeepsCleanRequestContextBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactSecretsBeforeLLMCallScrubsDocumentsWithoutMutatingHistory(t *testing.T) {
+	t.Parallel()
+	secret := fakeGitHubPAT()
+	for _, field := range []string{"text", "name", "mime"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			doc := &chat.Document{Name: "notes.json", MimeType: "application/json", Source: chat.DocumentSource{InlineText: "clean"}, Size: 5}
+			switch field {
+			case "text":
+				doc.Source.InlineText = `{"token":"` + secret + `"}`
+				doc.Size = int64(len(doc.Source.InlineText))
+			case "name":
+				doc.Name = secret
+			case "mime":
+				doc.MimeType = "text/plain; token=" + secret
+			}
+			original := *doc
+			in := &hooks.Input{HookEventName: hooks.EventBeforeLLMCall, Messages: []chat.Message{{
+				Role:         chat.MessageRoleUser,
+				MultiContent: []chat.MessagePart{{Type: chat.MessagePartTypeDocument, Document: doc}},
+			}}}
+			out, err := redactSecrets(t.Context(), in, nil)
+			require.NoError(t, err)
+			require.NotNil(t, out, "document-only changes must trigger UpdatedMessages")
+			updated := out.HookSpecificOutput.UpdatedMessages[0].MultiContent[0].Document
+			require.NotSame(t, doc, updated)
+			assert.NotContains(t, updated.Source.InlineText, secret)
+			assert.NotContains(t, updated.Name, secret)
+			assert.NotContains(t, updated.MimeType, secret)
+			assert.Equal(t, int64(len(updated.Source.InlineText)), updated.Size)
+			assert.Equal(t, original, *doc)
+		})
+	}
+}
+
+func TestRedactSecretsCleanAndBinaryDocuments(t *testing.T) {
+	t.Parallel()
+	in := &hooks.Input{HookEventName: hooks.EventBeforeLLMCall, Messages: []chat.Message{{MultiContent: []chat.MessagePart{
+		{Type: chat.MessagePartTypeDocument, Document: &chat.Document{Name: "notes", MimeType: "text/plain", Source: chat.DocumentSource{InlineText: "clean"}, Size: 5}},
+		{Type: chat.MessagePartTypeDocument, Document: &chat.Document{Name: "image", MimeType: "image/png", Source: chat.DocumentSource{InlineData: []byte("opaque bytes")}}},
+		{Type: chat.MessagePartTypeDocument},
+	}}}}
+	out, err := redactSecrets(t.Context(), in, nil)
+	require.NoError(t, err)
+	assert.Nil(t, out)
+}

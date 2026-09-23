@@ -99,7 +99,7 @@ func TestPromptDispatchesLiteralCommandPreservingContent(t *testing.T) {
 	rt := &commandRuntime{current: "root", commands: map[string]types.Commands{"root": {"explain": {Instruction: "Explain carefully"}}}}
 	a, s, peer := newPromptTestAgent(t, rt)
 	request := promptRequest("")
-	request.Prompt = []acpsdk.ContentBlock{acpsdk.TextBlock("/ex"), acpsdk.TextBlock("plain argument ${literal}"), acpsdk.ImageBlock("AAAA", "image/png"), acpsdk.TextBlock("after image")}
+	request.Prompt = []acpsdk.ContentBlock{acpsdk.TextBlock("/ex"), acpsdk.TextBlock("plain argument ${literal}"), acpsdk.ImageBlock(testPNGBase64(t, 1), "image/png"), acpsdk.TextBlock("after image")}
 	response, err := a.Prompt(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, acpsdk.StopReasonEndTurn, response.StopReason)
@@ -108,7 +108,7 @@ func TestPromptDispatchesLiteralCommandPreservingContent(t *testing.T) {
 	require.Len(t, messages, 1)
 	assert.Equal(t, "Explain carefully argument ${literal}after image", messages[0].Message.Content)
 	require.Len(t, messages[0].Message.MultiContent, 3)
-	assert.Equal(t, chat.MessagePartTypeImageURL, messages[0].Message.MultiContent[1].Type)
+	assert.Equal(t, chat.MessagePartTypeDocument, messages[0].Message.MultiContent[1].Type)
 	assert.Zero(t, rt.toolLists)
 	assert.Empty(t, peer.recordedReadRequests())
 }
@@ -122,7 +122,7 @@ func TestCommandsNeverInterpretResourceContents(t *testing.T) {
 	_, err := a.Prompt(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rt.runs)
-	assert.Contains(t, s.sess.OwnMessages()[0].Message.Content, "/compact")
+	assert.Equal(t, "/compact", s.sess.OwnMessages()[0].Message.MultiContent[0].Document.Source.InlineText)
 }
 
 func TestCommandsRejectUnsupportedWithoutSideEffects(t *testing.T) {

@@ -161,3 +161,13 @@ func BenchmarkConvertDocumentResponseInputB64(b *testing.B) {
 		})
 	}
 }
+
+func TestConvertDocumentResponseInput_JSONText(t *testing.T) {
+	t.Parallel()
+	doc := chat.Document{Name: "settings.json", MimeType: "application/json", Source: chat.DocumentSource{InlineText: `{"enabled":true}`}}
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	require.NotNil(t, parts[0].OfInputText)
+	assert.Contains(t, parts[0].OfInputText.Text, doc.Source.InlineText)
+}

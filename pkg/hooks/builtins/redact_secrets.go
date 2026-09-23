@@ -210,7 +210,7 @@ func redactAny(v any) (any, bool) {
 //   - [chat.Message.ReasoningContent] (sent back to Anthropic, Bedrock,
 //     DeepSeek as a thinking block, so a previous turn's reasoning
 //     trace must not leak a secret it mentioned)
-//   - text parts of [chat.Message.MultiContent]
+//   - text parts and inline document text/labels in [chat.Message.MultiContent]
 //   - the legacy singular [chat.Message.FunctionCall].Arguments
 //     (still sent by the OpenAI provider when set)
 //   - the JSON-encoded arguments of every entry in
@@ -245,6 +245,16 @@ func redactMessage(m chat.Message) chat.Message {
 		for i := range m.MultiContent {
 			if m.MultiContent[i].Type == chat.MessagePartTypeText {
 				m.MultiContent[i].Text = portcullis.Redact(m.MultiContent[i].Text)
+			}
+			if m.MultiContent[i].Type == chat.MessagePartTypeDocument && m.MultiContent[i].Document != nil {
+				doc := *m.MultiContent[i].Document
+				doc.Name = portcullis.Redact(doc.Name)
+				doc.MimeType = portcullis.Redact(doc.MimeType)
+				doc.Source.InlineText = portcullis.Redact(doc.Source.InlineText)
+				if doc.Source.InlineText != m.MultiContent[i].Document.Source.InlineText {
+					doc.Size = int64(len(doc.Source.InlineText))
+				}
+				m.MultiContent[i].Document = &doc
 			}
 		}
 	}
@@ -326,6 +336,12 @@ func messageChanged(orig, rewritten chat.Message) bool {
 		return true
 	}
 	for i := range orig.MultiContent {
+		if orig.MultiContent[i].Type == chat.MessagePartTypeDocument && orig.MultiContent[i].Document != nil {
+			a, b := orig.MultiContent[i].Document, rewritten.MultiContent[i].Document
+			if a.Name != b.Name || a.MimeType != b.MimeType || a.Source.InlineText != b.Source.InlineText {
+				return true
+			}
+		}
 		if orig.MultiContent[i].Type == chat.MessagePartTypeText &&
 			orig.MultiContent[i].Text != rewritten.MultiContent[i].Text {
 			return true
