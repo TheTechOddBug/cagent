@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/sources"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/fake"
+	"github.com/docker/docker-agent/pkg/history"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
@@ -29,9 +30,8 @@ import (
 // replaying VCR proxy so the agent's responses are deterministic and offline.
 // It returns a started tuitest.Driver sized to the given terminal dimensions.
 //
-// State directories (data/config) are redirected to a temp dir so the test
-// never touches the developer's ~/.cagent, and the SQLite session store lives
-// under t.TempDir() too.
+// Home and state directories are redirected to a temp dir, and the SQLite
+// session store lives under t.TempDir() too.
 //
 // agentFile is a deliberate seam: new scenarios point the harness at other
 // agent configs without touching the helper.
@@ -94,18 +94,45 @@ func newTUIWithProxyOptions(t *testing.T, agentFile string, width, height int, p
 	return tuitest.New(t, model, width, height)
 }
 
-// isolateState redirects docker-agent's data and config directories to a temp
-// dir for the duration of the test so the TUI's persistent state (tab store,
-// user settings) never touches the real home directory.
+// isolateState keeps prompt history and other persistent TUI state in a temp dir.
 func isolateState(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	paths.SetDataDir(filepath.Join(dir, "data"))
 	paths.SetConfigDir(filepath.Join(dir, "config"))
 	t.Cleanup(func() {
 		paths.SetDataDir("")
 		paths.SetConfigDir("")
 	})
+}
+
+func TestIsolateState_PromptHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	hostHistory, err := history.New("")
+	require.NoError(t, err)
+	require.NoError(t, hostHistory.Add("developer prompt"))
+
+	t.Run("isolated", func(t *testing.T) {
+		isolateState(t)
+		isolatedHistory, err := history.New("")
+		require.NoError(t, err)
+		require.Empty(t, isolatedHistory.Messages)
+		require.NoError(t, isolatedHistory.Add("test prompt"))
+
+		reloaded, err := history.New("")
+		require.NoError(t, err)
+		require.Equal(t, []string{"test prompt"}, reloaded.Messages)
+	})
+
+	require.Equal(t, home, paths.GetHomeDir())
+	hostHistory, err = history.New("")
+	require.NoError(t, err)
+	require.Equal(t, []string{"developer prompt"}, hostHistory.Messages)
 }
 
 // startReplayProxy starts a VCR proxy in replay-only mode against the cassette
