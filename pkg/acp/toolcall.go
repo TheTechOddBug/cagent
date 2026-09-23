@@ -29,12 +29,13 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool, workingDir str
 
 	opts := []acp.ToolCallStartOpt{
 		acp.WithStartKind(kind),
-		acp.WithStartStatus(acp.ToolCallStatusPending),
+		acp.WithStartStatus(acp.ToolCallStatusInProgress),
 		acp.WithStartRawInput(args),
 	}
 
 	if len(locations) > 0 {
-		opts = append(opts, acp.WithStartLocations(locations))
+		// WithStartLocations also injects rawInput.path, changing non-path arguments.
+		opts = append(opts, func(call *acp.SessionUpdateToolCall) { call.Locations = locations })
 	}
 
 	return acp.StartToolCall(
@@ -68,12 +69,8 @@ func buildToolCallComplete(event *runtime.ToolCallResponseEvent) acp.SessionUpda
 
 // buildToolCallUpdate creates a tool call update for permission requests.
 func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus, workingDir string) acp.ToolCallUpdate {
-	kind := acp.ToolKindExecute
+	kind := determineToolKind(toolCall.Function.Name, tool)
 	title := cmp.Or(tool.Annotations.Title, toolCall.Function.Name)
-
-	if tool.Annotations.ReadOnlyHint {
-		kind = acp.ToolKindRead
-	}
 
 	args := parseToolCallArguments(toolCall.Function.Arguments)
 	return acp.ToolCallUpdate{
@@ -88,13 +85,6 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 
 // determineToolKind maps tool names and annotations to ACP tool kinds.
 func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
-	if tool.Annotations.ReadOnlyHint {
-		return acp.ToolKindRead
-	}
-	if tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint {
-		return acp.ToolKindDelete
-	}
-
 	switch {
 	case strings.HasPrefix(toolName, "read_"),
 		strings.HasPrefix(toolName, "get_"),
@@ -110,8 +100,7 @@ func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
 		return acp.ToolKindEdit
 
 	case strings.HasPrefix(toolName, "delete_"),
-		strings.HasPrefix(toolName, "remove_"),
-		strings.HasPrefix(toolName, "stop_"):
+		strings.HasPrefix(toolName, "remove_"):
 		return acp.ToolKindDelete
 
 	case strings.HasPrefix(toolName, "search_"),
@@ -126,6 +115,7 @@ func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
 		return acp.ToolKindFetch
 
 	case toolName == "shell",
+		strings.HasPrefix(toolName, "stop_"),
 		strings.HasPrefix(toolName, "run_"),
 		strings.HasPrefix(toolName, "exec_"):
 		return acp.ToolKindExecute
@@ -135,6 +125,9 @@ func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
 		return acp.ToolKindSwitchMode
 
 	default:
+		if tool.Annotations.ReadOnlyHint {
+			return acp.ToolKindRead
+		}
 		return acp.ToolKindOther
 	}
 }

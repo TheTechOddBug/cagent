@@ -166,6 +166,18 @@ These are path checks, not an atomic sandbox around client I/O. The ACP client m
 
 Configured `post_edit` commands run **locally**, in the session toolset's working directory, only after a successful client write. They receive the checked target path in `${file}` and match patterns against that target, not a symlink alias. Hooks require the client and agent to share a coherent on-disk filesystem; editor-buffer-only writes are not mirrored to local disk. A hook failure reports that the write succeeded but the hook failed, without retrying or rolling back the write.
 
+## Tool-Call Lifecycle
+
+ACP reports a tool awaiting permission as `pending`. Actual execution is reported as `in_progress`, followed by `completed` or `failed`. Permission requests and subsequent updates refer to the same opaque ACP tool-call ID; permission approval is not inferred from display status.
+
+Rejected, policy-denied, or unavailable tools can produce a terminal result without executing. These become failed tool items instead of aborting the conversation or inventing a running phase. Tool kinds use one display classifier across permission and execution updates: operation names take precedence over generic hints, and a destructive hint alone does not mean deletion.
+
+ACP assigns fresh IDs rather than exposing runtime IDs directly. Correlation distinguishes agent names and supports sequential runtime-ID reuse, including across turns. The runtime does not yet provide enough identity to disambiguate simultaneous identical IDs from two sub-sessions of the same agent.
+
+On interruption, ACP drains runtime events before finishing the prompt. Known results retain their actual status and output; visible calls with no result receive a best-effort failed update explaining that side effects may have occurred. Cancellation still determines the prompt's `cancelled` stop reason. Notification failure cannot undo tool execution, and the transport does not guarantee a hard timeout for blocked writes. Terminal write failures are not retried because delivery may have been partial.
+
+Partial tool arguments and incremental tool output are not streamed by this adapter. Completed results, including eligible file diffs, remain available; this avoids presenting unapproved partial input or treating independently transformed output chunks as whole-output redaction.
+
 ## Tool Locations and File Diffs
 
 Tool-start and permission updates report absolute file locations. Relative paths are resolved lexically against the session's known workspace, with home-directory expansion; this display metadata does not read files or grant access. URI-shaped values and relative paths without an absolute workspace are omitted.

@@ -271,10 +271,16 @@ func deferredStreamDrain(p *cop.Pass, d *ast.DeferStmt, source runStreamSource) 
 		case *ast.ExprStmt: // e.g. cancel() before draining
 			continue
 		case *ast.RangeStmt:
-			if matches(p, stmt.X) && len(stmt.Body.List) == 0 {
-				return kind
+			if !matches(p, stmt.X) {
+				return streamDrainNone
 			}
-			return streamDrainNone
+			for _, bodyStmt := range stmt.Body.List {
+				// Calls can retain final results without leaving the drain loop.
+				if _, ok := bodyStmt.(*ast.ExprStmt); !ok {
+					return streamDrainNone
+				}
+			}
+			return kind
 		default:
 			return streamDrainNone
 		}

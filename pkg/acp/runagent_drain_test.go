@@ -29,7 +29,7 @@ func (r *drainingPromptRuntime) RunStream(ctx context.Context, _ *session.Sessio
 		defer close(events)
 		defer close(r.stopped)
 		if r.fail {
-			events <- &runtime.ToolCallResponseEvent{ToolCallID: "missing-start"}
+			events <- &runtime.ToolCallResponseEvent{ToolCallID: ""}
 		}
 		<-ctx.Done()
 		events <- runtime.Warning("teardown started", "root")
@@ -67,7 +67,7 @@ func TestPrompt_DrainsBeforeReleasingTurn(t *testing.T) {
 				synctest.Wait()
 				result := <-done
 				if fail {
-					require.ErrorContains(t, result.err, "missing tool call arguments")
+					require.ErrorContains(t, result.err, "tool call ID is required")
 				} else {
 					require.NoError(t, result.err)
 					assert.Equal(t, acpsdk.StopReasonCancelled, result.response.StopReason)

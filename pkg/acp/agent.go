@@ -814,7 +814,7 @@ func (a *Agent) sendUpdate(ctx context.Context, sessionID string, update acp.Ses
 }
 
 // runAgent runs a single agent loop and streams updates to the ACP client.
-func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason, error) {
+func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.StopReason, retErr error) {
 	slog.DebugContext(ctx, "Running agent turn", "session_id", acpSess.id)
 
 	ctx = withSessionID(ctx, acpSess.id)
@@ -825,17 +825,25 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 
 	runCtx, cancel := context.WithCancel(ctx)
 	eventsChan := acpSess.rt.RunStream(runCtx, acpSess.sess)
-	// Cancel on handler errors too, before waiting for runtime teardown.
+	var toolCalls toolCallTracker
+	// Cancel before draining; final tool updates must precede the prompt response.
 	defer func() {
 		cancel()
-		for range eventsChan {
+		for event := range eventsChan {
+			toolCalls.retainResult(event)
+		}
+		cleanupCtx, stopCleanup := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer stopCleanup()
+		updateErr := toolCalls.interrupt(cleanupCtx, a, acpSess)
+		if retErr == nil && ctx.Err() == nil {
+			retErr = updateErr
 		}
 	}()
-	toolCalls := map[string]struct{}{}
 	outcome := promptOutcome{sessionID: acpSess.sess.ID}
 
 	for event := range eventsChan {
 		if ctx.Err() != nil {
+			toolCalls.retainResult(event)
 			return "", ctx.Err()
 		}
 
@@ -852,25 +860,23 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 			}
 
 		case *runtime.ToolCallConfirmationEvent:
-			if err := a.handleToolCallConfirmation(ctx, acpSess, e); err != nil {
+			state, err := toolCalls.report(ctx, a, acpSess, e.AgentName, e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending)
+			if err != nil {
+				return "", err
+			}
+			rejected, err := a.handleToolCallConfirmation(ctx, acpSess, e, state.id)
+			state.rejected = rejected
+			if err != nil {
 				return "", err
 			}
 
 		case *runtime.ToolCallEvent:
-			toolCalls[e.ToolCall.ID] = struct{}{}
-			workingDir, _ := acpSess.workspaceSnapshot()
-			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallStart(e.ToolCall, e.ToolDefinition, workingDir)); err != nil {
+			if _, err := toolCalls.report(ctx, a, acpSess, e.AgentName, e.ToolCall, e.ToolDefinition, acp.ToolCallStatusInProgress); err != nil {
 				return "", err
 			}
 
 		case *runtime.ToolCallResponseEvent:
-			_, ok := toolCalls[e.ToolCallID]
-			if !ok {
-				return "", fmt.Errorf("missing tool call arguments for tool call ID %s", e.ToolCallID)
-			}
-			delete(toolCalls, e.ToolCallID)
-
-			if err := a.sendUpdate(ctx, acpSess.id, buildToolCallComplete(e)); err != nil {
+			if err := toolCalls.complete(ctx, a, acpSess, e); err != nil {
 				return "", err
 			}
 
@@ -934,9 +940,10 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (acp.StopReason,
 }
 
 // handleToolCallConfirmation handles tool call permission requests.
-func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session, e *runtime.ToolCallConfirmationEvent) error {
+func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session, e *runtime.ToolCallConfirmationEvent, id acp.ToolCallId) (bool, error) {
 	workingDir, _ := acpSess.workspaceSnapshot()
 	toolCallUpdate := buildToolCallUpdate(e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending, workingDir)
+	toolCallUpdate.ToolCallId = id
 
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 		SessionId: acp.SessionId(acpSess.id),
@@ -960,16 +967,16 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 		},
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if permResp.Outcome.Cancelled != nil {
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeReject})
-		return nil
+		return true, nil
 	}
 
 	if permResp.Outcome.Selected == nil {
-		return errors.New("unexpected permission outcome")
+		return false, errors.New("unexpected permission outcome")
 	}
 
 	switch string(permResp.Outcome.Selected.OptionId) {
@@ -979,11 +986,12 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 		acpSess.rt.Resume(ctx, runtime.ResumeApproveTool(e.ToolCall.Function.Name))
 	case "reject":
 		acpSess.rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeReject})
+		return true, nil
 	default:
-		return fmt.Errorf("unexpected permission option: %s", permResp.Outcome.Selected.OptionId)
+		return false, fmt.Errorf("unexpected permission option: %s", permResp.Outcome.Selected.OptionId)
 	}
 
-	return nil
+	return false, nil
 }
 
 // handleMaxIterationsReached handles max iterations events.

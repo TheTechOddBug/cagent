@@ -22,9 +22,9 @@ func TestDetermineToolKind(t *testing.T) {
 		annotations tools.ToolAnnotations
 		want        acpsdk.ToolKind
 	}{
-		{name: "read only hint wins", toolName: "delete_everything", annotations: tools.ToolAnnotations{ReadOnlyHint: true}, want: acpsdk.ToolKindRead},
-		{name: "read only hint wins over destructive", toolName: "shell", annotations: tools.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(true)}, want: acpsdk.ToolKindRead},
-		{name: "destructive hint", toolName: "shell", annotations: tools.ToolAnnotations{DestructiveHint: new(true)}, want: acpsdk.ToolKindDelete},
+		{name: "specific deletion wins over read hint", toolName: "delete_everything", annotations: tools.ToolAnnotations{ReadOnlyHint: true}, want: acpsdk.ToolKindDelete},
+		{name: "shell remains execute despite hints", toolName: "shell", annotations: tools.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(true)}, want: acpsdk.ToolKindExecute},
+		{name: "destructive shell is not deletion", toolName: "shell", annotations: tools.ToolAnnotations{DestructiveHint: new(true)}, want: acpsdk.ToolKindExecute},
 		{name: "destructive hint false falls through", toolName: "shell", annotations: tools.ToolAnnotations{DestructiveHint: new(false)}, want: acpsdk.ToolKindExecute},
 		{name: "read_ prefix", toolName: "read_file", want: acpsdk.ToolKindRead},
 		{name: "get_ prefix", toolName: "get_issue", want: acpsdk.ToolKindRead},
@@ -37,7 +37,7 @@ func TestDetermineToolKind(t *testing.T) {
 		{name: "add_ prefix", toolName: "add_comment", want: acpsdk.ToolKindEdit},
 		{name: "delete_ prefix", toolName: "delete_file", want: acpsdk.ToolKindDelete},
 		{name: "remove_ prefix", toolName: "remove_directory", want: acpsdk.ToolKindDelete},
-		{name: "stop_ prefix", toolName: "stop_container", want: acpsdk.ToolKindDelete},
+		{name: "stop_ prefix", toolName: "stop_container", want: acpsdk.ToolKindExecute},
 		{name: "search_ prefix", toolName: "search_files_content", want: acpsdk.ToolKindSearch},
 		{name: "find_ prefix", toolName: "find_symbol", want: acpsdk.ToolKindSearch},
 		{name: "think", toolName: "think", want: acpsdk.ToolKindThink},
@@ -49,6 +49,11 @@ func TestDetermineToolKind(t *testing.T) {
 		{name: "transfer_task", toolName: "transfer_task", want: acpsdk.ToolKindSwitchMode},
 		{name: "handoff", toolName: "handoff", want: acpsdk.ToolKindSwitchMode},
 		{name: "unknown", toolName: "banana", want: acpsdk.ToolKindOther},
+		{name: "read-only search", toolName: "search_files_content", annotations: tools.ToolAnnotations{ReadOnlyHint: true}, want: acpsdk.ToolKindSearch},
+		{name: "destructive edit", toolName: "edit_file", annotations: tools.ToolAnnotations{DestructiveHint: new(true)}, want: acpsdk.ToolKindEdit},
+		{name: "destructive write", toolName: "write_file", annotations: tools.ToolAnnotations{DestructiveHint: new(true)}, want: acpsdk.ToolKindEdit},
+		{name: "unknown read-only", toolName: "banana", annotations: tools.ToolAnnotations{ReadOnlyHint: true}, want: acpsdk.ToolKindRead},
+		{name: "unknown destructive", toolName: "banana", annotations: tools.ToolAnnotations{DestructiveHint: new(true)}, want: acpsdk.ToolKindOther},
 	}
 
 	for _, tt := range tests {
@@ -264,7 +269,7 @@ func TestBuildToolCallStart(t *testing.T) {
 		assert.Equal(t, acpsdk.ToolCallId("call-1"), tc.ToolCallId)
 		assert.Equal(t, "Read File", tc.Title)
 		assert.Equal(t, acpsdk.ToolKindRead, tc.Kind)
-		assert.Equal(t, acpsdk.ToolCallStatusPending, tc.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusInProgress, tc.Status)
 		assert.Equal(t, map[string]any{"path": "a.txt"}, tc.RawInput)
 		assert.Equal(t, []acpsdk.ToolCallLocation{{Path: filepath.Join(wd, "a.txt")}}, tc.Locations)
 	})
@@ -308,7 +313,7 @@ func TestBuildToolCallUpdate(t *testing.T) {
 	readOnly := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{ReadOnlyHint: true}}
 	update = buildToolCallUpdate(toolCall, readOnly, acpsdk.ToolCallStatusCompleted, "")
 	require.NotNil(t, update.Kind)
-	assert.Equal(t, acpsdk.ToolKindRead, *update.Kind)
+	assert.Equal(t, acpsdk.ToolKindExecute, *update.Kind)
 }
 
 func TestIsTodoTool(t *testing.T) {

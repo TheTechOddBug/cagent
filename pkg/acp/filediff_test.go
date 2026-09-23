@@ -300,7 +300,7 @@ func TestRuntimeEditSnapshotSurvivesOutputTransform(t *testing.T) {
 			Params acpsdk.SessionNotification `json:"params"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(line), &message))
-		if update := message.Params.Update.ToolCallUpdate; update != nil && update.ToolCallId == "edit" {
+		if update := message.Params.Update.ToolCallUpdate; update != nil && update.Status != nil && *update.Status == acpsdk.ToolCallStatusCompleted {
 			require.Len(t, update.Content, 2)
 			diff = update.Content[1].Diff
 			assert.Equal(t, "transformed response", update.Content[0].Content.Content.Text.Text)
