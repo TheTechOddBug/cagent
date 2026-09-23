@@ -113,8 +113,7 @@ func (t *ToolSet) Start(context.Context) error {
 	t.cancel = cancel
 	t.mu.Unlock()
 
-	t.wg.Add(1)
-	go t.loop(ctx)
+	t.wg.Go(func() { t.loop(ctx) })
 	return nil
 }
 
@@ -130,7 +129,6 @@ func (t *ToolSet) Stop(context.Context) error {
 }
 
 func (t *ToolSet) loop(ctx context.Context) {
-	defer t.wg.Done()
 	for {
 		wait := loopMaxWait
 		if d, ok := t.store.untilNext(t.now()); ok && d < wait {
