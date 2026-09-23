@@ -95,7 +95,7 @@ func TestRunStream_EscapingGeneratedMediaCompletesWithoutElicitation(t *testing.
 				{Choices: []chat.MessageStreamChoice{{Index: 0, FinishReason: chat.FinishReasonStop}}, Usage: &chat.Usage{InputTokens: 1, OutputTokens: 1}},
 			}}
 			root := agent.New("root", "instructions", agent.WithModel(&mockProvider{id: "test/media", stream: stream}))
-			rt, err := New(t.Context(), team.New(team.WithAgents(root)), WithSessionCompaction(false), WithSessionStore(store))
+			rt, err := New(t.Context(), team.New(team.WithAgents(root)), WithSessionCompaction(false), WithSessionStore(store), WithModelStore(mockModelStore{}))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
 			rt.OnElicitationRequest(func(Event) { t.Error("generated media escape must not elicit") })

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gotest.tools/v3/assert"
@@ -209,19 +210,22 @@ func TestSupervisor_StartTimesOutOnSlowConnect(t *testing.T) {
 func TestSupervisor_StartAdoptsLateConnect(t *testing.T) {
 	t.Parallel()
 
-	c := &blockingConnector{release: make(chan struct{}), session: newFakeSession()}
-	s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
+	synctest.Test(t, func(t *testing.T) {
+		c := &blockingConnector{release: make(chan struct{}), session: newFakeSession()}
+		s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
 
-	assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrInitTimeout))
+		assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrInitTimeout))
 
-	// The handshake completes; the next Start adopts it.
-	close(c.release)
-	assert.NilError(t, s.Start(t.Context()))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-	// Still only one Connect was ever launched.
-	assert.Check(t, is.Equal(c.calls.Load(), int32(1)))
+		// The handshake completes; the next Start adopts it.
+		close(c.release)
+		synctest.Wait()
+		assert.NilError(t, s.Start(t.Context()))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+		// Still only one Connect was ever launched.
+		assert.Check(t, is.Equal(c.calls.Load(), int32(1)))
 
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 // TestSupervisor_StartAdoptsLateConnectAfterFirstCtxCancelled verifies that
@@ -232,21 +236,24 @@ func TestSupervisor_StartAdoptsLateConnect(t *testing.T) {
 func TestSupervisor_StartAdoptsLateConnectAfterFirstCtxCancelled(t *testing.T) {
 	t.Parallel()
 
-	c := &blockingConnector{release: make(chan struct{}), session: newFakeSession()}
-	s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
+	synctest.Test(t, func(t *testing.T) {
+		c := &blockingConnector{release: make(chan struct{}), session: newFakeSession()}
+		s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
 
-	ctx, cancel := context.WithCancel(t.Context())
-	assert.Check(t, errors.Is(s.Start(ctx), lifecycle.ErrInitTimeout))
-	// Cancelling the first caller's context must not poison the detached
-	// in-flight Connect: blockingConnector returns ctx.Err() if its ctx is done.
-	cancel()
+		ctx, cancel := context.WithCancel(t.Context())
+		assert.Check(t, errors.Is(s.Start(ctx), lifecycle.ErrInitTimeout))
+		// Cancelling the first caller's context must not poison the detached
+		// in-flight Connect: blockingConnector returns ctx.Err() if its ctx is done.
+		cancel()
 
-	close(c.release)
-	assert.NilError(t, s.Start(t.Context()))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-	assert.Check(t, is.Equal(c.calls.Load(), int32(1)))
+		close(c.release)
+		synctest.Wait()
+		assert.NilError(t, s.Start(t.Context()))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+		assert.Check(t, is.Equal(c.calls.Load(), int32(1)))
 
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 // TestSupervisor_StopReapsLateConnect verifies that when Stop is called while a
