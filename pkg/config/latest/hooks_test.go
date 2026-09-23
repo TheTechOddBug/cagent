@@ -8,6 +8,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHooksEventsEmpty(t *testing.T) {
+	t.Parallel()
+
+	for _, cfg := range []*HooksConfig{
+		nil,
+		{},
+		{PreToolUse: HookMatcherConfigs{}, SessionStart: HookDefinitions{}},
+	} {
+		for name := range cfg.Events() {
+			t.Errorf("unexpected event %q", name)
+		}
+		assert.True(t, cfg.IsEmpty())
+	}
+}
+
+func TestHooksEvents(t *testing.T) {
+	t.Parallel()
+
+	cfg := &HooksConfig{
+		PreToolUse: HookMatcherConfigs{
+			{Matcher: "shell", PreemptYolo: new(true), Hooks: HookDefinitions{{Command: "check"}}},
+			{Matcher: "edit_file", Hooks: HookDefinitions{{Command: "validate"}}},
+		},
+		PostToolUse:  HookMatcherConfigs{},
+		SessionStart: HookDefinitions{{Command: "setup"}, {Command: "log"}},
+	}
+
+	var names []string
+	var matchers []HookMatcherConfigs
+	for name, hooks := range cfg.Events() {
+		names = append(names, name)
+		matchers = append(matchers, hooks)
+	}
+
+	assert.Equal(t, []string{"pre_tool_use", "session_start"}, names)
+	assert.Equal(t, []HookMatcherConfigs{
+		cfg.PreToolUse,
+		{{Hooks: cfg.SessionStart}},
+	}, matchers)
+	assert.False(t, cfg.IsEmpty())
+}
+
+func TestHooksEventsStopEarly(t *testing.T) {
+	t.Parallel()
+
+	cfg := &HooksConfig{
+		PreToolUse:   HookMatcherConfigs{{Hooks: HookDefinitions{{Command: "check"}}}},
+		SessionStart: HookDefinitions{{Command: "setup"}},
+	}
+
+	calls := 0
+	cfg.Events()(func(name string, matchers HookMatcherConfigs) bool {
+		calls++
+		assert.Equal(t, "pre_tool_use", name)
+		assert.Equal(t, cfg.PreToolUse, matchers)
+		return false
+	})
+	assert.Equal(t, 1, calls)
+}
+
 func TestHooksValidateContracts(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, config, want string }{
