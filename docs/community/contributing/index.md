@@ -50,6 +50,28 @@ export ANTHROPIC_API_KEY=your_key_here
 | `task build-local` | Build for local platform via Docker             |
 | `task cross`       | Cross-platform builds (all architectures)       |
 
+## Debugging TUI Tests
+
+The headless TUI harness can save each captured frame for inspection:
+
+```bash
+mkdir -p .cache/tui-test
+go test -count=1 -v -artifacts -outputdir="$PWD/.cache/tui-test" ./e2e/tui -tuitest.frames
+```
+
+`-tuitest.frames` writes numbered text files in a separate `frames-*` directory
+for each driver, under the test's `testing.TB.ArtifactDir()`. The test log prints
+the exact path. `-artifacts` retains these directories after the tests finish;
+without it, dumps are temporary and removed during test cleanup. Use `-count=1`
+to capture fresh frames rather than reuse a cached test result.
+
+With the command above, retained dumps are under `.cache/tui-test/_artifacts/`.
+For CI jobs that enable frame dumping, upload this directory even when tests
+fail. Dumps are no longer written alongside golden files in `testdata/frames`;
+`-tuitest.update` still updates golden files in `testdata/`.
+
+For an approximate live view instead, use `go test -v ./e2e/tui -tuitest.live`.
+
 ## Dogfooding
 
 Use Docker Agent to work on Docker Agent! The project includes a specialized developer agent:
