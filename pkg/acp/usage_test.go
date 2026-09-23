@@ -261,6 +261,7 @@ func TestUsageBackgroundRuntimeRecordsWithoutClientIO(t *testing.T) {
 	a := clientMCPAgent(t)
 	store, err := sqlitestore.New(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
 	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 	a.sessionStore = store
 	a.loadTeam = func(context.Context, string) (*teamloader.LoadResult, error) {
 		worker := agent.New("worker", "test", agent.WithModel(&mockProvider{id: modelsdev.NewID("openai", "gpt-4o"), stream: usageStream(nil, 100, 50)}))
