@@ -45,7 +45,7 @@ func buildAWSConfig(ctx context.Context, cfg *latest.ModelConfig, env environmen
 				o.RoleSessionName = "docker-agent-bedrock-session"
 			}
 			if externalID := getProviderOpt[string](cfg.ProviderOpts, "external_id"); externalID != "" {
-				o.ExternalID = aws.String(externalID)
+				o.ExternalID = new(externalID)
 			}
 		})
 		awsCfg.Credentials = aws.NewCredentialsCache(creds)

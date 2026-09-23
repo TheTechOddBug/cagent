@@ -87,7 +87,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	// Support custom endpoint for VPC endpoints or testing
 	if endpoint := getProviderOpt[string](cfg.ProviderOpts, "endpoint_url"); endpoint != "" {
 		clientOpts = append(clientOpts, func(o *bedrockruntime.Options) {
-			o.BaseEndpoint = aws.String(endpoint)
+			o.BaseEndpoint = new(endpoint)
 		})
 	}
 
@@ -196,7 +196,7 @@ func (c *Client) CreateChatCompletionStream(
 
 func (c *Client) buildConverseStreamInput(ctx context.Context, messages []chat.Message, requestTools []tools.Tool) *bedrockruntime.ConverseStreamInput {
 	input := &bedrockruntime.ConverseStreamInput{
-		ModelId: aws.String(c.ModelConfig.Model),
+		ModelId: new(c.ModelConfig.Model),
 	}
 
 	enableCaching := c.promptCachingEnabled()
@@ -225,17 +225,17 @@ func (c *Client) buildInferenceConfig(thinkingEnabled bool) *types.InferenceConf
 	cfg := &types.InferenceConfiguration{}
 
 	if c.ModelConfig.MaxTokens != nil && *c.ModelConfig.MaxTokens > 0 {
-		cfg.MaxTokens = aws.Int32(int32(*c.ModelConfig.MaxTokens)) //nolint:gosec // user-configured token count; realistic values fit in int32
+		cfg.MaxTokens = new(int32(*c.ModelConfig.MaxTokens)) //nolint:gosec // user-configured token count; realistic values fit in int32
 	}
 
 	// Temperature and TopP cannot be set when extended thinking is enabled
 	// (Claude requires temperature=1.0 which is the default when thinking is on)
 	if !thinkingEnabled {
 		if c.ModelConfig.Temperature != nil {
-			cfg.Temperature = aws.Float32(float32(*c.ModelConfig.Temperature))
+			cfg.Temperature = new(float32(*c.ModelConfig.Temperature))
 		}
 		if c.ModelConfig.TopP != nil {
-			cfg.TopP = aws.Float32(float32(*c.ModelConfig.TopP))
+			cfg.TopP = new(float32(*c.ModelConfig.TopP))
 		}
 	} else if c.ModelConfig.Temperature != nil || c.ModelConfig.TopP != nil {
 		slog.Debug("Bedrock extended thinking enabled, ignoring temperature/top_p settings")
