@@ -249,19 +249,16 @@ func TestElicitationWaiters_ConcurrentResolveCancelRace(t *testing.T) {
 
 		var wg sync.WaitGroup
 		var resolveWon, cancelWon atomicBool
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if w.resolve(id, ElicitationResult{Action: tools.ElicitationActionAccept}) {
 				resolveWon.set(true)
 			}
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			if w.cancel(id, wt) {
 				cancelWon.set(true)
 			}
-		}()
+		})
 		wg.Wait()
 
 		require.NotEqual(t, resolveWon.get(), cancelWon.get(), "exactly one of resolve/cancel must win, never both or neither")

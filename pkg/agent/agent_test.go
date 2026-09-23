@@ -704,22 +704,18 @@ func TestAgentWarningsConcurrentAccess(t *testing.T) {
 	const perWriter = 200
 
 	var writersWg, drainersWg sync.WaitGroup
-	writersWg.Add(writers)
-	drainersWg.Add(drainers)
 
 	for range writers {
-		go func() {
-			defer writersWg.Done()
+		writersWg.Go(func() {
 			for range perWriter {
 				a.AddToolWarning("boom")
 			}
-		}()
+		})
 	}
 
 	stop := make(chan struct{})
 	for range drainers {
-		go func() {
-			defer drainersWg.Done()
+		drainersWg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -730,7 +726,7 @@ func TestAgentWarningsConcurrentAccess(t *testing.T) {
 					_ = a.DrainWarnings()
 				}
 			}
-		}()
+		})
 	}
 
 	// Keep drainers racing until every writer has finished, then stop them.

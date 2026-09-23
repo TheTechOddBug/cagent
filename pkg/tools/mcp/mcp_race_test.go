@@ -20,19 +20,16 @@ func TestInstructions_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 100 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Simulate a concurrent writer (the supervisor's Connect updates
 			// instructions under ts.mu after a successful Initialize).
 			ts.mu.Lock()
 			defer ts.mu.Unlock()
 			ts.instructions = "updated"
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			_ = ts.Instructions()
-		}()
+		})
 	}
 	wg.Wait()
 }

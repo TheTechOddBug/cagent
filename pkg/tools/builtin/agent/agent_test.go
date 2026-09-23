@@ -820,19 +820,17 @@ func TestHandler_ConcurrentAccess(t *testing.T) {
 	}
 
 	for i := range 5 {
-		wg.Add(1)
-		go func(tc tools.ToolCall) {
-			defer wg.Done()
+		tc := viewTCs[i]
+		wg.Go(func() {
 			_, _ = h.HandleView(t.Context(), nil, tc)
-		}(viewTCs[i])
+		})
 	}
 
 	for i := range 3 {
-		wg.Add(1)
-		go func(tc tools.ToolCall) {
-			defer wg.Done()
+		tc := stopTCs[i]
+		wg.Go(func() {
 			_, _ = h.HandleStop(t.Context(), nil, tc)
-		}(stopTCs[i])
+		})
 	}
 
 	wg.Wait()

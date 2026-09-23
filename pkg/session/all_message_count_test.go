@@ -145,7 +145,6 @@ func TestAllMessageCount_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	write := func(s *Session) {
-		defer wg.Done()
 		for i := range iterations {
 			s.AddMessage(&Message{Message: chat.Message{
 				Role:    chat.MessageRoleUser,
@@ -154,17 +153,15 @@ func TestAllMessageCount_Concurrent(t *testing.T) {
 		}
 	}
 	read := func(s *Session) {
-		defer wg.Done()
 		for range iterations {
 			_ = s.AllMessageCount()
 		}
 	}
 
-	wg.Add(4)
-	go write(parent)
-	go write(child)
-	go read(parent)
-	go read(child)
+	wg.Go(func() { write(parent) })
+	wg.Go(func() { write(child) })
+	wg.Go(func() { read(parent) })
+	wg.Go(func() { read(child) })
 	wg.Wait()
 
 	assert.Equal(t, len(parent.GetAllMessages()), parent.AllMessageCount())
