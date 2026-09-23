@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
@@ -72,7 +71,7 @@ func convertMessages(ctx context.Context, messages []chat.Message, id modelsdev.
 				if messages[j].ToolCallID != "" {
 					toolResultBlocks = append(toolResultBlocks, &types.ContentBlockMemberToolResult{
 						Value: types.ToolResultBlock{
-							ToolUseId: aws.String(messages[j].ToolCallID),
+							ToolUseId: new(messages[j].ToolCallID),
 							Content:   convertToolResultContent(ctx, &messages[j], id, store, override),
 						},
 					})
@@ -255,8 +254,8 @@ func convertAssistantContent(msg *chat.Message) []types.ContentBlock {
 		blocks = append(blocks, &types.ContentBlockMemberReasoningContent{
 			Value: &types.ReasoningContentBlockMemberReasoningText{
 				Value: types.ReasoningTextBlock{
-					Text:      aws.String(msg.ReasoningContent),
-					Signature: aws.String(msg.ThinkingSignature),
+					Text:      new(msg.ReasoningContent),
+					Signature: new(msg.ThinkingSignature),
 				},
 			},
 		})
@@ -291,8 +290,8 @@ func convertAssistantContent(msg *chat.Message) []types.ContentBlock {
 
 		blocks = append(blocks, &types.ContentBlockMemberToolUse{
 			Value: types.ToolUseBlock{
-				ToolUseId: aws.String(tc.ID),
-				Name:      aws.String(tc.Function.Name),
+				ToolUseId: new(tc.ID),
+				Name:      new(tc.Function.Name),
 				Input:     inputDoc,
 			},
 		})
@@ -315,8 +314,8 @@ func convertToolConfig(requestTools []tools.Tool, enableCaching bool) *types.Too
 		schema := convertToolSchema(tool.Parameters)
 		toolSpecs = append(toolSpecs, &types.ToolMemberToolSpec{
 			Value: types.ToolSpecification{
-				Name:        aws.String(tool.Name),
-				Description: aws.String(tool.Description),
+				Name:        new(tool.Name),
+				Description: new(tool.Description),
 				InputSchema: &types.ToolInputSchemaMemberJson{
 					Value: schema,
 				},
