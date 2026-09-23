@@ -90,7 +90,8 @@ func (m *MockHTTPClient) GetRequestCount() int {
 
 func TestNewClient(t *testing.T) {
 	t.Parallel()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// telemetry disabled here, so logging stays synchronous for the life of the test
+	logger := slog.New(slog.NewTextHandler(t.Output(), nil))
 
 	// Note: debug mode does NOT disable HTTP calls - it only adds extra logging
 	client := newClient(t.Context(), logger, false, false, "test-version")
@@ -686,7 +687,8 @@ func TestHTTPRequestVerification(t *testing.T) {
 
 // TestCreateEventTelemetryTags tests the TELEMETRY_TAGS environment variable support in createEvent
 func TestCreateEventTelemetryTags(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// createEvent never touches tc.logger, so no async writes outlive the test
+	logger := slog.New(slog.NewTextHandler(t.Output(), nil))
 	client := newClient(t.Context(), logger, true, true, "test-version")
 	client.userUUID = "test-uuid"
 
