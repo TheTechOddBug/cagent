@@ -159,13 +159,12 @@ linters:
         - G703
         - G704
     modernize:
-      # embedlit (x/tools v0.48), stringscut and reflecttypeassert became
-      # active after the golangci-lint bump required by the Go 1.27 upgrade.
+      # embedlit (x/tools v0.48) and stringscut became active after the
+      # golangci-lint bump required by the Go 1.27 upgrade.
       # Pre-existing violations in unrelated files; re-enable in a follow-up.
       disable:
         - embedlit
         - stringscut
-        - reflecttypeassert
   exclusions:
     generated: lax
     presets:
