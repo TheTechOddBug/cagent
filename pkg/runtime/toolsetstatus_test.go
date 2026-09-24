@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -107,26 +109,30 @@ func TestToolsetStatusFor_UnwrapsStartable(t *testing.T) {
 func TestToolsetStatusFor_UnsupervisedReportsStartingWithoutBlocking(t *testing.T) {
 	t.Parallel()
 
-	release := make(chan struct{})
-	inner := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
-	wrapped := tools.NewStartable(inner)
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		releaseStart := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseStart)
+		inner := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
+		wrapped := tools.NewStartable(inner)
 
-	startDone := make(chan error, 1)
-	go func() { startDone <- wrapped.Start(t.Context()) }()
-	<-inner.entered
+		startDone := make(chan error, 1)
+		go func() { startDone <- wrapped.Start(t.Context()) }()
+		<-inner.entered
 
-	resultCh := make(chan tools.ToolsetStatus, 1)
-	go func() { resultCh <- toolsetStatusFor(wrapped) }()
+		resultCh := make(chan tools.ToolsetStatus, 1)
+		go func() { resultCh <- toolsetStatusFor(wrapped) }()
 
-	select {
-	case status := <-resultCh:
-		assert.Equal(t, lifecycle.StateStarting, status.State, "a mid-start toolset must report Starting, not block or misreport")
-	case <-time.After(5 * time.Second):
-		t.Fatal("toolsetStatusFor blocked behind an in-flight Start instead of reporting Starting")
-	}
+		select {
+		case status := <-resultCh:
+			assert.Equal(t, lifecycle.StateStarting, status.State, "a mid-start toolset must report Starting, not block or misreport")
+		case <-time.After(5 * time.Second):
+			t.Fatal("toolsetStatusFor blocked behind an in-flight Start instead of reporting Starting")
+		}
 
-	close(release)
-	require.NoError(t, <-startDone)
+		releaseStart()
+		require.NoError(t, <-startDone)
 
-	assert.Equal(t, lifecycle.StateReady, toolsetStatusFor(wrapped).State, "settled start reports Ready")
+		assert.Equal(t, lifecycle.StateReady, toolsetStatusFor(wrapped).State, "settled start reports Ready")
+	})
 }
