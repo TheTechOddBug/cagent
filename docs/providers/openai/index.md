@@ -98,7 +98,7 @@ See [`examples/deferred_native_tool_search.yaml`](https://github.com/docker/dock
 
 ## Thinking Budget
 
-OpenAI reasoning models (o-series, gpt-5, gpt-5-mini, gpt-5.6 family) support extended thinking through the `reasoning_effort` API parameter. Set `thinking_budget` to control the effort level:
+OpenAI reasoning models (o-series, gpt-5, gpt-5-mini, gpt-5.6 family, gpt-6 family) support extended thinking through the `reasoning_effort` API parameter. Set `thinking_budget` to control the effort level:
 
 ```yaml
 models:
@@ -112,7 +112,7 @@ models:
 
 | Level     | Description                                              |
 | --------- | -------------------------------------------------------- |
-| `none`    | No reasoning. On `gpt-5.6`+ this is a real API value that is sent as-is; on older models it just disables the local `thinking_budget` (the API's own default still applies). |
+| `none`    | No reasoning. On GPT-5.x from 5.6 onward and GPT-6 Sol/Luna this is a real API value that is sent as-is; on Astra and older models it just disables the local `thinking_budget` (the API's own default still applies). |
 | `minimal` | Fastest; lightest reasoning pass. Not accepted on `gpt-5.6`+ (dropped from the API). |
 | `low`     | Quick reasoning for straightforward tasks.               |
 | `medium`  | Balanced default.                                        |
@@ -120,7 +120,9 @@ models:
 | `xhigh`   | Near-maximum effort; slower but most accurate. Requires `gpt-5.2`+. |
 | `max`     | Maximum effort. Requires `gpt-5.6`+ (Sol/Terra/Luna).    |
 
-Token counts, `adaptive`, and `adaptive/<effort>` are rejected with a configuration error at request time. Older models (o1, o3-mini) only accept `low`/`medium`/`high`; `xhigh` requires `gpt-5.2`+; `none` and `max` require `gpt-5.6`+; `minimal` is not accepted on `gpt-5.6`+.
+Token counts, `adaptive`, and `adaptive/<effort>` are rejected with a configuration error at request time. Older models (o1, o3-mini) only accept `low`/`medium`/`high`; `xhigh` requires `gpt-5.2`+; `max` requires `gpt-5.6`+; `none` is supported on GPT-5.x from 5.6 onward and GPT-6 Sol/Luna, but not Astra; `minimal` is not accepted on `gpt-5.6`+.
+
+GPT-6 Sol/Luna also support function tools with `thinking_budget: none` on Chat Completions. Tool calling with reasoning requires the Responses API, which Docker Agent selects automatically for these models on the `openai` provider. Astra requires Responses for tool calling.
 
 > [!WARNING]
 > **Hidden reasoning tokens**

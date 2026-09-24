@@ -102,9 +102,9 @@ Control how much the model "thinks" before responding:
 | All        | string/int | `none` or `0` clears Docker Agent's local config                    | —                                |
 
 `none` and `0` are not universal API-level disable switches. On genuine OpenAI
-gpt-5.6+ endpoints (Sol/Terra/Luna), `none` is a real `reasoning_effort` value
-that Docker Agent sends as-is and the model does not reason. On older OpenAI
-models, `none`/`0` only clear the local `thinking_budget` — omitting the field
+endpoints running GPT-5.x from 5.6 onward or GPT-6 Sol/Luna, `none` is a real
+`reasoning_effort` value that Docker Agent sends as-is and the model does not
+reason. On GPT-6 Astra and older OpenAI models, `none`/`0` only clear the local `thinking_budget` — omitting the field
 has the same effect — and the model falls back to the API's own default effort
 (still reasoning internally for always-reasoning models like the o-series).
 Providers with a true optional-thinking switch (Gemini 2.5, Claude, local
@@ -122,7 +122,7 @@ models:
   fast-responder:
     provider: openai
     model: gpt-5.6
-    thinking_budget: none # real API-level disable on gpt-5.6+
+    thinking_budget: none # real API-level disable on gpt-5.6
 ```
 
 > [!NOTE]
