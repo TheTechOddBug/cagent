@@ -666,32 +666,34 @@ func TestSupervisor_PermanentConnectErrorDoesNotRetry(t *testing.T) {
 func TestSupervisor_CleanClosePolicyBoundary(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	c := newScriptedConnector(scriptStep{session: sess1})
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		c := newScriptedConnector(scriptStep{session: sess1})
 
-	failedCh := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Restart: lifecycle.RestartOnFailure,
-		Backoff: fastBackoff,
-		OnFailed: func(err error) {
-			select {
-			case failedCh <- err:
-			default:
-			}
-		},
+		failedCh := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Restart: lifecycle.RestartOnFailure,
+			Backoff: fastBackoff,
+			OnFailed: func(err error) {
+				select {
+				case failedCh <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(nil)
+
+		select {
+		case err := <-failedCh:
+			assert.Check(t, err == nil)
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not transition to Failed after clean close")
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+		assert.Check(t, is.Equal(c.Calls(), 1), "RestartOnFailure must not reconnect clean closes")
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(nil)
-
-	select {
-	case err := <-failedCh:
-		assert.Check(t, err == nil)
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not transition to Failed after clean close")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
-	assert.Check(t, is.Equal(c.Calls(), 1), "RestartOnFailure must not reconnect clean closes")
 }
 
 func TestSupervisor_RestartAlwaysReconnectsCleanCloseAndResetsBudget(t *testing.T) {
