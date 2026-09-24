@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -125,60 +126,62 @@ func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
 func TestLiveSessions_ListsRootAndActiveChildren(t *testing.T) {
 	t.Parallel()
 
-	startedA := make(chan struct{})
-	startedB := make(chan struct{})
-	release := make(chan struct{})
-	prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: startedA, release: release},
-		{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: startedB, release: release},
-	}}
-	rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 1000})
+	synctest.Test(t, func(t *testing.T) {
+		startedA := make(chan struct{})
+		startedB := make(chan struct{})
+		release := make(chan struct{})
+		prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: startedA, release: release},
+			{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: startedB, release: release},
+		}}
+		rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 1000})
 
-	rootSess := session.New(session.WithID("root-session"), session.WithUserMessage("hi"))
-	rootSess.SetUsage(100, 50)
+		rootSess := session.New(session.WithID("root-session"), session.WithUserMessage("hi"))
+		rootSess.SetUsage(100, 50)
 
-	// Two concurrent runs of the SAME agent: they must both be listed,
-	// never collapsed by agent name.
-	childA := newWorkerSession("child-a")
-	childA.SetUsage(600, 100)
-	childB := newWorkerSession("child-b")
-	childB.SetUsage(10, 5)
+		// Two concurrent runs of the SAME agent: they must both be listed,
+		// never collapsed by agent name.
+		childA := newWorkerSession("child-a")
+		childA.SetUsage(600, 100)
+		childB := newWorkerSession("child-b")
+		childB.SetUsage(10, 5)
 
-	streamA := rt.RunStream(t.Context(), childA)
-	streamB := rt.RunStream(t.Context(), childB)
-	waitClosed(t, startedA, "first child turn")
-	waitClosed(t, startedB, "second child turn")
+		streamA := rt.RunStream(t.Context(), childA)
+		streamB := rt.RunStream(t.Context(), childB)
+		waitClosed(t, startedA, "first child turn")
+		waitClosed(t, startedB, "second child turn")
 
-	rows := rt.LiveSessions(t.Context(), rootSess)
-	require.Len(t, rows, 3, "current root plus both live children")
+		rows := rt.LiveSessions(t.Context(), rootSess)
+		require.Len(t, rows, 3, "current root plus both live children")
 
-	assert.True(t, rows[0].Current)
-	assert.Equal(t, "root-session", rows[0].SessionID)
-	assert.Equal(t, "root", rows[0].AgentName)
-	assert.Equal(t, int64(150), rows[0].UsedTokens())
-	assert.Equal(t, int64(1000), rows[0].ContextLimit)
+		assert.True(t, rows[0].Current)
+		assert.Equal(t, "root-session", rows[0].SessionID)
+		assert.Equal(t, "root", rows[0].AgentName)
+		assert.Equal(t, int64(150), rows[0].UsedTokens())
+		assert.Equal(t, int64(1000), rows[0].ContextLimit)
 
-	// Child rows are stable-sorted by agent name then session ID.
-	assert.Equal(t, "child-a", rows[1].SessionID)
-	assert.Equal(t, "worker", rows[1].AgentName)
-	assert.Equal(t, int64(700), rows[1].UsedTokens())
-	assert.Equal(t, int64(1000), rows[1].ContextLimit)
-	assert.False(t, rows[1].Current)
+		// Child rows are stable-sorted by agent name then session ID.
+		assert.Equal(t, "child-a", rows[1].SessionID)
+		assert.Equal(t, "worker", rows[1].AgentName)
+		assert.Equal(t, int64(700), rows[1].UsedTokens())
+		assert.Equal(t, int64(1000), rows[1].ContextLimit)
+		assert.False(t, rows[1].Current)
 
-	assert.Equal(t, "child-b", rows[2].SessionID)
-	assert.Equal(t, "worker", rows[2].AgentName)
-	assert.Equal(t, int64(15), rows[2].UsedTokens())
+		assert.Equal(t, "child-b", rows[2].SessionID)
+		assert.Equal(t, "worker", rows[2].AgentName)
+		assert.Equal(t, int64(15), rows[2].UsedTokens())
 
-	// Ordering is deterministic across calls.
-	assert.Equal(t, rows, rt.LiveSessions(t.Context(), rootSess))
+		// Ordering is deterministic across calls.
+		assert.Equal(t, rows, rt.LiveSessions(t.Context(), rootSess))
 
-	close(release)
-	drainStream(t, streamA)
-	drainStream(t, streamB)
+		close(release)
+		drainStream(t, streamA)
+		drainStream(t, streamB)
 
-	rows = rt.LiveSessions(t.Context(), rootSess)
-	require.Len(t, rows, 1, "finished children drop out of the view")
-	assert.True(t, rows[0].Current)
+		rows = rt.LiveSessions(t.Context(), rootSess)
+		require.Len(t, rows, 1, "finished children drop out of the view")
+		assert.True(t, rows[0].Current)
+	})
 }
 
 func TestLiveSessions_UnknownContextLimit(t *testing.T) {
