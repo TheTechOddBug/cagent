@@ -159,35 +159,37 @@ func TestElicitationBridge_RestoreAndCloseWaitsForInflightSenders(t *testing.T) 
 func TestElicitationBridge_ConcurrentSendsAndCloseAreSerializedSafely(t *testing.T) {
 	t.Parallel()
 
-	var b elicitationBridge
-	ch := make(chan Event, 64)
-	parent := make(chan Event, 1)
-	b.swap(ch)
+	synctest.Test(t, func(t *testing.T) {
+		var b elicitationBridge
+		ch := make(chan Event, 64)
+		parent := make(chan Event, 1)
+		b.swap(ch)
 
-	var wg sync.WaitGroup
-	for range 10 {
-		wg.Go(func() {
-			for range 5 {
-				_ = b.send(t.Context(), Error("x"))
-			}
-		})
-	}
-
-	received := make(chan struct{})
-	go func() {
-		defer close(received)
-		for range ch {
+		var wg sync.WaitGroup
+		for range 10 {
+			wg.Go(func() {
+				for range 5 {
+					_ = b.send(t.Context(), Error("x"))
+				}
+			})
 		}
-	}()
 
-	wg.Wait()
-	b.restoreAndClose(ch, parent)
+		received := make(chan struct{})
+		go func() {
+			defer close(received)
+			for range ch {
+			}
+		}()
 
-	select {
-	case <-received:
-	case <-time.After(time.Second):
-		t.Fatal("reader did not observe channel close")
-	}
+		wg.Wait()
+		b.restoreAndClose(ch, parent)
+
+		select {
+		case <-received:
+		case <-time.After(time.Second):
+			t.Fatal("reader did not observe channel close")
+		}
+	})
 }
 
 func TestLocalRuntime_FinalizeEventChannelEmitsStreamStoppedOnce(t *testing.T) {
