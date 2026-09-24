@@ -111,6 +111,38 @@ the original location, and track whether any word was yielded when preserving
 that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
 inputs, and `FieldsFunc` callbacks are intentionally excluded.
 
+`Lint/PointerHelper` recommends native `new` expressions for AWS scalar pointer
+helpers. Preserve explicit numeric conversions; slice/map and dereference helpers
+are not replacements for `new`.
+
+`Lint/ReflectFields` covers paired `reflect.Value.Field(i)` and
+`Value.Type().Field(i)` loops that the upstream iterator analyzer misses. It
+excludes receiver mutation/escape, unrelated index uses, and unsafe callbacks.
+
+`Lint/StdlibUUID` recommends stdlib UUIDs for random strings and canonical
+literal-to-string conversions. It preserves UUIDv5 and compatibility parsers,
+and skips recommendations when production or test code configures Google UUID
+randomness. General parsers and values exposing the Google UUID type are excluded.
+
+`Lint/URLClone` recommends `url.URL.Clone` for equivalent nil-safe deep copies
+or copies guarded by `User == nil`. General shallow copies are excluded because
+`Clone` also copies userinfo.
+
+`Lint/JSONMarshalWrite` flags a single buffered encoding followed by newline
+trimming. Review the suggested `jsonv2.MarshalWrite` migration with v1 defaults,
+explicit HTML escaping, unchanged evaluation order, and discarded partial output
+on error. Streaming encoders and indentation are excluded.
+
+`Lint/BenchmarkLoop` covers simple `ResetTimer`/`b.N` loops, including
+sub-benchmarks and test-only packages. Review measurement and compiler effects
+before adopting `b.Loop`; parallel, timer-sensitive, and escaping benchmark
+handles are excluded. These cops report suggestions, never automatic rewrites.
+The non-benchmark modernization cops inspect production packages; the UUID
+randomness guard additionally reads tests.
+
+Test output/artifact lifetimes and in-memory HTTP compatibility require review;
+there are no blanket rules for `t.Output`, `ArtifactDir`, or `NewTestServer`.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
