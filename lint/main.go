@@ -56,6 +56,7 @@ var programCops = []prog.Cop{
 	PointerHelper,
 	ReflectFields,
 	StdlibUUID,
+	URLClone,
 	SplitTrimJoin,
 	FieldsSeq,
 	SessionStateAccessors,

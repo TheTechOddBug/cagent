@@ -124,6 +124,10 @@ literal-to-string conversions. It preserves UUIDv5 and compatibility parsers,
 and skips recommendations when production or test code configures Google UUID
 randomness. General parsers and values exposing the Google UUID type are excluded.
 
+`Lint/URLClone` recommends `url.URL.Clone` for equivalent nil-safe deep copies
+or copies guarded by `User == nil`. General shallow copies are excluded because
+`Clone` also copies userinfo.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
