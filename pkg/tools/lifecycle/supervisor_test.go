@@ -308,39 +308,41 @@ func TestSupervisor_StartIsIdempotent(t *testing.T) {
 func TestSupervisor_RestartAfterDisconnect(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	sess2 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		sess2 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+		)
 
-	restarted := make(chan struct{}, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff: fastBackoff,
-		OnRestart: func(context.Context) {
-			select {
-			case restarted <- struct{}{}:
-			default:
-			}
-		},
+		restarted := make(chan struct{}, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff: fastBackoff,
+			OnRestart: func(context.Context) {
+				select {
+				case restarted <- struct{}{}:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+
+		// Make session 1 fail; supervisor should reconnect to session 2.
+		sess1.fail(errors.New("crash"))
+
+		select {
+		case <-restarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not restart")
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+		assert.Check(t, is.Equal(c.Calls(), 2))
+
+		assert.NilError(t, s.Stop(t.Context()))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-
-	// Make session 1 fail; supervisor should reconnect to session 2.
-	sess1.fail(errors.New("crash"))
-
-	select {
-	case <-restarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not restart")
-	}
-
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-	assert.Check(t, is.Equal(c.Calls(), 2))
-
-	assert.NilError(t, s.Stop(t.Context()))
 }
 
 func TestSupervisor_GivesUpAfterMaxAttempts(t *testing.T) {
