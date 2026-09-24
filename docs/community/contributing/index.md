@@ -111,6 +111,10 @@ the original location, and track whether any word was yielded when preserving
 that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
 inputs, and `FieldsFunc` callbacks are intentionally excluded.
 
+`Lint/PointerHelper` recommends native `new` expressions for AWS scalar pointer
+helpers. Preserve explicit numeric conversions; slice/map and dereference helpers
+are not replacements for `new`.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
