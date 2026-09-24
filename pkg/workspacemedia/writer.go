@@ -109,7 +109,7 @@ func write(workspaceRoot, requestedPath string, r io.Reader, mimeType string) (R
 		}
 	}
 
-	rel, err := claimAndPublish(root, dir, base, ext, r)
+	rel, err := claimAndPublish(root, dir, base, ext, r, maxNameAttempts)
 	if err != nil {
 		return Result{}, err
 	}
@@ -124,14 +124,14 @@ func write(workspaceRoot, requestedPath string, r io.Reader, mimeType string) (R
 // claimAndPublish links a fully written sibling temp into the first free
 // candidate. Hard-link creation is the no-replace boundary: unlike rename,
 // it cannot replace a destination created between collision checks.
-func claimAndPublish(root *os.Root, dir, base, ext string, r io.Reader) (string, error) {
+func claimAndPublish(root *os.Root, dir, base, ext string, r io.Reader, maxAttempts int) (string, error) {
 	tmp, err := writeTemp(root, dir, r)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = root.Remove(tmp) }()
 
-	for n := range maxNameAttempts {
+	for n := range maxAttempts {
 		name := base + ext
 		if n > 0 {
 			name = fmt.Sprintf("%s-%d%s", base, n, ext)
@@ -149,7 +149,7 @@ func claimAndPublish(root *os.Root, dir, base, ext string, r io.Reader) (string,
 		}
 		return rel, nil
 	}
-	return "", fmt.Errorf("%w: %q after %d attempts", ErrNameExhausted, path.Join(dir, base+ext), maxNameAttempts)
+	return "", fmt.Errorf("%w: %q after %d attempts", ErrNameExhausted, path.Join(dir, base+ext), maxAttempts)
 }
 
 func writeTemp(root *os.Root, dir string, r io.Reader) (string, error) {
