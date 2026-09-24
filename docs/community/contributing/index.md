@@ -102,9 +102,15 @@ Key conventions:
 - Use functional options pattern for constructors
 - In tests: use `t.Context()`, `t.TempDir()`, `t.Setenv()`, and `t.Parallel()`
 
-## Project-specific lint rules
+## Lint rules
 
-`task lint` runs the custom cops in `lint/`. `Lint/FieldsSeq` flags
+`task lint` runs the shared and project-specific cops selected in `lint/main.go`.
+Reusable checks come from [rubocop-go v1.0.0](https://github.com/dgageot/rubocop-go/blob/v1.0.0/docs/shared-cops.md);
+project-specific checks and frozen-config exclusions stay in `lint/`. Cop IDs
+and `//rubocop:disable` annotations are unchanged. Add shared checks by their
+constructors, not by enabling the entire upstream catalog.
+
+`Lint/FieldsSeq` flags
 `strings.Fields` slices used only for one value-only range, including loops
 with an empty-input fallback. Use `strings.FieldsSeq`, evaluate its input at
 the original location, and track whether any word was yielded when preserving
