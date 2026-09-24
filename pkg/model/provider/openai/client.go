@@ -178,9 +178,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			if connection.AuthToken != "" {
 				clientOptions = append(clientOptions, option.WithAPIKey(connection.AuthToken))
 			}
-			client := openai.NewClient(clientOptions...)
-
-			return &client, nil
+			return new(openai.NewClient(clientOptions...)), nil
 		}
 	}
 

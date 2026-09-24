@@ -230,8 +230,7 @@ func Init(scheme string) bool {
 
 func posArray(withPos bool, n int) *[]int {
 	if withPos {
-		pos := make([]int, 0, n)
-		return &pos
+		return new(make([]int, 0, n))
 	}
 	return nil
 }

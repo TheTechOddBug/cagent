@@ -89,8 +89,7 @@ func TestStripUnsupportedModalitiesTransform(t *testing.T) {
 	tm := team.New(team.WithAgents(a))
 
 	capsPtr := func(image, pdf, audio, video bool) *modelinfo.ModelCapabilities {
-		mc := modelinfo.CapsWith(image, pdf, audio, video)
-		return &mc
+		return new(modelinfo.CapsWith(image, pdf, audio, video))
 	}
 
 	cases := []struct {

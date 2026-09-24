@@ -134,34 +134,26 @@ func GetParamPtr[T any](params map[string]any, key string) *T {
 	case int:
 		switch v := raw.(type) {
 		case int:
-			val := any(v).(T)
-			return &val
+			return new(any(v).(T))
 		case int64:
-			val := any(int(v)).(T)
-			return &val
+			return new(any(int(v)).(T))
 		case uint64:
-			val := any(int(v)).(T) //nolint:gosec // value comes from validated config; bounds enforced upstream
-			return &val
+			return new(any(int(v)).(T)) //nolint:gosec // value comes from validated config; bounds enforced upstream
 		case float64:
-			val := any(int(v)).(T)
-			return &val
+			return new(any(int(v)).(T))
 		default:
 			return nil
 		}
 	case float64:
 		switch v := raw.(type) {
 		case float64:
-			val := any(v).(T)
-			return &val
+			return new(any(v).(T))
 		case int:
-			val := any(float64(v)).(T)
-			return &val
+			return new(any(float64(v)).(T))
 		case int64:
-			val := any(float64(v)).(T)
-			return &val
+			return new(any(float64(v)).(T))
 		case uint64:
-			val := any(float64(v)).(T)
-			return &val
+			return new(any(float64(v)).(T))
 		default:
 			return nil
 		}
