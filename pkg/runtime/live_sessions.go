@@ -300,3 +300,13 @@ func (r *LocalRuntime) sessionAgentName(sess *session.Session) string {
 	}
 	return ""
 }
+
+// HasActiveWork is a cheap quiescence check; callers must separately prevent new foreground runs.
+func (r *LocalRuntime) HasActiveWork() bool {
+	if r.bgAgents != nil && r.bgAgents.HasActiveTasks() {
+		return true
+	}
+	r.liveSessionsMu.Lock()
+	defer r.liveSessionsMu.Unlock()
+	return len(r.liveSessions) != 0
+}

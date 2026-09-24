@@ -119,6 +119,7 @@ func (a *Agent) dispatchCommand(ctx context.Context, s *Session, prompt []acp.Co
 			return nil, true, acp.NewInvalidParams(fmt.Sprintf("cannot switch agent: %s", err))
 		}
 		a.refreshCommands(ctx, s)
+		a.refreshConfiguration(ctx, s)
 	}
 	if resolved == "" && len(attachments) == 0 {
 		return nil, true, nil

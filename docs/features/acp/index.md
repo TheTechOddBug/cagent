@@ -63,6 +63,24 @@ Host Application
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
+## Session Configuration
+
+New/load/resume responses include stable select-based `configOptions` and legacy `modes`. `session/set_config_option` accepts exact advertised string IDs and returns the complete updated option list. Boolean variants, unknown IDs/values, arbitrary unlisted model references, and safety aliases are rejected. `session/set_mode` is a compatibility path to the same session safety setting.
+
+| Option ID | Scope and values |
+| --- | --- |
+| `mode` | Docker Agent dispatcher safety: `default`, `strict`, `balanced`, `restricted`, `autonomous`. |
+| `model` | Selected agent's configured named models (`model:<name>`) plus `default` to restore its configured providers. |
+| `thought_level` | Supported explicit reasoning levels for a recognized single, non-routing model; `default` restores the selected model's configured budget. |
+
+`default` safety preserves legacy behavior (read-only-annotated tools auto-approve; others ask), not balanced classification. Choosing it clears blanket autonomous approval. Deny rules, session-scoped ask rules, mandatory tool guards, and `preempt_yolo` hooks retain their existing precedence. Team-level ask rules and ordinary approval hooks do not override autonomous approval. Switching mode never clears remembered per-tool grants. These controls govern Docker Agent's dispatcher, not approvals inside external coding harnesses. Harness agents have no ACP model/reasoning controls.
+
+Model options are built from local configuration only, without model-catalog/network discovery, provider construction, or tool startup. Nested alloys are not advertised; flat configured alloys can be selected but have no reasoning selector. Unknown/unsupported reasoning models, including models recognized only through a configured thinking budget, likewise omit that selector. A runtime model not representable by an advertised configured choice is shown as an inert `current` value; selecting it is a no-op rather than a new provider request.
+
+Model and safety choices are persisted; failed writes preserve the previous live state and restore the exact previous providers. Reasoning changes are runtime-only: active load/resume keeps them, while cold reconstruction or model reset restores configured budgets. Explicit `none` remains distinct from an unset/adaptive/token-based configured budget. Cold reconstruction applies persisted model overrides before publishing the session; a stale or unavailable override fails setup instead of claiming a selection that was not applied.
+
+Configuration changes require an idle session: running, queued, or draining foreground work and admitted background tasks reject mutations without canceling them. Prompts cannot enter during provider construction/persistence, and close/delete/shutdown cancel and join the operation. Load/resume during background work omits volatile model/reasoning selectors instead of displaying temporary overrides. Configuration notifications refresh at idle turn boundaries and agent-switch commands, without exposing temporary delegated selections. Once persistence succeeds, a notification failure does not undo the committed change; reconnect to recover current state.
+
 ## Slash Commands
 
 ACP advertises supported commands when a session is created or resumed, at turn start, and when agent information changes. Discovery reads command metadata only; it does not start tools or expand command instructions.

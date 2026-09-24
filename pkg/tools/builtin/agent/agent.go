@@ -463,6 +463,13 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 		taskID, params.Agent, params.Task)), nil
 }
 
+// HasActiveTasks includes admitted tasks that have not started or finished draining.
+func (h *Handler) HasActiveTasks() bool {
+	h.admissionMu.Lock()
+	defer h.admissionMu.Unlock()
+	return h.activeTasks != 0
+}
+
 func (h *Handler) releaseAdmission() {
 	h.admissionMu.Lock()
 	defer h.admissionMu.Unlock()

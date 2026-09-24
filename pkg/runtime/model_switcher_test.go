@@ -1340,3 +1340,36 @@ func TestDecorateModelChoices(t *testing.T) {
 		assert.Equal(t, orig, input, "DecorateModelChoices must not modify the input slice")
 	})
 }
+
+func TestAgentThinkingConfigurationIsLocalAndConservative(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		cfg      latest.ModelConfig
+		multiple bool
+		want     bool
+	}{
+		{name: "explicit", cfg: latest.ModelConfig{Provider: "openai", Model: "gpt-5", ThinkingBudget: &latest.ThinkingBudget{Effort: "high"}}, want: true},
+		{name: "unknown", cfg: latest.ModelConfig{Provider: "custom", Model: "unknown"}},
+		{name: "budget-only recognition", cfg: latest.ModelConfig{Provider: "openai", Model: "custom-reasoner", ThinkingBudget: &latest.ThinkingBudget{Effort: "high"}}},
+		{name: "router", cfg: latest.ModelConfig{Provider: "openai", Model: "gpt-5", Routing: []latest.RoutingRule{{}}}},
+		{name: "alloy", cfg: latest.ModelConfig{Provider: "openai", Model: "gpt-5"}, multiple: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			models := []provider.Provider{newConfigProvider(tc.cfg)}
+			if tc.multiple {
+				models = append(models, newConfigProvider(tc.cfg))
+			}
+			a := agent.New("root", "test")
+			for _, model := range models {
+				agent.WithModel(model)(a)
+			}
+			r := &LocalRuntime{team: team.New(team.WithAgents(a)), modelSwitcherCfg: &ModelSwitcherConfig{}}
+			levels, current := r.AgentThinkingConfiguration("root")
+			assert.Equal(t, tc.want, len(levels) > 0)
+			if tc.want {
+				assert.Equal(t, effort.High, current)
+			}
+		})
+	}
+}

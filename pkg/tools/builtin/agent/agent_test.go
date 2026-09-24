@@ -873,3 +873,16 @@ func TestNewToolSet_Instructions(t *testing.T) {
 	assert.Contains(t, instructions, "stop_background_agent")
 	assert.Contains(t, instructions, "wait_background_agents")
 }
+
+func TestHasActiveTasksCoversAdmissionAndRelease(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithRunner(&mockRunner{})
+	assert.False(t, h.HasActiveTasks())
+	// Admission precedes goroutine/RunStream startup; release follows runner teardown.
+	h.admissionMu.Lock()
+	h.activeTasks++
+	h.admissionMu.Unlock()
+	assert.True(t, h.HasActiveTasks())
+	h.releaseAdmission()
+	assert.False(t, h.HasActiveTasks())
+}

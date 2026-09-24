@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
+	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
 
 // providerStep is one scripted CreateChatCompletionStream call of a
@@ -731,4 +732,36 @@ func TestLiveSessions_ConcurrentAccess(t *testing.T) {
 
 	close(done)
 	wg.Wait()
+}
+
+type quiescenceRunner struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (*quiescenceRunner) CurrentAgentSubAgentNames() []string { return []string{"worker"} }
+func (r *quiescenceRunner) RunAgent(context.Context, agenttool.RunParams) *agenttool.RunResult {
+	close(r.entered)
+	<-r.release
+	return &agenttool.RunResult{}
+}
+
+func TestHasActiveWorkIncludesBackgroundOutsideLiveStreams(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		runner := &quiescenceRunner{entered: make(chan struct{}), release: make(chan struct{})}
+		handler := agenttool.NewHandler(runner)
+		rt := &LocalRuntime{bgAgents: handler}
+		result, err := handler.HandleRun(t.Context(), session.New(), tools.ToolCall{Function: tools.FunctionCall{Arguments: `{"agent":"worker","task":"work"}`}})
+		require.NoError(t, err)
+		require.False(t, result.IsError, result.Output)
+		// No stream exists at all in this runner; only admission tracks the task lifetime.
+		assert.Empty(t, rt.liveSessions)
+		assert.True(t, rt.HasActiveWork())
+		<-runner.entered
+		assert.True(t, rt.HasActiveWork())
+		close(runner.release)
+		handler.StopAll()
+		assert.False(t, rt.HasActiveWork())
+	})
 }
