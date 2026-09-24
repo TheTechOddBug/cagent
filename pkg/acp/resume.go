@@ -39,10 +39,10 @@ func validateResumeWorkingDir(saved, requested string) error {
 }
 
 func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation) error {
-	return a.reconnectRegisteredSession(ctx, s, workingDir, additionalDirs, servers, op, false)
+	return a.reconnectRegisteredSession(ctx, s, workingDir, additionalDirs, servers, op, false, nil)
 }
 
-func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation, replay bool) error {
+func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation, replay bool, configuration *sessionConfiguration) error {
 	saved, _ := s.workspaceSnapshot()
 	if err := validateResumeWorkingDir(saved, workingDir); err != nil {
 		return acp.NewInvalidParams(err.Error())
@@ -93,6 +93,12 @@ func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, work
 	}
 	if err := a.discardClientMCP(ctx, op, s, previous); err != nil {
 		return err
+	}
+	if configuration != nil {
+		*configuration = s.configuration(ctx)
+		s.commandMu.Lock()
+		s.lastConfig = nil
+		s.commandMu.Unlock()
 	}
 	if replay {
 		return a.replayLoadedSession(ctx, s)

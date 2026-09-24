@@ -365,6 +365,18 @@ func (r *LocalRuntime) applyAgentThinkingLevel(ctx context.Context, agentName st
 // enabled thinking_budget (covers reasoning models the heuristics below
 // don't recognise), then falls back to per-provider model heuristics.
 func (r *LocalRuntime) modelSupportsThinking(ctx context.Context, cfg *latest.ModelConfig) bool {
+	if modelSupportsThinkingLocally(cfg) {
+		return true
+	}
+	if r.modelsStore != nil {
+		if m, err := r.modelsStore.GetModel(ctx, modelsdev.NewID(cfg.Provider, cfg.Model)); err == nil && m != nil {
+			return modelinfo.IsClaudeFamily(m.Family)
+		}
+	}
+	return false
+}
+
+func modelSupportsThinkingLocally(cfg *latest.ModelConfig) bool {
 	if cfg.ThinkingBudget != nil && !cfg.ThinkingBudget.IsDisabled() {
 		return true
 	}
@@ -379,12 +391,32 @@ func (r *LocalRuntime) modelSupportsThinking(ctx context.Context, cfg *latest.Mo
 	if modelinfo.IsBedrockClaudeID(cfg.Model) || strings.HasPrefix(model, "claude-") {
 		return true
 	}
-	if r.modelsStore != nil {
-		if m, err := r.modelsStore.GetModel(ctx, modelsdev.NewID(cfg.Provider, cfg.Model)); err == nil && m != nil {
-			return modelinfo.IsClaudeFamily(m.Family)
-		}
-	}
 	return false
+}
+
+// AgentThinkingConfiguration reports a conservative, network-free single-model selector.
+// A blank current level means an unset, adaptive, or token-based budget, not "none".
+func (r *LocalRuntime) AgentThinkingConfiguration(agentName string) ([]effort.Level, effort.Level) {
+	if r.modelSwitcherCfg == nil {
+		return nil, ""
+	}
+	a, err := r.team.Agent(agentName)
+	if err != nil || a.HasHarness() {
+		return nil, ""
+	}
+	models := a.EffectiveModels()
+	if len(models) != 1 {
+		return nil, ""
+	}
+	cfg := models[0].BaseConfig().ModelConfig
+	capability := cfg
+	// Budget-only recognition disappears when a provider normalizes "none" to nil.
+	capability.ThinkingBudget = nil
+	if len(cfg.Routing) != 0 || !modelSupportsThinkingLocally(&capability) {
+		return nil, ""
+	}
+	level, _ := cfg.ThinkingBudget.EffortLevel()
+	return modelinfo.SupportedThinkingLevels(cfg.Provider, cfg.Model), level
 }
 
 // currentThinkingLevel maps a model config's thinking_budget onto an

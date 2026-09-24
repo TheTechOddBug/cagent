@@ -18,6 +18,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
@@ -58,17 +59,21 @@ var _ acp.Agent = (*Agent)(nil)
 
 // Session represents an ACP session.
 type Session struct {
-	id             string
-	sess           *session.Session
-	rt             runtime.Runtime
-	team           *team.Team
-	clientMCP      *clientMCPTools
-	workingDir     string
-	additionalDirs []string
-	usageAgent     string
-	contextLimit   int64
-	rootUsage      *runtime.Usage
-	usageCosts     map[string]float64
+	id              string
+	sess            *session.Session
+	rt              runtime.Runtime
+	team            *team.Team
+	clientMCP       *clientMCPTools
+	workingDir      string
+	additionalDirs  []string
+	usageAgent      string
+	contextLimit    int64
+	rootUsage       *runtime.Usage
+	usageCosts      map[string]float64
+	configModels    map[string]latest.ModelConfig
+	configEnabled   bool
+	lastConfig      *sessionConfiguration
+	modelSelections map[string]modelSelection
 
 	mu        sync.Mutex
 	commandMu sync.Mutex
@@ -357,6 +362,20 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 		return acpSess, nil, fmt.Errorf("failed to resolve default agent: %w", err)
 	}
 
+	rc := a.runConfig
+	if rc == nil {
+		rc = &config.RuntimeConfig{}
+	}
+	acpSess.configEnabled = true
+	acpSess.configModels = loadResult.Models
+	switcher := &runtime.ModelSwitcherConfig{
+		Models: loadResult.Models, Providers: loadResult.Providers, ProviderRegistry: loadResult.ProviderRegistry,
+		AgentDefaultModels: loadResult.AgentDefaultModels, ModelsGateway: rc.ModelsGateway,
+		EncryptedConfig: loadResult.EncryptedConfig, EnvProvider: rc.EnvProvider(),
+	}
+	if store, err := rc.ModelsDevStore(); err == nil {
+		switcher.ModelsStore = store
+	}
 	handler := a.elicitationHandler(sessionID)
 	rt, err := runtime.New(ctx, acpSess.team,
 		runtime.WithCurrentAgent(defaultAgent.Name()),
@@ -365,6 +384,7 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 		runtime.WithElicitationHandler(handler),
 		runtime.WithSessionStore(a.sessionStore),
 		runtime.WithProviderRegistry(loadResult.ProviderRegistry),
+		runtime.WithModelSwitcherConfig(switcher),
 		runtime.WithWorkingDir(workingDir),
 		// Match the CLI tracer scope so runtime spans remain enabled in ACP mode.
 		runtime.WithTracer(otel.Tracer(version.AppName)),
@@ -471,6 +491,7 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 	acpSess.sess = sess
 	acpSess.workingDir = workingDir
 	acpSess.additionalDirs = additionalDirs
+	configuration := acpSess.configuration(ctx)
 	_, stored, err = a.registerSessionIfAbsent(ctx, acpSess, op.lifecycle)
 	if err != nil {
 		return acp.NewSessionResponse{}, err
@@ -480,7 +501,7 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 	}
 
 	a.refreshCommands(ctx, acpSess)
-	return acp.NewSessionResponse{SessionId: acp.SessionId(sess.ID)}, nil
+	return acp.NewSessionResponse{SessionId: acp.SessionId(sess.ID), ConfigOptions: configuration.Options, Modes: configuration.Modes}, nil
 }
 
 // Authenticate implements [acp.Agent].
@@ -497,11 +518,12 @@ func (a *Agent) Logout(ctx context.Context, _ acp.LogoutRequest) (acp.LogoutResp
 
 // LoadSession implements [acp.AgentLoader].
 func (a *Agent) LoadSession(ctx context.Context, params acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
+	var configuration sessionConfiguration
 	err := a.reconnectSession(ctx, acp.ResumeSessionRequest{
 		SessionId: params.SessionId, Cwd: params.Cwd,
 		AdditionalDirectories: params.AdditionalDirectories, McpServers: params.McpServers,
-	}, true)
-	return acp.LoadSessionResponse{}, err
+	}, true, &configuration)
+	return acp.LoadSessionResponse{ConfigOptions: configuration.Options, Modes: configuration.Modes}, err
 }
 
 // CloseSession implements [acp.Agent].
@@ -520,10 +542,12 @@ func (a *Agent) CloseSession(ctx context.Context, params acp.CloseSessionRequest
 
 // ResumeSession implements [acp.Agent].
 func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
-	return acp.ResumeSessionResponse{}, a.reconnectSession(ctx, params, false)
+	var configuration sessionConfiguration
+	err := a.reconnectSession(ctx, params, false, &configuration)
+	return acp.ResumeSessionResponse{ConfigOptions: configuration.Options, Modes: configuration.Modes}, err
 }
 
-func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRequest, replay bool) (retErr error) {
+func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRequest, replay bool, configuration *sessionConfiguration) (retErr error) {
 	sid := string(params.SessionId)
 	slog.DebugContext(ctx, "ACP session reconnect", "session_id", sid, "replay", replay)
 	if err := ctx.Err(); err != nil {
@@ -553,7 +577,7 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 	existing := a.sessions[sid]
 	a.mu.Unlock()
 	if existing != nil {
-		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay)
+		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay, configuration)
 	}
 
 	sess, err := a.sessionStore.GetSession(ctx, sid)
@@ -580,6 +604,18 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 		return err
 	}
 
+	overrides, _ := sess.ModelStateSnapshot()
+	for name, ref := range overrides {
+		if err := acpSess.rt.SetAgentModel(ctx, name, ref); err != nil {
+			return fmt.Errorf("restoring model override for %s: %w", name, err)
+		}
+		selected, _ := acpSess.team.Agent(name)
+		value := "current"
+		if _, ok := acpSess.configModels[ref]; ok {
+			value = "model:" + ref
+		}
+		acpSess.rememberModelSelection(name, value, "", selected.SnapshotModelOverride())
+	}
 	acpSess.id = sid
 	acpSess.sess = sess
 	acpSess.workingDir = sess.WorkingDir
@@ -598,6 +634,7 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 			}
 		}()
 	}
+	*configuration = acpSess.configuration(ctx)
 	existing, stored, err = a.registerSessionIfAbsent(ctx, acpSess, op.lifecycle)
 	if err != nil {
 		return err
@@ -612,7 +649,7 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 		if cleanupErr != nil {
 			return cleanupErr
 		}
-		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay)
+		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay, configuration)
 	}
 
 	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)
@@ -621,12 +658,6 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 	}
 	a.refreshCommands(ctx, acpSess)
 	return nil
-}
-
-// SetSessionConfigOption implements [acp.Agent] (optional, not advertised in capabilities).
-func (a *Agent) SetSessionConfigOption(ctx context.Context, _ acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
-	slog.DebugContext(ctx, "ACP SetSessionConfigOption called (not supported)")
-	return acp.SetSessionConfigOptionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionSetConfigOption)
 }
 
 // Cancel implements [acp.Agent].
@@ -696,12 +727,6 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	return acp.PromptResponse{StopReason: stopReason}, nil
 }
 
-// SetSessionMode implements acp.Agent (optional).
-func (a *Agent) SetSessionMode(ctx context.Context, _ acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
-	slog.DebugContext(ctx, "ACP SetSessionMode called (not supported)")
-	return acp.SetSessionModeResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionSetMode)
-}
-
 // sendUpdate sends a session update notification to the ACP client.
 func (a *Agent) sendUpdate(ctx context.Context, sessionID string, update acp.SessionUpdate) error {
 	return a.conn.SessionUpdate(ctx, acp.SessionNotification{
@@ -720,6 +745,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 		slog.DebugContext(ctx, "Failed to emit available commands", "error", err)
 	}
 
+	a.refreshConfiguration(ctx, acpSess)
 	runCtx, cancel := context.WithCancel(ctx)
 	eventsChan := acpSess.rt.RunStream(runCtx, acpSess.sess)
 	var toolCalls toolCallTracker
@@ -733,6 +759,9 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 		cleanupCtx, stopCleanup := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer stopCleanup()
 		updateErr := toolCalls.interrupt(cleanupCtx, a, acpSess)
+		if ctx.Err() == nil {
+			a.refreshConfiguration(ctx, acpSess)
+		}
 		if retErr == nil && ctx.Err() == nil {
 			retErr = updateErr
 		}
