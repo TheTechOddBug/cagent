@@ -232,6 +232,22 @@ Attachment-bearing prompts bypass lookup and storage in the agent response cache
 
 Tool-result presentation remains transformed text plus eligible edit diffs. Raw tool media, documents, and structured results are not forwarded to ACP, because the current output-transform contract covers text only.
 
+## Client Terminals
+
+When a client advertises `clientCapabilities.terminal: true`, configured `shell` tools execute through its `terminal/create`, `wait_for_exit`, `output`, `kill`, and `release` methods. Otherwise the existing native shell remains in use. Negotiated client execution never falls back to running locally after a client error. Tool permissions, safety classification, input hooks, and output transforms still surround the same `shell` call.
+
+This adapter requires the client and agent to use the same platform and coherent workspace/interpreter paths: ACP does not negotiate a remote OS or shell. Client commands use `/bin/sh -c` on non-Windows hosts or the absolute system `cmd.exe /D /C` path on Windows, not host `$SHELL`, `ComSpec`, or PATH lookup. `get_environment_info` reports this expected interpreter. Other host-derived environment metadata describes the agent host and does not select the client shell. The client must enforce its own execution boundaries.
+
+Only explicitly configured shell environment overrides are expanded and sent; the agent's full inherited environment is not transmitted. Explicitly referenced secrets are still sent if configured. The client supplies its own inherited environment. Working directories are absolute; relative `cwd` values resolve against the session toolset's workspace. This is not a shell sandbox: absolute directories outside workspace roots remain allowed, just as with native shell execution. `sudo_askpass` is unsupported for client-backed shell and returns an error without executing.
+
+Calls retain the default 30-second timeout and can request a longer positive timeout. Output requests retain at most the last 64 KiB, with a truncation notice; ACP receives only the final transformed tool output, not raw streamed output or terminal references. Caller cancellation omits partial output because canceled output hooks cannot guarantee a rewrite. The client itself owns the process and necessarily sees its raw output. Nonzero exits and signals retain native-style error text; transport/protocol failures are tool errors.
+
+Every received terminal ID is owned by the concrete session until release succeeds. Cancellation/timeout triggers kill and output collection, and release is attempted even if either fails. Session close signals terminal operations before joining runtime/background work, then makes one final release attempt for unresolved IDs. Unresolved cleanup blocks new work and prevents deletion from discarding history. Closed-session handlers cannot move ownership to a replacement session.
+
+A create attempt is joined with a 10-second response budget even after tool cancellation, allowing late IDs to be released. If no ID arrives because of timeout, disconnection, or an ambiguous error, execution is unknown and the session retains a cleanup failure; the client must reclaim any orphaned process. Definitive invalid-request/invalid-params/method-not-found rejections do not poison the session. Five-second cleanup request budgets do not provide a hard deadline for a blocked SDK writer. No automatic create retry is performed.
+
+`script`, background-job tools, Git commands, skill command execution, and filesystem post-edit hooks still run locally; this change does not route every subprocess through the client.
+
 ## Client Filesystem Capabilities
 
 The ACP `filesystem` toolset exposes text operations according to the client's negotiated `fs` capabilities:

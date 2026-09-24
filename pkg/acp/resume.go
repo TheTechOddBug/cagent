@@ -144,6 +144,11 @@ func (a *Agent) reserveReconnect(ctx context.Context, s *Session, replay bool) e
 	if s.closed {
 		return errSessionClosed
 	}
+	if s.terminals != nil {
+		if err := s.terminals.failure(); err != nil {
+			return err
+		}
+	}
 	if s.failed != nil {
 		return s.failed
 	}

@@ -36,6 +36,7 @@ type Agent struct {
 
 	conn              *acp.AgentSideConnection
 	clientFS          acp.FileSystemCapabilities
+	clientTerminal    bool
 	clientElicitation acp.ElicitationCapabilities
 	elicitationConn   *acp.AgentSideConnection
 	team              *team.Team // Initialization validation only; sessions load their own teams.
@@ -64,6 +65,7 @@ type Session struct {
 	rt              runtime.Runtime
 	team            *team.Team
 	clientMCP       *clientMCPTools
+	terminals       *terminalManager
 	workingDir      string
 	additionalDirs  []string
 	usageAgent      string
@@ -111,6 +113,9 @@ func (s *Session) close(ctx context.Context) <-chan struct{} {
 	}
 	s.initTurns()
 	s.cleanupDone = make(chan struct{})
+	if s.terminals != nil {
+		s.terminals.stop(ctx)
+	}
 	var mcpClosed chan error
 	if s.clientMCP != nil {
 		generation := s.clientMCP.generation()
@@ -129,6 +134,9 @@ func (s *Session) close(ctx context.Context) <-chan struct{} {
 			if err := s.rt.Close(); err != nil {
 				s.cleanupErr = errors.Join(s.cleanupErr, fmt.Errorf("closing ACP runtime: %w", err))
 			}
+		}
+		if s.terminals != nil {
+			s.cleanupErr = errors.Join(s.cleanupErr, s.terminals.wait())
 		}
 		if mcpClosed != nil {
 			s.cleanupErr = errors.Join(s.cleanupErr, <-mcpClosed)
@@ -169,6 +177,13 @@ func (s *Session) startTurn(ctx context.Context) (context.Context, func(), error
 		cancel()
 		return nil, nil, acp.NewInvalidRequest("session is loading; retry after load completes")
 	}
+	if s.terminals != nil {
+		if err := s.terminals.failure(); err != nil {
+			s.mu.Unlock()
+			cancel()
+			return nil, nil, err
+		}
+	}
 	if s.failed != nil {
 		err := s.failed
 		s.mu.Unlock()
@@ -208,6 +223,9 @@ func (s *Session) startTurn(ctx context.Context) (context.Context, func(), error
 	s.mu.Lock()
 	closed := s.closed
 	failed := s.failed
+	if s.terminals != nil {
+		failed = errors.Join(failed, s.terminals.failure())
+	}
 	current := s.generation == generation
 	err := turnCtx.Err()
 	s.mu.Unlock()
@@ -304,6 +322,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 		return acp.InitializeResponse{}, errors.Join(context.Canceled, cleanupErr)
 	}
 	a.clientFS = params.ClientCapabilities.Fs
+	a.clientTerminal = params.ClientCapabilities.Terminal
 	if caps := params.ClientCapabilities.Elicitation; caps != nil {
 		a.clientElicitation = *caps
 	}
@@ -349,6 +368,11 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 		return nil, nil, fmt.Errorf("failed to load session team: %w", err)
 	}
 	acpSess := &Session{team: loadResult.Team, clientMCP: &clientMCPTools{}}
+	a.mu.Lock()
+	if a.clientTerminal {
+		acpSess.terminals = newTerminalManager(a.conn, sessionID)
+	}
+	a.mu.Unlock()
 	for _, name := range acpSess.team.AgentNames() {
 		agt, err := acpSess.team.Agent(name)
 		if err != nil {
@@ -701,6 +725,7 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	}
 	defer finish()
 	turnCtx = withSessionID(turnCtx, sid)
+	turnCtx = context.WithValue(turnCtx, terminalOwnerKey{}, acpSess.terminals)
 	prompt, handled, err := a.dispatchCommand(turnCtx, acpSess, params.Prompt)
 	if turnCtx.Err() != nil {
 		return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
@@ -740,6 +765,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 	slog.DebugContext(ctx, "Running agent turn", "session_id", acpSess.id)
 
 	ctx = withSessionID(ctx, acpSess.id)
+	ctx = context.WithValue(ctx, terminalOwnerKey{}, acpSess.terminals)
 
 	if err := a.emitAvailableCommands(ctx, acpSess); err != nil {
 		slog.DebugContext(ctx, "Failed to emit available commands", "error", err)
