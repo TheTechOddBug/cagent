@@ -733,36 +733,38 @@ func TestSupervisor_RestartAlwaysReconnectsCleanCloseAndResetsBudget(t *testing.
 func TestSupervisor_RestartAlwaysCleanCloseStillHonorsFailedReconnectBudget(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{err: errors.New("fail-1")},
-		scriptStep{err: errors.New("fail-2")},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{err: errors.New("fail-1")},
+			scriptStep{err: errors.New("fail-2")},
+		)
 
-	failedCh := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Restart:     lifecycle.RestartAlways,
-		MaxAttempts: 2,
-		Backoff:     fastBackoff,
-		OnFailed: func(err error) {
-			select {
-			case failedCh <- err:
-			default:
-			}
-		},
+		failedCh := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Restart:     lifecycle.RestartAlways,
+			MaxAttempts: 2,
+			Backoff:     fastBackoff,
+			OnFailed: func(err error) {
+				select {
+				case failedCh <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(nil)
+
+		select {
+		case <-failedCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not give up after failed reconnect budget")
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+		assert.Check(t, is.Equal(c.Calls(), 3))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(nil)
-
-	select {
-	case <-failedCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not give up after failed reconnect budget")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
-	assert.Check(t, is.Equal(c.Calls(), 3))
 }
 
 func TestBackoff_Defaults(t *testing.T) {
