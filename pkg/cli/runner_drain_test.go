@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"gotest.tools/v3/assert"
 
@@ -73,23 +74,25 @@ func TestRunEarlyReturnCancelsAndDrainsStream(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			done := make(chan struct{})
-			rt := &mockRuntime{runStreamFn: stallingRunStream(tc.triggers, done)}
+			synctest.Test(t, func(t *testing.T) {
+				done := make(chan struct{})
+				rt := &mockRuntime{runStreamFn: stallingRunStream(tc.triggers, done)}
 
-			var buf bytes.Buffer
-			err := Run(t.Context(), NewPrinter(&buf), tc.cfg, rt, session.New(), []string{"hello"})
-			if tc.wantErr == "" {
-				assert.NilError(t, err)
-			} else {
-				assert.ErrorContains(t, err, tc.wantErr)
-			}
+				var buf bytes.Buffer
+				err := Run(t.Context(), NewPrinter(&buf), tc.cfg, rt, session.New(), []string{"hello"})
+				if tc.wantErr == "" {
+					assert.NilError(t, err)
+				} else {
+					assert.ErrorContains(t, err, tc.wantErr)
+				}
 
-			select {
-			case <-done:
-			default:
-				t.Fatal("the turn ended before cancelling and draining the runtime stream")
-			}
-			assert.Check(t, !strings.Contains(buf.String(), "trailing"), "drained events must not be printed: %q", buf.String())
+				select {
+				case <-done:
+				default:
+					t.Fatal("the turn ended before cancelling and draining the runtime stream")
+				}
+				assert.Check(t, !strings.Contains(buf.String(), "trailing"), "drained events must not be printed: %q", buf.String())
+			})
 		})
 	}
 }
