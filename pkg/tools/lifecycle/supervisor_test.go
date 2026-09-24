@@ -1158,83 +1158,81 @@ func TestSupervisor_CrashLoopWindowPrunesOldCrashes(t *testing.T) {
 func TestSupervisor_CrashLoopStopWinningRaceReportsStopped(t *testing.T) {
 	t.Parallel()
 
-	sess1, sess2, sess3 := newFakeSession(), newFakeSession(), newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-		scriptStep{session: sess3},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1, sess2, sess3 := newFakeSession(), newFakeSession(), newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+			scriptStep{session: sess3},
+		)
 
-	disconnected := make(chan struct{})
-	release := make(chan struct{})
-	restarted := make(chan struct{}, 4)
-	var thirdCrash atomic.Bool
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
-		OnRestart: func(context.Context) {
-			select {
-			case restarted <- struct{}{}:
-			default:
-			}
-		},
-		OnDisconnect: func(error) {
-			// OnDisconnect runs after crashLooping is already computed
-			// (true, for the third crash) but before crashLoopErr is
-			// recorded: exactly the race window under test. Park the
-			// watcher here so the test can land a concurrent Stop inside it.
-			if thirdCrash.Load() {
-				close(disconnected)
-				<-release
-			}
-		},
-	})
+		disconnected := make(chan struct{})
+		release := make(chan struct{})
+		restarted := make(chan struct{}, 4)
+		var thirdCrash atomic.Bool
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+			OnRestart: func(context.Context) {
+				select {
+				case restarted <- struct{}{}:
+				default:
+				}
+			},
+			OnDisconnect: func(error) {
+				// OnDisconnect runs after crashLooping is already computed
+				// (true, for the third crash) but before crashLoopErr is
+				// recorded: exactly the race window under test. Park the
+				// watcher here so the test can land a concurrent Stop inside it.
+				if thirdCrash.Load() {
+					close(disconnected)
+					<-release
+				}
+			},
+		})
 
-	assert.NilError(t, s.Start(t.Context()))
+		assert.NilError(t, s.Start(t.Context()))
 
-	// The first two crashes must actually land and restart (onto sess2,
-	// then sess3) before the third is fired, or thirdCrash could be set
-	// before the watcher has even processed the first one.
-	sess1.fail(crashErr("boom"))
-	select {
-	case <-restarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not restart after the first crash")
-	}
-
-	sess2.fail(crashErr("boom again"))
-	select {
-	case <-restarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not restart after the second crash")
-	}
-
-	// sess3 is now live; its crash is the third, tripping the loop.
-	thirdCrash.Store(true)
-	sess3.fail(crashErr("boom a third time"))
-	<-disconnected
-
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- s.Stop(t.Context()) }()
-
-	// Wait for Stop to actually win the race and record StateStopped
-	// before releasing the parked crash-loop branch: Stop sets state
-	// synchronously, before it ever blocks waiting for the watcher to exit.
-	poll.WaitOn(t, func(poll.LogT) poll.Result {
-		if s.State().State == lifecycle.StateStopped {
-			return poll.Success()
+		// The first two crashes must actually land and restart (onto sess2,
+		// then sess3) before the third is fired, or thirdCrash could be set
+		// before the watcher has even processed the first one.
+		sess1.fail(crashErr("boom"))
+		select {
+		case <-restarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not restart after the first crash")
 		}
-		return poll.Continue("supervisor state=%s", s.State().State)
-	}, poll.WithTimeout(2*time.Second), poll.WithDelay(5*time.Millisecond))
-	close(release)
 
-	select {
-	case err := <-stopDone:
-		assert.NilError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Stop did not return")
-	}
+		sess2.fail(crashErr("boom again"))
+		select {
+		case <-restarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not restart after the second crash")
+		}
 
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped),
-		"Stop winning the race must leave the supervisor Stopped, not clobbered back to Failed")
+		// sess3 is now live; its crash is the third, tripping the loop.
+		thirdCrash.Store(true)
+		sess3.fail(crashErr("boom a third time"))
+		<-disconnected
+
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- s.Stop(t.Context()) }()
+
+		// Wait for Stop to actually win the race and record StateStopped
+		// before releasing the parked crash-loop branch: Stop sets state
+		// synchronously, before it ever blocks waiting for the watcher to exit.
+		synctest.Wait()
+		assert.Equal(t, s.State().State, lifecycle.StateStopped)
+		close(release)
+
+		select {
+		case err := <-stopDone:
+			assert.NilError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop did not return")
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped),
+			"Stop winning the race must leave the supervisor Stopped, not clobbered back to Failed")
+	})
 }
