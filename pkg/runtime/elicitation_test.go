@@ -315,55 +315,57 @@ func TestLocalRuntime_FinalizeEventChannelStreamStoppedIsLastBeforeClose(t *test
 func TestRunStreamClosesChannelAndRestoresElicitationOnEarlyReturn(t *testing.T) {
 	t.Parallel()
 
-	const hookName = "test-stop-user-prompt-submit"
-	dontContinue := false
+	synctest.Test(t, func(t *testing.T) {
+		const hookName = "test-stop-user-prompt-submit"
+		dontContinue := false
 
-	root := agent.New("root", "test agent",
-		agent.WithModel(&mockProvider{id: "test/mock-model"}),
-		agent.WithHooks(&latest.HooksConfig{
-			UserPromptSubmit: []latest.HookDefinition{
-				{Type: "builtin", Command: hookName},
+		root := agent.New("root", "test agent",
+			agent.WithModel(&mockProvider{id: "test/mock-model"}),
+			agent.WithHooks(&latest.HooksConfig{
+				UserPromptSubmit: []latest.HookDefinition{
+					{Type: "builtin", Command: hookName},
+				},
+			}),
+		)
+		rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)),
+			WithSessionCompaction(false),
+			WithModelStore(mockModelStore{}),
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, rt.hooksRegistry.RegisterBuiltin(
+			hookName,
+			func(_ context.Context, _ *hooks.Input, _ []string) (*hooks.Output, error) {
+				return &hooks.Output{Continue: &dontContinue, StopReason: "stop the run"}, nil
 			},
-		}),
-	)
-	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)),
-		WithSessionCompaction(false),
-		WithModelStore(mockModelStore{}),
-	)
-	require.NoError(t, err)
+		))
 
-	require.NoError(t, rt.hooksRegistry.RegisterBuiltin(
-		hookName,
-		func(_ context.Context, _ *hooks.Input, _ []string) (*hooks.Output, error) {
-			return &hooks.Output{Continue: &dontContinue, StopReason: "stop the run"}, nil
-		},
-	))
+		// Seed a sentinel "parent" elicitation channel. After the stream tears
+		// down, the bridge must be restored to this channel — not left pointing
+		// at the stream's own (now closed) events channel.
+		parent := make(chan Event, 1)
+		rt.elicitation.swap(parent)
 
-	// Seed a sentinel "parent" elicitation channel. After the stream tears
-	// down, the bridge must be restored to this channel — not left pointing
-	// at the stream's own (now closed) events channel.
-	parent := make(chan Event, 1)
-	rt.elicitation.swap(parent)
+		sess := session.New(session.WithUserMessage("hi"))
+		sess.Title = "Unit Test"
 
-	sess := session.New(session.WithUserMessage("hi"))
-	sess.Title = "Unit Test"
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for range rt.RunStream(t.Context(), sess) {
+			}
+		}()
 
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		for range rt.RunStream(t.Context(), sess) {
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			t.Fatal("RunStream consumer hung: events channel was never closed on the hook-driven early return")
 		}
-	}()
 
-	select {
-	case <-drained:
-	case <-time.After(5 * time.Second):
-		t.Fatal("RunStream consumer hung: events channel was never closed on the hook-driven early return")
-	}
-
-	restored := rt.elicitation.swap(nil)
-	assert.Equal(t, parent, restored,
-		"the previous elicitation channel must be restored on the early-return path")
+		restored := rt.elicitation.swap(nil)
+		assert.Equal(t, parent, restored,
+			"the previous elicitation channel must be restored on the early-return path")
+	})
 }
 
 func newElicitationTestRuntime(t *testing.T) *LocalRuntime {
