@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -156,36 +157,38 @@ func (m *failingMockStrategy) Initialize(_ context.Context, _ []string, _ strate
 func TestStopAfterFailedStart(t *testing.T) {
 	t.Parallel()
 
-	strategyMock := &failingMockStrategy{}
-	cfg := rag.Config{
-		StrategyConfigs: []strategy.Config{
-			{Name: "failingStrategy", Strategy: strategyMock},
-		},
-	}
+	synctest.Test(t, func(t *testing.T) {
+		strategyMock := &failingMockStrategy{}
+		cfg := rag.Config{
+			StrategyConfigs: []strategy.Config{
+				{Name: "failingStrategy", Strategy: strategyMock},
+			},
+		}
 
-	mgr, err := rag.New(t.Context(), "failing-rag", cfg, nil)
-	require.NoError(t, err)
+		mgr, err := rag.New(t.Context(), "failing-rag", cfg, nil)
+		require.NoError(t, err)
 
-	tool := &ToolSet{
-		manager:  mgr,
-		toolName: "failing-rag",
-	}
+		tool := &ToolSet{
+			manager:  mgr,
+			toolName: "failing-rag",
+		}
 
-	err = tool.Start(t.Context())
-	require.Error(t, err)
+		err = tool.Start(t.Context())
+		require.Error(t, err)
 
-	done := make(chan struct{})
-	go func() {
-		_ = tool.Stop(t.Context())
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			_ = tool.Stop(t.Context())
+			close(done)
+		}()
 
-	select {
-	case <-done:
-		// Success: Stop returned without deadlocking
-	case <-time.After(5 * time.Second):
-		t.Fatal("Stop() deadlocked after a failed Start()")
-	}
+		select {
+		case <-done:
+			// Success: Stop returned without deadlocking
+		case <-time.After(5 * time.Second):
+			t.Fatal("Stop() deadlocked after a failed Start()")
+		}
+	})
 }
 
 // watcherCapturingStrategy hands the context its file watcher receives to the
