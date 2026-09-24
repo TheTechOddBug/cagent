@@ -322,47 +322,49 @@ func TestElicitationBridge_SendBlocksUntilCtxDone(t *testing.T) {
 func TestElicitationBridge_SendNeverBlocksReliableSink(t *testing.T) {
 	t.Parallel()
 
-	rt := newElicitationTestRuntime(t)
+	synctest.Test(t, func(t *testing.T) {
+		rt := newElicitationTestRuntime(t)
 
-	// Wedge the bridge: swap in an unbuffered channel with no reader, as if
-	// a concurrent RunStream's swap left a dead consumer behind.
-	wedged := make(chan Event)
-	rt.elicitation.swap(wedged)
+		// Wedge the bridge: swap in an unbuffered channel with no reader, as if
+		// a concurrent RunStream's swap left a dead consumer behind.
+		wedged := make(chan Event)
+		rt.elicitation.swap(wedged)
 
-	sinkCalled := make(chan Event, 1)
-	rt.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
+		sinkCalled := make(chan Event, 1)
+		rt.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
 
-	type handlerResult struct {
-		result tools.ElicitationResult
-		err    error
-	}
-	done := make(chan handlerResult, 1)
-	go func() {
-		result, err := rt.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
-		done <- handlerResult{result, err}
-	}()
+		type handlerResult struct {
+			result tools.ElicitationResult
+			err    error
+		}
+		done := make(chan handlerResult, 1)
+		go func() {
+			result, err := rt.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
+			done <- handlerResult{result, err}
+		}()
 
-	// The sink must fire almost immediately, regardless of the wedged bridge.
-	var ev *ElicitationRequestEvent
-	select {
-	case e := <-sinkCalled:
-		ev = e.(*ElicitationRequestEvent)
-	case <-time.After(1 * time.Second):
-		t.Fatal("the reliable sink must not be blocked by a wedged bridge channel")
-	}
+		// The sink must fire almost immediately, regardless of the wedged bridge.
+		var ev *ElicitationRequestEvent
+		select {
+		case e := <-sinkCalled:
+			ev = e.(*ElicitationRequestEvent)
+		case <-time.After(1 * time.Second):
+			t.Fatal("the reliable sink must not be blocked by a wedged bridge channel")
+		}
 
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
 
-	select {
-	case got := <-done:
-		require.NoError(t, got.err)
-		assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
-	case <-time.After(1 * time.Second):
-		t.Fatal("elicitationHandler must not be blocked by a wedged bridge channel")
-	}
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
+		case <-time.After(1 * time.Second):
+			t.Fatal("elicitationHandler must not be blocked by a wedged bridge channel")
+		}
+	})
 }
 
 // --- elicitationHandler: headless fast-decline (#3584 item 5) ---
