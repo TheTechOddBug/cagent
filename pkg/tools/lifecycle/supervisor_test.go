@@ -1110,45 +1110,44 @@ func TestSupervisor_PendingCrashLoopErrorIsNonConsuming(t *testing.T) {
 func TestSupervisor_CrashLoopWindowPrunesOldCrashes(t *testing.T) {
 	t.Parallel()
 
-	sessions := make([]*fakeSession, 5)
-	steps := make([]scriptStep, 5)
-	for i := range sessions {
-		sessions[i] = newFakeSession()
-		steps[i] = scriptStep{session: sessions[i]}
-	}
-	c := newScriptedConnector(steps...)
-
-	restarted := make(chan struct{}, 10)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: 20 * time.Millisecond},
-		OnRestart: func(context.Context) {
-			select {
-			case restarted <- struct{}{}:
-			default:
-			}
-		},
-	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	for i := range 4 {
-		sessions[i].fail(crashErr("boom"))
-		select {
-		case <-restarted:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("supervisor did not restart after crash %d", i+1)
+	synctest.Test(t, func(t *testing.T) {
+		sessions := make([]*fakeSession, 5)
+		steps := make([]scriptStep, 5)
+		for i := range sessions {
+			sessions[i] = newFakeSession()
+			steps[i] = scriptStep{session: sessions[i]}
 		}
-		// Real time must actually pass beyond Window so the next crash finds
-		// this one already pruned; there is nothing to synchronize on here
-		// other than wall-clock time itself.
-		time.Sleep(30 * time.Millisecond) //nolint:forbidigo // proving the crash-loop window ages entries out; no event to synchronize on
-	}
+		c := newScriptedConnector(steps...)
 
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
-		"crashes spread wider than the window must never accumulate toward the threshold")
-	assert.Check(t, is.Equal(c.Calls(), 5))
+		restarted := make(chan struct{}, 10)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: 20 * time.Millisecond},
+			OnRestart: func(context.Context) {
+				select {
+				case restarted <- struct{}{}:
+				default:
+				}
+			},
+		})
 
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Start(t.Context()))
+		for i := range 4 {
+			sessions[i].fail(crashErr("boom"))
+			select {
+			case <-restarted:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("supervisor did not restart after crash %d", i+1)
+			}
+			time.Sleep(30 * time.Millisecond) //nolint:forbidigo // Advance fake time beyond the crash-loop window.
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
+			"crashes spread wider than the window must never accumulate toward the threshold")
+		assert.Check(t, is.Equal(c.Calls(), 5))
+
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 // TestSupervisor_CrashLoopStopWinningRaceReportsStopped verifies that a
