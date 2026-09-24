@@ -882,78 +882,80 @@ func crashErr(msg string) error {
 func TestSupervisor_CrashLoopStopsRestartingAndReportsOnStart(t *testing.T) {
 	t.Parallel()
 
-	sess1, sess2, sess3, sess4 := newFakeSession(), newFakeSession(), newFakeSession(), newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-		scriptStep{session: sess3},
-		scriptStep{session: sess4},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1, sess2, sess3, sess4 := newFakeSession(), newFakeSession(), newFakeSession(), newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+			scriptStep{session: sess3},
+			scriptStep{session: sess4},
+		)
 
-	restarted := make(chan struct{}, 4)
-	failed := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
-		OnRestart: func(context.Context) {
-			select {
-			case restarted <- struct{}{}:
-			default:
-			}
-		},
-		OnFailed: func(err error) {
-			select {
-			case failed <- err:
-			default:
-			}
-		},
+		restarted := make(chan struct{}, 4)
+		failed := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+			OnRestart: func(context.Context) {
+				select {
+				case restarted <- struct{}{}:
+				default:
+				}
+			},
+			OnFailed: func(err error) {
+				select {
+				case failed <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+
+		// Crash 1: an ordinary restart, not a loop yet.
+		sess1.fail(crashErr("boom"))
+		select {
+		case <-restarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not restart after the first crash")
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady), "a single crash must not trip the loop detector")
+
+		// Crash 2: still just an ordinary restart.
+		sess2.fail(crashErr("boom again"))
+		select {
+		case <-restarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not restart after the second crash")
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady), "two crashes must not trip the loop detector")
+
+		// Crash 3 reaches the threshold: give up, no further reconnect attempt.
+		sess3.fail(crashErr("boom a third time"))
+
+		var loopErr error
+		select {
+		case loopErr = <-failed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not report a crash loop")
+		}
+		assert.Check(t, errors.Is(loopErr, lifecycle.ErrCrashLooping))
+		assert.Check(t, errors.Is(loopErr, lifecycle.ErrServerCrashed), "ErrCrashLooping must still match ErrServerCrashed")
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+		assert.Check(t, is.Equal(c.Calls(), 3), "no reconnect attempt once the loop is detected")
+
+		// The next Start reports the loop once, without connecting again.
+		err := s.Start(t.Context())
+		assert.Check(t, errors.Is(err, lifecycle.ErrCrashLooping))
+		assert.Check(t, is.Equal(c.Calls(), 3), "the one-shot report must not itself connect")
+
+		// The Start after that attempts a genuine reconnect.
+		assert.NilError(t, s.Start(t.Context()))
+		assert.Check(t, is.Equal(c.Calls(), 4))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+
+		assert.NilError(t, s.Stop(t.Context()))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-
-	// Crash 1: an ordinary restart, not a loop yet.
-	sess1.fail(crashErr("boom"))
-	select {
-	case <-restarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not restart after the first crash")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady), "a single crash must not trip the loop detector")
-
-	// Crash 2: still just an ordinary restart.
-	sess2.fail(crashErr("boom again"))
-	select {
-	case <-restarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not restart after the second crash")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady), "two crashes must not trip the loop detector")
-
-	// Crash 3 reaches the threshold: give up, no further reconnect attempt.
-	sess3.fail(crashErr("boom a third time"))
-
-	var loopErr error
-	select {
-	case loopErr = <-failed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not report a crash loop")
-	}
-	assert.Check(t, errors.Is(loopErr, lifecycle.ErrCrashLooping))
-	assert.Check(t, errors.Is(loopErr, lifecycle.ErrServerCrashed), "ErrCrashLooping must still match ErrServerCrashed")
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
-	assert.Check(t, is.Equal(c.Calls(), 3), "no reconnect attempt once the loop is detected")
-
-	// The next Start reports the loop once, without connecting again.
-	err := s.Start(t.Context())
-	assert.Check(t, errors.Is(err, lifecycle.ErrCrashLooping))
-	assert.Check(t, is.Equal(c.Calls(), 3), "the one-shot report must not itself connect")
-
-	// The Start after that attempts a genuine reconnect.
-	assert.NilError(t, s.Start(t.Context()))
-	assert.Check(t, is.Equal(c.Calls(), 4))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-
-	assert.NilError(t, s.Stop(t.Context()))
 }
 
 // TestSupervisor_CrashLoopIgnoresCleanDisconnects verifies that a clean
