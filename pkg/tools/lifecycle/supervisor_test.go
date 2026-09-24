@@ -262,18 +262,20 @@ func TestSupervisor_StartAdoptsLateConnectAfterFirstCtxCancelled(t *testing.T) {
 func TestSupervisor_StopReapsLateConnect(t *testing.T) {
 	t.Parallel()
 
-	sess := newFakeSession()
-	c := &blockingConnector{release: make(chan struct{}), session: sess}
-	s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
+	synctest.Test(t, func(t *testing.T) {
+		sess := newFakeSession()
+		c := &blockingConnector{release: make(chan struct{}), session: sess}
+		s := lifecycle.New("test", c, lifecycle.Policy{StartupTimeout: 20 * time.Millisecond})
 
-	assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrInitTimeout))
+		assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrInitTimeout))
 
-	// Stop while the connect is still wedged, then let it complete.
-	assert.NilError(t, s.Stop(t.Context()))
-	close(c.release)
+		// Stop while the connect is still wedged, then let it complete.
+		assert.NilError(t, s.Stop(t.Context()))
+		close(c.release)
 
-	// The reaper must close the late session.
-	sess.waitClosed(t)
+		// The reaper must close the late session.
+		sess.waitClosed(t)
+	})
 }
 
 // TestSupervisor_StartWithinTimeoutSucceeds verifies that a Connect that
