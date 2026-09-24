@@ -523,50 +523,52 @@ func TestSupervisor_FailedWakesRestartAndWait(t *testing.T) {
 func TestSupervisor_RecoverFromFailedViaStart(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	sess2 := newFakeSession()
-	sess3 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},        // initial Start
-		scriptStep{err: errors.New("r1")}, // tryRestart attempt 1
-		scriptStep{err: errors.New("r2")}, // tryRestart attempt 2 → Failed
-		scriptStep{session: sess2},        // recovery Start
-		scriptStep{session: sess3},        // RestartAndWait’s reconnect
-	)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		MaxAttempts: 2,
-		Backoff:     fastBackoff,
-	})
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		sess2 := newFakeSession()
+		sess3 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},        // initial Start
+			scriptStep{err: errors.New("r1")}, // tryRestart attempt 1
+			scriptStep{err: errors.New("r2")}, // tryRestart attempt 2 → Failed
+			scriptStep{session: sess2},        // recovery Start
+			scriptStep{session: sess3},        // RestartAndWait’s reconnect
+		)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			MaxAttempts: 2,
+			Backoff:     fastBackoff,
+		})
 
-	assert.NilError(t, s.Start(t.Context()))
+		assert.NilError(t, s.Start(t.Context()))
 
-	// Drive into Failed.
-	sess1.fail(errors.New("crash"))
-	poll.WaitOn(t, func(poll.LogT) poll.Result {
-		if s.State().State == lifecycle.StateFailed {
-			return poll.Success()
+		// Drive into Failed.
+		sess1.fail(errors.New("crash"))
+		poll.WaitOn(t, func(poll.LogT) poll.Result {
+			if s.State().State == lifecycle.StateFailed {
+				return poll.Success()
+			}
+			return poll.Continue("supervisor state=%s", s.State().State)
+		}, poll.WithTimeout(2*time.Second), poll.WithDelay(5*time.Millisecond))
+
+		// Recovery: Start should refresh the done channel and bring us back
+		// to Ready without RestartAndWait wedging on a stale close.
+		assert.NilError(t, s.Start(t.Context()))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+
+		// Now exercise RestartAndWait against the fresh session.
+		done := make(chan error, 1)
+		go func() { done <- s.RestartAndWait(t.Context(), 2*time.Second) }()
+
+		select {
+		case err := <-done:
+			assert.NilError(t, err, "RestartAndWait should reconnect, not return stale-Failed error")
+		case <-time.After(3 * time.Second):
+			t.Fatal("RestartAndWait did not return")
 		}
-		return poll.Continue("supervisor state=%s", s.State().State)
-	}, poll.WithTimeout(2*time.Second), poll.WithDelay(5*time.Millisecond))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
 
-	// Recovery: Start should refresh the done channel and bring us back
-	// to Ready without RestartAndWait wedging on a stale close.
-	assert.NilError(t, s.Start(t.Context()))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-
-	// Now exercise RestartAndWait against the fresh session.
-	done := make(chan error, 1)
-	go func() { done <- s.RestartAndWait(t.Context(), 2*time.Second) }()
-
-	select {
-	case err := <-done:
-		assert.NilError(t, err, "RestartAndWait should reconnect, not return stale-Failed error")
-	case <-time.After(3 * time.Second):
-		t.Fatal("RestartAndWait did not return")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
-
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 // TestSupervisor_PermanentErrorsDontRestart verifies that wait errors that
