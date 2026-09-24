@@ -1046,41 +1046,43 @@ func TestSupervisor_CrashLoopIgnoresForcedRestart(t *testing.T) {
 func TestSupervisor_CrashLoopStopIsClean(t *testing.T) {
 	t.Parallel()
 
-	sess1, sess2, sess3 := newFakeSession(), newFakeSession(), newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-		scriptStep{session: sess3},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1, sess2, sess3 := newFakeSession(), newFakeSession(), newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+			scriptStep{session: sess3},
+		)
 
-	failed := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
-		OnFailed: func(err error) {
-			select {
-			case failed <- err:
-			default:
-			}
-		},
+		failed := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+			OnFailed: func(err error) {
+				select {
+				case failed <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(crashErr("boom"))
+		sess2.fail(crashErr("boom again"))
+		sess3.fail(crashErr("boom a third time"))
+
+		select {
+		case <-failed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not report a crash loop")
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+
+		assert.NilError(t, s.Stop(t.Context()))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
+		// A permanently-stopped supervisor never restarts, crash loop or not.
+		assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrNotStarted))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(crashErr("boom"))
-	sess2.fail(crashErr("boom again"))
-	sess3.fail(crashErr("boom a third time"))
-
-	select {
-	case <-failed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not report a crash loop")
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
-
-	assert.NilError(t, s.Stop(t.Context()))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
-	// A permanently-stopped supervisor never restarts, crash loop or not.
-	assert.Check(t, errors.Is(s.Start(t.Context()), lifecycle.ErrNotStarted))
 }
 
 // TestSupervisor_PendingCrashLoopErrorIsNonConsuming verifies that
