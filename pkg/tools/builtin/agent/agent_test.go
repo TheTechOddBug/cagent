@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -549,41 +550,42 @@ func (r *blockingRunner) RunAgent(ctx context.Context, _ RunParams) *RunResult {
 func TestHandleRun_ConcurrentAdmissionEnforcesCap(t *testing.T) {
 	t.Parallel()
 
-	runner := &blockingRunner{release: make(chan struct{})}
-	h := newTestHandlerWithRunner(runner)
-	t.Cleanup(h.StopAll)
-	tc := makeToolCall(t, RunBackgroundAgentArgs{Agent: "sub", Task: "work"})
+	synctest.Test(t, func(t *testing.T) {
+		runner := &blockingRunner{release: make(chan struct{})}
+		h := newTestHandlerWithRunner(runner)
+		t.Cleanup(h.StopAll)
+		tc := makeToolCall(t, RunBackgroundAgentArgs{Agent: "sub", Task: "work"})
 
-	start := make(chan struct{})
-	results := make(chan *tools.ToolCallResult, 2*maxConcurrentTasks)
-	var calls sync.WaitGroup
-	for range 2 * maxConcurrentTasks {
-		calls.Go(func() {
-			<-start
-			result, err := h.HandleRun(t.Context(), session.New(), tc)
-			require.NoError(t, err)
-			results <- result
-		})
-	}
-	close(start)
-	calls.Wait()
-	close(results)
-
-	var admitted int
-	for result := range results {
-		if !result.IsError {
-			admitted++
+		start := make(chan struct{})
+		results := make(chan *tools.ToolCallResult, 2*maxConcurrentTasks)
+		var calls sync.WaitGroup
+		for range 2 * maxConcurrentTasks {
+			calls.Go(func() {
+				<-start
+				result, err := h.HandleRun(t.Context(), session.New(), tc)
+				require.NoError(t, err)
+				results <- result
+			})
 		}
-	}
-	assert.Equal(t, maxConcurrentTasks, admitted)
-	require.Eventually(t, func() bool {
-		return runner.started.Load() == maxConcurrentTasks
-	}, time.Second, time.Millisecond)
-	assert.LessOrEqual(t, runner.maxActive.Load(), int32(maxConcurrentTasks))
-	assert.Equal(t, maxConcurrentTasks, h.totalTaskCount())
+		close(start)
+		calls.Wait()
+		close(results)
 
-	close(runner.release)
-	h.wg.Wait()
+		var admitted int
+		for result := range results {
+			if !result.IsError {
+				admitted++
+			}
+		}
+		assert.Equal(t, maxConcurrentTasks, admitted)
+		synctest.Wait()
+		require.Equal(t, int32(maxConcurrentTasks), runner.started.Load())
+		assert.LessOrEqual(t, runner.maxActive.Load(), int32(maxConcurrentTasks))
+		assert.Equal(t, maxConcurrentTasks, h.totalTaskCount())
+
+		close(runner.release)
+		h.wg.Wait()
+	})
 }
 
 func TestHandleRun_RejectsAdmissionDuringShutdown(t *testing.T) {
