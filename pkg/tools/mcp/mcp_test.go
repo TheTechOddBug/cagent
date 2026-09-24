@@ -731,31 +731,33 @@ func TestCallToolParentCancelWinsOverTimeout(t *testing.T) {
 func TestCallToolTimeoutCoversReconnectRetry(t *testing.T) {
 	t.Parallel()
 
-	var callCount, initCount atomic.Int32
-	mock := newReconnectableMock()
-	mock.callToolFn = func(_ context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-		callCount.Add(1)
-		// Always fail with a connection error, forcing a reconnect attempt.
-		return nil, fmt.Errorf("tools/call: %w", mcp.ErrSessionMissing)
-	}
-	slowInit := &slowReconnectClient{reconnectableMockClient: mock, reconnectDelay: 300 * time.Millisecond, initCount: &initCount}
+	synctest.Test(t, func(t *testing.T) {
+		var callCount, initCount atomic.Int32
+		mock := newReconnectableMock()
+		mock.callToolFn = func(_ context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+			callCount.Add(1)
+			// Always fail with a connection error, forcing a reconnect attempt.
+			return nil, fmt.Errorf("tools/call: %w", mcp.ErrSessionMissing)
+		}
+		slowInit := &slowReconnectClient{reconnectableMockClient: mock, reconnectDelay: 300 * time.Millisecond, initCount: &initCount}
 
-	ts := newTestToolset("test-server", "test-server", slowInit)
-	ts.callTimeout = 50 * time.Millisecond
-	require.NoError(t, ts.Start(t.Context()))
-	t.Cleanup(func() { _ = ts.Stop(t.Context()) })
+		ts := newTestToolset("test-server", "test-server", slowInit)
+		ts.callTimeout = 50 * time.Millisecond
+		require.NoError(t, ts.Start(t.Context()))
+		t.Cleanup(func() { _ = ts.Stop(context.WithoutCancel(t.Context())) })
 
-	start := time.Now()
-	_, err := ts.callTool(t.Context(), tools.ToolCall{
-		Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
-	}, tools.NopRuntime{})
-	elapsed := time.Since(start)
+		start := time.Now()
+		_, err := ts.callTool(t.Context(), tools.ToolCall{
+			Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
+		}, tools.NopRuntime{})
+		elapsed := time.Since(start)
 
-	require.Error(t, err)
-	require.ErrorIs(t, err, tools.ErrCallTimeout, "expected ErrCallTimeout, got: %v", err)
-	assert.Less(t, elapsed, sessionMissingRetryTimeout,
-		"the call_timeout must cover the reconnect-retry as one budget, not stack on top of the 35s retry wait")
-	assert.GreaterOrEqual(t, callCount.Load(), int32(1))
+		require.Error(t, err)
+		require.ErrorIs(t, err, tools.ErrCallTimeout, "expected ErrCallTimeout, got: %v", err)
+		assert.Less(t, elapsed, sessionMissingRetryTimeout,
+			"the call_timeout must cover the reconnect-retry as one budget, not stack on top of the 35s retry wait")
+		assert.GreaterOrEqual(t, callCount.Load(), int32(1))
+	})
 }
 
 // slowReconnectClient blocks the second-and-later Initialize call for
