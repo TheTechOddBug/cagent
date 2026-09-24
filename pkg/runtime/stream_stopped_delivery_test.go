@@ -24,7 +24,7 @@ func (slowChoiceObserver) OnRunStart(context.Context, *session.Session) {}
 
 func (o slowChoiceObserver) OnEvent(_ context.Context, _ *session.Session, event Event) {
 	if _, ok := event.(*AgentChoiceEvent); ok {
-		time.Sleep(o.delay) //nolint:forbidigo // deliberately slow consumer reproduces the #4136 back-pressure race
+		time.Sleep(o.delay) //nolint:forbidigo // Fake-time delay preserves consumer backpressure.
 	}
 }
 
@@ -84,40 +84,45 @@ func TestRunStream_StreamStoppedDeliveredUnderSlowConsumer(t *testing.T) {
 func TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveConsumer(t *testing.T) {
 	t.Parallel()
 
-	rt := newElicitationTestRuntime(t)
-	rt.streamStoppedDeliveryTimeout = 2 * time.Second
-	sess := session.New()
-	events := make(chan Event, 1)
-	parent := make(chan Event, 1)
-	events <- Error("buffer already full")
-	rt.elicitation.swap(events)
+	synctest.Test(t, func(t *testing.T) {
+		rt := newElicitationTestRuntime(t)
+		rt.streamStoppedDeliveryTimeout = 2 * time.Second
+		sess := session.New()
+		events := make(chan Event, 1)
+		parent := make(chan Event, 1)
+		events <- Error("buffer already full")
+		rt.elicitation.swap(events)
 
-	done := make(chan struct{})
-	go func() {
-		rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
+			close(done)
+		}()
 
-	// Free the one buffered slot so the bounded send has somewhere to land,
-	// simulating a consumer that is slow but still draining rather than gone.
-	// This is safe regardless of whether finalizeEventChannel's send is
-	// already parked on it: freeing the slot at any point before the
-	// deadline lets the send land.
-	received := <-events
-	_, ok := received.(*ErrorEvent)
-	require.True(t, ok, "expected to drain the pre-seeded event first")
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("finalizeEventChannel did not return after the consumer freed a slot")
-	}
-
-	var stopped int
-	for ev := range events {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
-			stopped++
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("finalizeEventChannel returned before the consumer freed a slot")
+		default:
 		}
-	}
-	assert.Equal(t, 1, stopped, "StreamStopped should be delivered once the consumer drains a slot before the deadline")
+
+		// Free the slot while the finalizer is blocked, before its deadline.
+		received := <-events
+		_, ok := received.(*ErrorEvent)
+		require.True(t, ok, "expected to drain the pre-seeded event first")
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("finalizeEventChannel did not return after the consumer freed a slot")
+		}
+
+		var stopped int
+		for ev := range events {
+			if _, ok := ev.(*StreamStoppedEvent); ok {
+				stopped++
+			}
+		}
+		assert.Equal(t, 1, stopped, "StreamStopped should be delivered once the consumer drains a slot before the deadline")
+	})
 }
