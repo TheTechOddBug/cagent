@@ -1279,48 +1279,50 @@ func (s *oauthAwareToolSet) SetUnmanagedOAuthRedirectURI(string) {}
 func TestEmitStartupInfo_DoesNotBlockOnInteractiveOAuth(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	oauthTS := &oauthAwareToolSet{}
+		oauthTS := &oauthAwareToolSet{}
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(oauthTS),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(oauthTS),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
+		require.NoError(t, err)
 
-	events := make(chan Event, 20)
+		events := make(chan Event, 20)
 
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("EmitStartupInfo blocked: it must complete promptly even for toolsets that need OAuth")
-	}
-	close(events)
-	for range events {
-	}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("EmitStartupInfo blocked: it must complete promptly even for toolsets that need OAuth")
+		}
+		close(events)
+		for range events {
+		}
 
-	oauthTS.mu.Lock()
-	defer oauthTS.mu.Unlock()
+		oauthTS.mu.Lock()
+		defer oauthTS.mu.Unlock()
 
-	require.True(t, oauthTS.started, "toolset should still be started during EmitStartupInfo (just not interactively)")
+		require.True(t, oauthTS.started, "toolset should still be started during EmitStartupInfo (just not interactively)")
 
-	// During startup, no interactive plumbing should be wired up. OAuth and
-	// elicitation are deferred to the first RunStream call where the user
-	// is actively interacting with the agent.
-	require.Nil(t, oauthTS.startHandlerCaptured,
-		"elicitation handler must NOT be set during startup; OAuth is deferred until the user sends a message")
-	require.False(t, oauthTS.startManagedWasSet,
-		"managed-OAuth flag must NOT be set during startup")
+		// During startup, no interactive plumbing should be wired up. OAuth and
+		// elicitation are deferred to the first RunStream call where the user
+		// is actively interacting with the agent.
+		require.Nil(t, oauthTS.startHandlerCaptured,
+			"elicitation handler must NOT be set during startup; OAuth is deferred until the user sends a message")
+		require.False(t, oauthTS.startManagedWasSet,
+			"managed-OAuth flag must NOT be set during startup")
+	})
 }
 
 // TestEmitStartupInfo_SurfacesToolsetStartFailureAsWarning verifies that
