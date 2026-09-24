@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -133,63 +134,66 @@ func TestDispatcher_RoutesToToolsetHandler(t *testing.T) {
 
 func TestDispatcher_RunsToolHandlersInParallel(t *testing.T) {
 	t.Parallel()
-	a := newAgent()
-	sess := session.New()
-	sess.ToolsApproved = true
 
-	started := make(chan string, 2)
-	release := make(chan struct{})
-	var running atomic.Int32
-	var maxRunning atomic.Int32
-	tool := tools.Tool{
-		Name: "slow",
-		Handler: func(ctx context.Context, tc tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
-			current := running.Add(1)
-			for {
-				observed := maxRunning.Load()
-				if current <= observed || maxRunning.CompareAndSwap(observed, current) {
-					break
+	synctest.Test(t, func(t *testing.T) {
+		a := newAgent()
+		sess := session.New()
+		sess.ToolsApproved = true
+
+		started := make(chan string, 2)
+		release := make(chan struct{})
+		var running atomic.Int32
+		var maxRunning atomic.Int32
+		tool := tools.Tool{
+			Name: "slow",
+			Handler: func(ctx context.Context, tc tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+				current := running.Add(1)
+				for {
+					observed := maxRunning.Load()
+					if current <= observed || maxRunning.CompareAndSwap(observed, current) {
+						break
+					}
 				}
-			}
-			started <- tc.ID
-			defer running.Add(-1)
-			select {
-			case <-release:
-				return tools.ResultSuccess("done " + tc.ID), nil
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		},
-	}
-
-	d := &toolexec.Dispatcher{AgentFor: func(*session.Session) *agent.Agent { return a }}
-	em := &captureEmitter{}
-	done := make(chan struct{})
-	go func() {
-		d.Process(t.Context(), sess, []tools.ToolCall{
-			{ID: "a", Function: tools.FunctionCall{Name: "slow", Arguments: `{}`}},
-			{ID: "b", Function: tools.FunctionCall{Name: "slow", Arguments: `{}`}},
-		}, []tools.Tool{tool}, em)
-		close(done)
-	}()
-
-	for range 2 {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for both tool handlers to start")
+				started <- tc.ID
+				defer running.Add(-1)
+				select {
+				case <-release:
+					return tools.ResultSuccess("done " + tc.ID), nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			},
 		}
-	}
-	close(release)
 
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for Process to finish")
-	}
+		d := &toolexec.Dispatcher{AgentFor: func(*session.Session) *agent.Agent { return a }}
+		em := &captureEmitter{}
+		done := make(chan struct{})
+		go func() {
+			d.Process(t.Context(), sess, []tools.ToolCall{
+				{ID: "a", Function: tools.FunctionCall{Name: "slow", Arguments: `{}`}},
+				{ID: "b", Function: tools.FunctionCall{Name: "slow", Arguments: `{}`}},
+			}, []tools.Tool{tool}, em)
+			close(done)
+		}()
 
-	assert.GreaterOrEqual(t, maxRunning.Load(), int32(2))
-	require.Len(t, em.responses, 2)
+		for range 2 {
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for both tool handlers to start")
+			}
+		}
+		close(release)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for Process to finish")
+		}
+
+		assert.GreaterOrEqual(t, maxRunning.Load(), int32(2))
+		require.Len(t, em.responses, 2)
+	})
 }
 
 func TestDispatcher_EmitsToolOutputFromHandlerContext(t *testing.T) {
