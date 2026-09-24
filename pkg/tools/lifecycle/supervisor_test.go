@@ -965,42 +965,44 @@ func TestSupervisor_CrashLoopStopsRestartingAndReportsOnStart(t *testing.T) {
 func TestSupervisor_CrashLoopIgnoresCleanDisconnects(t *testing.T) {
 	t.Parallel()
 
-	sessions := make([]*fakeSession, 5)
-	steps := make([]scriptStep, 5)
-	for i := range sessions {
-		sessions[i] = newFakeSession()
-		steps[i] = scriptStep{session: sessions[i]}
-	}
-	c := newScriptedConnector(steps...)
-
-	restarted := make(chan struct{}, 10)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Restart:   lifecycle.RestartAlways,
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
-		OnRestart: func(context.Context) {
-			select {
-			case restarted <- struct{}{}:
-			default:
-			}
-		},
-	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	for i := range 4 {
-		_ = sessions[i].Close(t.Context()) // clean disconnect, not a crash
-		select {
-		case <-restarted:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("supervisor did not restart after clean close %d", i+1)
+	synctest.Test(t, func(t *testing.T) {
+		sessions := make([]*fakeSession, 5)
+		steps := make([]scriptStep, 5)
+		for i := range sessions {
+			sessions[i] = newFakeSession()
+			steps[i] = scriptStep{session: sessions[i]}
 		}
-	}
+		c := newScriptedConnector(steps...)
 
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
-		"clean disconnects (more of them than the crash-loop threshold) must never trip the loop detector")
-	assert.Check(t, is.Equal(c.Calls(), 5))
+		restarted := make(chan struct{}, 10)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Restart:   lifecycle.RestartAlways,
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+			OnRestart: func(context.Context) {
+				select {
+				case restarted <- struct{}{}:
+				default:
+				}
+			},
+		})
 
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Start(t.Context()))
+		for i := range 4 {
+			_ = sessions[i].Close(t.Context()) // clean disconnect, not a crash
+			select {
+			case <-restarted:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("supervisor did not restart after clean close %d", i+1)
+			}
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
+			"clean disconnects (more of them than the crash-loop threshold) must never trip the loop detector")
+		assert.Check(t, is.Equal(c.Calls(), 5))
+
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 // TestSupervisor_CrashLoopIgnoresForcedRestart verifies that a deliberate
