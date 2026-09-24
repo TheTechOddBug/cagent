@@ -80,8 +80,7 @@ func TestWaitIfPaused_BlocksUntilResumed(t *testing.T) {
 		go func() { done <- r.waitIfPaused(t.Context()) }()
 
 		synctest.Wait()
-		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // Preserve the observation window using fake time.
-		synctest.Wait()
+		synctest.Sleep(50 * time.Millisecond)
 
 		select {
 		case <-done:
@@ -116,8 +115,7 @@ func TestWaitIfPaused_ContextCancellation(t *testing.T) {
 		go func() { done <- r.waitIfPaused(ctx) }()
 
 		synctest.Wait()
-		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // Preserve the observation window using fake time.
-		synctest.Wait()
+		synctest.Sleep(50 * time.Millisecond)
 
 		select {
 		case <-done:
