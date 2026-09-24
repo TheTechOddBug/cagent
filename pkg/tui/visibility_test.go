@@ -45,6 +45,21 @@ func TestTmuxVisibilityHidden(t *testing.T) {
 			assert.Equal(t, tt.hidden, tmuxVisibilityHidden(tt.output+" "+tty.Name()+"\n", tty))
 		})
 	}
+	for _, tt := range []struct {
+		name, clients string
+		hidden        bool
+	}{
+		{"inactive tree preview", "0 copy-mode tree-mode\n", false},
+		{"other client's preview", "0\n0 tree-mode\n", false},
+		{"client preview", "0 client-mode\n", false},
+		{"ordinary modes", "0 copy-mode view-mode buffer-mode\n", true},
+		{"unknown mode", "0 future-preview-mode\n", false},
+		{"empty client record", "\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.hidden, tmuxVisibilityHidden("0 0 1 "+tty.Name()+"\n"+tt.clients, tty))
+		})
+	}
 	assert.True(t, tmuxVisibilityHidden("1 1 0 "+tty.Name()+"\n0\n0\n", tty), "ordinary clients respect zoom")
 	assert.False(t, tmuxVisibilityHidden("0 0 1 "+tty.Name()+"\n0\n1\n", tty), "control clients may display noncurrent windows")
 	assert.False(t, tmuxVisibilityHidden("1 1 0 "+tty.Name()+"\n1\n", tty), "control clients may display zoomed siblings")

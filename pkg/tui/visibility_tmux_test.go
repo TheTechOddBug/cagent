@@ -141,7 +141,15 @@ func testTmuxVisibilityLifecycle(t *testing.T, focusEvents string) {
 		return state
 	}
 	require.Eventually(t, func() bool { return readState().Probed }, 10*time.Second, 20*time.Millisecond, "startup snapshot was not applied")
-	require.True(t, readState().Hidden, "detached startup must be detected even without an initial blur: %s", tmux("display-message", "-p", "-t", "focus-test", tmuxVisibilityFormat))
+	snapshot := tmux("display-message", "-p", "-t", "focus-test", tmuxVisibilityFormat)
+	fields := strings.Fields(snapshot)
+	if len(fields) != 4 || fields[0] != "0" || fields[1] != "0" || fields[2] != "1" {
+		require.False(t, readState().Hidden, "unsupported formats must leave rendering enabled")
+		before := readState().Elapsed
+		require.Eventually(t, func() bool { return readState().Elapsed > before }, 5*time.Second, 20*time.Millisecond)
+		t.Skipf("tmux lacks required visibility formats: %q; verified fail-open behavior", snapshot)
+	}
+	require.True(t, readState().Hidden, "detached startup must be detected even without an initial blur: %s", snapshot)
 	assertStopped := func() {
 		t.Helper()
 		before := readState().Elapsed
@@ -188,6 +196,23 @@ func testTmuxVisibilityLifecycle(t *testing.T, focusEvents string) {
 
 	otherWindow := tmux("new-window", "-t", "focus-test", "-P", "-F", "#{window_id}", "exec cat")
 	require.Eventually(t, func() bool { return readState().Hidden }, 5*time.Second, 20*time.Millisecond, "background window must hide the agent")
+	assertStopped()
+
+	// Choosers can preview the agent without making its window current.
+	previewPane := tmux("display-message", "-p", "-t", otherWindow, "#{pane_id}")
+	tmux("choose-tree", "-w", "-t", previewPane)
+	tmux("send-keys", "-t", previewPane, "Up")
+	before = readState().Elapsed
+	require.Eventually(t, func() bool { return !readState().Hidden && readState().Elapsed > before }, 5*time.Second, 20*time.Millisecond, "tree previews must keep background panes live")
+
+	// A preview in an unfocused split remains visible too.
+	tmux("split-window", "-h", "-t", previewPane, "exec cat")
+	require.Equal(t, "0", tmux("display-message", "-p", "-t", previewPane, "#{pane_active}"))
+	before = readState().Elapsed
+	require.Never(t, func() bool { return readState().Hidden }, 2*tmuxVisibilityInterval, 20*time.Millisecond, "inactive split previews must stay live")
+	require.Greater(t, readState().Elapsed, before)
+	tmux("send-keys", "-t", previewPane, "q")
+	require.Eventually(t, func() bool { return readState().Hidden }, 5*time.Second, 20*time.Millisecond, "closing the preview must restore hidden-pane savings")
 	assertStopped()
 
 	// The window is still visible when linked into another client's session.

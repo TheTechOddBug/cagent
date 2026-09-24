@@ -14,6 +14,7 @@ import (
 const (
 	tmuxVisibilityInterval = time.Second
 	tmuxVisibilityFormat   = "#{window_active_clients} #{window_zoomed_flag} #{pane_active} #{pane_tty}"
+	tmuxClientFormat       = "#{client_control_mode} #{P:#{pane_mode} }"
 )
 
 type tmuxVisibilityPollMsg struct{}
@@ -76,17 +77,25 @@ func (m *appModel) setPaneHidden(hidden bool) tea.Cmd {
 func tmuxPaneHidden(ctx context.Context, pane string, output *os.File) bool {
 	out, err := exec.CommandContext(ctx, "tmux",
 		"display-message", "-p", "-t", pane, tmuxVisibilityFormat,
-		";", "list-clients", "-F", "#{client_control_mode}",
+		";", "list-clients", "-F", tmuxClientFormat,
 	).Output()
 	return err == nil && tmuxVisibilityHidden(string(out), output)
 }
 
 func tmuxVisibilityHidden(out string, output *os.File) bool {
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	// Control frontends may show noncurrent windows and panes obscured by zoom.
-	for _, controlMode := range lines[1:] {
-		if controlMode != "0" {
+	// Control frontends and chooser previews can display otherwise hidden panes.
+	for _, client := range lines[1:] {
+		fields := strings.Fields(client)
+		if len(fields) == 0 || fields[0] != "0" {
 			return false
+		}
+		for _, mode := range fields[1:] {
+			switch mode {
+			case "copy-mode", "view-mode", "buffer-mode":
+			default:
+				return false
+			}
 		}
 	}
 	fields := strings.Fields(lines[0])
