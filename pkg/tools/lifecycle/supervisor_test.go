@@ -815,18 +815,20 @@ func TestBackoff_Jitter(t *testing.T) {
 func TestSupervisor_StopWaitsForWatcher(t *testing.T) {
 	t.Parallel()
 
-	sess := newFakeSession()
-	c := newScriptedConnector(scriptStep{session: sess})
-	s := lifecycle.New("test", c, lifecycle.Policy{})
+	synctest.Test(t, func(t *testing.T) {
+		sess := newFakeSession()
+		c := newScriptedConnector(scriptStep{session: sess})
+		s := lifecycle.New("test", c, lifecycle.Policy{})
 
-	assert.NilError(t, s.Start(t.Context()))
-	sess.waitParked(t)
+		assert.NilError(t, s.Start(t.Context()))
+		sess.waitParked(t)
 
-	assert.NilError(t, s.Stop(t.Context()))
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
+		assert.NilError(t, s.Stop(t.Context()))
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
 
-	// Stop must not return until the watcher has observed Wait() unblock.
-	assert.Check(t, sess.waitDone.Load(), "Stop returned before watcher's Wait() completed")
+		// Stop must not return until the watcher has observed Wait() unblock.
+		assert.Check(t, sess.waitDone.Load(), "Stop returned before watcher's Wait() completed")
+	})
 }
 
 // TestSupervisor_StopConcurrent exercises the s.stopping guard: several
