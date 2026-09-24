@@ -57,6 +57,7 @@ var programCops = []prog.Cop{
 	ReflectFields,
 	StdlibUUID,
 	URLClone,
+	JSONMarshalWrite,
 	SplitTrimJoin,
 	FieldsSeq,
 	SessionStateAccessors,

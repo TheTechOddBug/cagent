@@ -128,6 +128,11 @@ randomness. General parsers and values exposing the Google UUID type are exclude
 or copies guarded by `User == nil`. General shallow copies are excluded because
 `Clone` also copies userinfo.
 
+`Lint/JSONMarshalWrite` flags a single buffered encoding followed by newline
+trimming. Review the suggested `jsonv2.MarshalWrite` migration with v1 defaults,
+explicit HTML escaping, unchanged evaluation order, and discarded partial output
+on error. Streaming encoders and indentation are excluded.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
