@@ -397,61 +397,63 @@ func TestCompactLiveSession_UnknownSessionErrors(t *testing.T) {
 func TestCompactLiveSession_ExecutesAtIterationBoundary(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		// Turn 1: a tool call keeps the loop running (Stopped=false), so the
-		// queued request executes at the next iteration boundary.
-		{stream: newStreamBuilder().
-			AddToolCallName("call_1", "unknown_tool").
-			AddToolCallArguments("call_1", "{}").
-			AddToolCallStopWithUsage(1, 1).
-			Build(), started: started, release: release},
-		// The compaction summary call.
-		{stream: newStreamBuilder().AddContent("a compact summary").AddStopWithUsage(10, 5).Build()},
-		// Turn 2: natural stop ends the stream.
-		{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build()},
-	}}
-	rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			// Turn 1: a tool call keeps the loop running (Stopped=false), so the
+			// queued request executes at the next iteration boundary.
+			{stream: newStreamBuilder().
+				AddToolCallName("call_1", "unknown_tool").
+				AddToolCallArguments("call_1", "{}").
+				AddToolCallStopWithUsage(1, 1).
+				Build(), started: started, release: release},
+			// The compaction summary call.
+			{stream: newStreamBuilder().AddContent("a compact summary").AddStopWithUsage(10, 5).Build()},
+			// Turn 2: natural stop ends the stream.
+			{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build()},
+		}}
+		rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
 
-	child := newWorkerSession("child-1")
-	stream := rt.RunStream(t.Context(), child)
-	waitClosed(t, started, "first child turn")
+		child := newWorkerSession("child-1")
+		stream := rt.RunStream(t.Context(), child)
+		waitClosed(t, started, "first child turn")
 
-	requestEvents := make(chan Event, 64)
-	require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
+		requestEvents := make(chan Event, 64)
+		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
-	// A second request while one is pending is rejected clearly.
-	err := rt.CompactLiveSession(t.Context(), "child-1", "", nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already pending")
+		// A second request while one is pending is rejected clearly.
+		err := rt.CompactLiveSession(t.Context(), "child-1", "", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already pending")
 
-	close(release)
-	drainStream(t, stream)
-	close(requestEvents)
+		close(release)
+		drainStream(t, stream)
+		close(requestEvents)
 
-	var kinds []string
-	for ev := range requestEvents {
-		switch e := ev.(type) {
-		case *SessionCompactionEvent:
-			assert.Equal(t, "child-1", e.SessionID)
-			assert.Equal(t, "worker", e.AgentName)
-			if e.Status == "completed" {
-				kinds = append(kinds, "completed:"+e.Outcome)
-			} else {
-				kinds = append(kinds, e.Status)
+		var kinds []string
+		for ev := range requestEvents {
+			switch e := ev.(type) {
+			case *SessionCompactionEvent:
+				assert.Equal(t, "child-1", e.SessionID)
+				assert.Equal(t, "worker", e.AgentName)
+				if e.Status == "completed" {
+					kinds = append(kinds, "completed:"+e.Outcome)
+				} else {
+					kinds = append(kinds, e.Status)
+				}
+			case *SessionSummaryEvent:
+				assert.Equal(t, "child-1", e.SessionID)
+				kinds = append(kinds, "summary")
+			case *TokenUsageEvent:
+				assert.Equal(t, "child-1", e.SessionID)
+				assert.Equal(t, "worker", e.AgentName)
+				kinds = append(kinds, "usage")
 			}
-		case *SessionSummaryEvent:
-			assert.Equal(t, "child-1", e.SessionID)
-			kinds = append(kinds, "summary")
-		case *TokenUsageEvent:
-			assert.Equal(t, "child-1", e.SessionID)
-			assert.Equal(t, "worker", e.AgentName)
-			kinds = append(kinds, "usage")
 		}
-	}
-	assert.Equal(t, []string{"started", "summary", "completed:applied", "usage"}, kinds)
-	assert.Equal(t, "a compact summary", child.LastSummary())
+		assert.Equal(t, []string{"started", "summary", "completed:applied", "usage"}, kinds)
+		assert.Equal(t, "a compact summary", child.LastSummary())
+	})
 }
 
 // TestCompactLiveSession_AcceptedRequestDrainedAtTeardown pins the shutdown
