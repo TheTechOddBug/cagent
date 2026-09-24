@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -173,37 +174,49 @@ func (r *cycleThinkingRuntime) OnElicitationRequest(func(runtime.Event)) {}
 var _ runtime.Runtime = (*cycleThinkingRuntime)(nil)
 
 func TestFirstMessageBangCommandRunsLocally(t *testing.T) {
-	outputPath := filepath.Join(t.TempDir(), "bang-output")
 	rt := &cycleThinkingRuntime{}
 	m := bareModel(80)
 	m.app = app.New(t.Context(), rt, session.New())
 
-	m.sendFirstMessage(t.Context(), `!printf bang > "`+outputPath+`"`, "")
+	m.sendFirstMessage(t.Context(), "!echo bang", "")
 
-	require.Eventually(t, func() bool {
-		output, err := os.ReadFile(outputPath)
-		return err == nil && string(output) == "bang"
-	}, time.Second, 10*time.Millisecond)
+	requireBangCommandOutput(t, m.app, "echo bang", "bang")
 	assert.Zero(t, rt.runCalls)
 }
 
 func TestSubmitBangCommandRunsImmediatelyWhileBusy(t *testing.T) {
-	outputPath := filepath.Join(t.TempDir(), "bang-output")
 	rt := &cycleThinkingRuntime{}
 	m := bareModel(80)
 	m.app = app.New(t.Context(), rt, session.New())
 	m.busy = true
 
-	m.submitEditor(t.Context(), `!printf bang > "`+outputPath+`"`)
+	m.submitEditor(t.Context(), "!echo bang")
 
-	require.Eventually(t, func() bool {
-		output, err := os.ReadFile(outputPath)
-		return err == nil && string(output) == "bang"
-	}, time.Second, 10*time.Millisecond)
+	requireBangCommandOutput(t, m.app, "echo bang", "bang")
 	assert.Zero(t, rt.runCalls)
 	assert.Empty(t, rt.steered)
 	assert.Empty(t, m.queue)
 	assert.True(t, m.busy)
+}
+
+func requireBangCommandOutput(t *testing.T, a *app.App, command, output string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	var result *runtime.ShellOutputEvent
+	a.SubscribeWith(ctx, func(msg tea.Msg) {
+		if event, ok := msg.(*runtime.ShellOutputEvent); ok && event.Done {
+			result = event
+			cancel()
+		}
+	})
+
+	require.NotNil(t, result, "timed out waiting for shell command %q", command)
+	assert.NotEmpty(t, result.CommandID)
+	assert.Equal(t, command, result.Command)
+	require.Empty(t, result.Error, "shell output: %s", result.Output)
+	assert.Equal(t, output, strings.TrimSpace(result.Output))
 }
 
 func TestBangCommandAppearsImmediatelyAndTracksOutput(t *testing.T) {
