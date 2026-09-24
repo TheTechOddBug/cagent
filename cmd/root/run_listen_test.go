@@ -3,6 +3,7 @@ package root
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,38 +33,40 @@ func (r *recallRuntime) SetRecallHandler(handler runtime.RecallHandler) {
 func TestStartSessionCoordinatorWithoutListenRoutesIdleRecallToApp(t *testing.T) {
 	t.Parallel()
 
-	ctx := t.Context()
-	store := session.NewInMemorySessionStore()
-	sess := session.New()
-	require.NoError(t, store.AddSession(ctx, sess))
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		store := session.NewInMemorySessionStore()
+		sess := session.New()
+		require.NoError(t, store.AddSession(ctx, sess))
 
-	rt := &recallRuntime{store: store}
-	flags := &runExecFlags{runConfig: config.RuntimeConfig{}}
-	opt, err := flags.startSessionCoordinator(ctx, nil, rt, sess)
-	require.NoError(t, err)
-	require.NotNil(t, opt)
-	require.NotNil(t, rt.recallHandler)
+		rt := &recallRuntime{store: store}
+		flags := &runExecFlags{runConfig: config.RuntimeConfig{}}
+		opt, err := flags.startSessionCoordinator(ctx, nil, rt, sess)
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+		require.NotNil(t, rt.recallHandler)
 
-	a := app.New(ctx, rt, sess, opt)
-	events := make(chan tea.Msg, 1)
-	subCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go a.SubscribeWith(subCtx, func(msg tea.Msg) {
+		a := app.New(ctx, rt, sess, opt)
+		events := make(chan tea.Msg, 1)
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go a.SubscribeWith(subCtx, func(msg tea.Msg) {
+			select {
+			case events <- msg:
+			default:
+			}
+			cancel()
+		})
+
+		require.True(t, rt.recallHandler(ctx, runtime.QueuedMessage{Content: "background job finished"}))
+
 		select {
-		case events <- msg:
-		default:
+		case msg := <-events:
+			sendMsg, ok := msg.(msgtypes.SendMsg)
+			require.True(t, ok, "expected SendMsg, got %T", msg)
+			assert.Equal(t, "background job finished", sendMsg.Content)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for injected recall message")
 		}
-		cancel()
 	})
-
-	require.True(t, rt.recallHandler(ctx, runtime.QueuedMessage{Content: "background job finished"}))
-
-	select {
-	case msg := <-events:
-		sendMsg, ok := msg.(msgtypes.SendMsg)
-		require.True(t, ok, "expected SendMsg, got %T", msg)
-		assert.Equal(t, "background job finished", sendMsg.Content)
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for injected recall message")
-	}
 }
