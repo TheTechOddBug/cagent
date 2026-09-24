@@ -112,8 +112,7 @@ func BenchmarkMergeEventsAgentChoice(b *testing.B) {
 			a := &App{}
 
 			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_ = a.mergeEvents(events)
 			}
 		})
@@ -129,8 +128,7 @@ func BenchmarkMergeEventsPartialToolCall(b *testing.B) {
 			a := &App{}
 
 			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_ = a.mergeEvents(events)
 			}
 		})
