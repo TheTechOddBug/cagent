@@ -463,50 +463,52 @@ func TestCompactLiveSession_ExecutesAtIterationBoundary(t *testing.T) {
 func TestCompactLiveSession_AcceptedRequestDrainedAtTeardown(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		// The one and only turn: a natural stop, gated so the request can
-		// be enqueued mid-turn.
-		{stream: newStreamBuilder().AddContent("done").AddStopWithUsage(1, 1).Build(), started: started, release: release},
-		// The compaction summary call, issued from the teardown drain.
-		{stream: newStreamBuilder().AddContent("teardown summary").AddStopWithUsage(10, 5).Build()},
-	}}
-	rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			// The one and only turn: a natural stop, gated so the request can
+			// be enqueued mid-turn.
+			{stream: newStreamBuilder().AddContent("done").AddStopWithUsage(1, 1).Build(), started: started, release: release},
+			// The compaction summary call, issued from the teardown drain.
+			{stream: newStreamBuilder().AddContent("teardown summary").AddStopWithUsage(10, 5).Build()},
+		}}
+		rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
 
-	child := newWorkerSession("child-1")
-	stream := rt.RunStream(t.Context(), child)
-	waitClosed(t, started, "final child turn")
+		child := newWorkerSession("child-1")
+		stream := rt.RunStream(t.Context(), child)
+		waitClosed(t, started, "final child turn")
 
-	requestEvents := make(chan Event, 64)
-	require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
+		requestEvents := make(chan Event, 64)
+		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
-	close(release)
-	drainStream(t, stream)
+		close(release)
+		drainStream(t, stream)
 
-	// The teardown drain executes before the stream channel closes, so the
-	// terminal compaction event is already buffered on the request sink.
-	deadline := time.After(10 * time.Second)
-	for {
-		select {
-		case ev := <-requestEvents:
-			if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "completed" {
-				assert.Equal(t, "child-1", e.SessionID)
-				assert.Equal(t, "worker", e.AgentName)
-				assert.Equal(t, CompactionOutcomeApplied, e.Outcome)
-				assert.Equal(t, "teardown summary", child.LastSummary())
+		// The teardown drain executes before the stream channel closes, so the
+		// terminal compaction event is already buffered on the request sink.
+		deadline := time.After(10 * time.Second)
+		for {
+			select {
+			case ev := <-requestEvents:
+				if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "completed" {
+					assert.Equal(t, "child-1", e.SessionID)
+					assert.Equal(t, "worker", e.AgentName)
+					assert.Equal(t, CompactionOutcomeApplied, e.Outcome)
+					assert.Equal(t, "teardown summary", child.LastSummary())
 
-				// The session is gone from the registry: further requests
-				// are rejected instead of stranded.
-				err := rt.CompactLiveSession(t.Context(), "child-1", "", nil)
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "not live")
-				return
+					// The session is gone from the registry: further requests
+					// are rejected instead of stranded.
+					err := rt.CompactLiveSession(t.Context(), "child-1", "", nil)
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), "not live")
+					return
+				}
+			case <-deadline:
+				t.Fatal("timed out waiting for the terminal compaction event")
 			}
-		case <-deadline:
-			t.Fatal("timed out waiting for the terminal compaction event")
 		}
-	}
+	})
 }
 
 // TestCompactLiveSession_DuplicateSessionIDsCompactOnlyTargetEntry is the
