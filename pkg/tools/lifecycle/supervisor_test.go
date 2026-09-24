@@ -1011,30 +1011,32 @@ func TestSupervisor_CrashLoopIgnoresCleanDisconnects(t *testing.T) {
 func TestSupervisor_CrashLoopIgnoresForcedRestart(t *testing.T) {
 	t.Parallel()
 
-	sessions := make([]*fakeSession, 5)
-	steps := make([]scriptStep, 5)
-	for i := range sessions {
-		sessions[i] = newFakeSession()
-		steps[i] = scriptStep{session: sessions[i]}
-	}
-	c := newScriptedConnector(steps...)
+	synctest.Test(t, func(t *testing.T) {
+		sessions := make([]*fakeSession, 5)
+		steps := make([]scriptStep, 5)
+		for i := range sessions {
+			sessions[i] = newFakeSession()
+			steps[i] = scriptStep{session: sessions[i]}
+		}
+		c := newScriptedConnector(steps...)
 
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		for i := range 4 {
+			sessions[i].waitParked(t)
+			assert.NilError(t, s.RestartAndWait(t.Context(), 2*time.Second))
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
+			"forced restarts (more of them than the crash-loop threshold) must never be counted as crashes")
+		assert.Check(t, is.Equal(c.Calls(), 5))
+
+		assert.NilError(t, s.Stop(t.Context()))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	for i := range 4 {
-		sessions[i].waitParked(t)
-		assert.NilError(t, s.RestartAndWait(t.Context(), 2*time.Second))
-	}
-
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady),
-		"forced restarts (more of them than the crash-loop threshold) must never be counted as crashes")
-	assert.Check(t, is.Equal(c.Calls(), 5))
-
-	assert.NilError(t, s.Stop(t.Context()))
 }
 
 // TestSupervisor_CrashLoopStopIsClean verifies that Stop terminates cleanly
