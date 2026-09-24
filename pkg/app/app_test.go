@@ -169,37 +169,41 @@ func (r *blockingRunStreamRuntime) RunStream(ctx context.Context, _ *session.Ses
 func TestApp_Run_HoldsStreamGuardForStreamDuration(t *testing.T) {
 	t.Parallel()
 
-	release := make(chan struct{})
-	rt := &blockingRunStreamRuntime{release: release}
-	var guard sync.Mutex
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		rt := &blockingRunStreamRuntime{release: release}
+		var guard sync.Mutex
 
-	app := &App{
-		runtime:     rt,
-		session:     session.New(),
-		events:      make(chan tea.Msg, 16),
-		streamGuard: &guard,
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	app.Run(ctx, cancel, "hello", nil)
-
-	// isLocked probes guard without leaking a spurious lock acquisition:
-	// TryLock succeeding would otherwise leave the test goroutine holding
-	// the mutex, making the later "released" check hang forever.
-	isLocked := func() bool {
-		if guard.TryLock() {
-			guard.Unlock()
-			return false
+		app := &App{
+			runtime:     rt,
+			session:     session.New(),
+			events:      make(chan tea.Msg, 16),
+			streamGuard: &guard,
 		}
-		return true
-	}
 
-	require.Eventually(t, isLocked, time.Second, time.Millisecond, "streamGuard should be held while RunStream is active")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		app.Run(ctx, cancel, "hello", nil)
 
-	close(release)
+		// isLocked probes guard without leaking a spurious lock acquisition:
+		// TryLock succeeding would otherwise leave the test goroutine holding
+		// the mutex, making the later "released" check hang forever.
+		isLocked := func() bool {
+			if guard.TryLock() {
+				guard.Unlock()
+				return false
+			}
+			return true
+		}
 
-	require.Eventually(t, func() bool { return !isLocked() }, time.Second, time.Millisecond, "streamGuard should be released once RunStream ends")
+		synctest.Wait()
+		require.True(t, isLocked(), "streamGuard should be held while RunStream is active")
+
+		close(release)
+
+		synctest.Wait()
+		require.False(t, isLocked(), "streamGuard should be released once RunStream ends")
+	})
 }
 
 // TestApp_AcquireStreamGuard_NoopWhenUnset verifies that a bare App with no
