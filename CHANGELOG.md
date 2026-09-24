@@ -3,6 +3,125 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.143.0] - 2026-09-24
+
+This release delivers a large set of ACP (Agent Control Protocol) compatibility improvements, new evaluator and provider features, and significant TUI stability fixes, alongside broad test modernization using Go's synctest framework.
+
+## What's New
+
+- Adds `session/load` ACP endpoint that reconnects to a session and replays persisted history before returning the load response
+- Adds support for client-supplied stdio MCP servers in ACP `session/new` and `session/resume`, with eager initialization and per-session ownership
+- Adds provider-backed evaluators with TypeSafe Jev support, wiring named evaluators into the hook system
+- Tracks evaluator token usage and cost across sessions, budgets, and the cost dialog
+- Adds `provider_opts.extra_body` passthrough for Chat Completions, enabling vendor-specific fields (e.g., `reasoning_effort`, `enable_thinking`) to be forwarded to backends
+- Implements ACP slash commands `/compact`, `/usage`, and `/new` with real dispatch under session turn admission and cancellation handling
+- Adds `skill_content_guard` and `prompt_file_guard` hook events for operator-controlled interception of skill content and prompt file loading
+- Adds custom lint rules detecting split-trim-join suffix loops, temporary pointer returns with `new` expressions, and fields slices used only for iteration
+
+## Improvements
+
+- Keeps the TUI composing frames and running animation ticks when the terminal is unfocused or in an inactive tmux pane; removes the tmux startup focus probe and deferred-render behavior
+- Trims textarea padding using `strings.CutLast` in the TUI for faster word wrapping
+- Iterates wrapped and dialog words in the TUI without allocating a fields slice
+
+## Bug Fixes
+
+- Fixes ACP "Allow and remember my choice" scoping so approval is remembered only for the selected tool, not the entire session
+- Fixes ACP iteration-limit permission handler to require an exact `continue` selection, rejecting unknown, empty, or wrong-case option IDs
+- Fixes stale scrollbar state causing the conversation view to jump to incorrect positions on mouse release
+- Fixes ACP to load a fresh team and provider registry per session, so workspace-rooted toolsets resolve paths against the correct session workspace
+- Fixes ACP to enforce filesystem policies and post-edit hooks before read/write/edit RPCs, and to reject dangling symlinks
+- Fixes ACP resume to validate workspace identity with `os.SameFile` and replace additional roots correctly without rewriting persisted workspace provenance
+- Fixes ACP session close to drain foreground turns, runtime cleanup, and toolset shutdown before acknowledging close, preventing races with resume
+- Fixes ACP to decline unsupported elicitation requests immediately rather than waiting indefinitely
+- Fixes ACP to report accurate prompt outcomes (`end_turn`, `max_tokens`, `refusal`, `max_turn_requests`, `error`) instead of always returning `end_turn`
+- Fixes ACP to filter and paginate `session/list` results (max 50 per page, ordered by creation time), honoring optional `cwd` filters and keyset cursors
+- Fixes ACP to capture accurate edit diffs from full client-read content and to resolve tool locations to absolute paths
+- Fixes ACP tool-call lifecycle reporting to track each tool with a stable ACP ID through `pending`, `in_progress`, and completion states
+- Fixes ACP to honor client filesystem capabilities during tool discovery and to read client-provided content in `read_multiple_files`
+- Fixes ACP to preserve prompt attachments (embedded text, blobs, images, file links) and decode file URIs only once
+- Fixes ACP multi-agent cost tracking to accumulate costs by runtime session ID rather than replacing root-session display with child costs
+- Fixes ACP to emit empty plan snapshots so clients clear stale plans when the todo list is emptied
+- Fixes `GOOGLE_GENAI_USE_VERTEXAI` to be parsed as a boolean, so setting it to `false` or `0` correctly disables Vertex AI routing
+- Fixes TUI goroutine leaks when sessions close (throttler and fan-out goroutines now stop with the app context)
+- Fixes TUI to reconcile transcript geometry before scroll-state clamping, preventing the conversation view from jumping during background updates
+- Fixes ACP to preserve parallel tool batches when replaying evaluator events
+- Fixes ACP to validate and fully account evaluator request usage
+- Fixes runtime to preserve tool callback scope during manual compaction
+- Fixes `SkillContent` type placement to break a tools→skills→httpclient→desktop import cycle
+
+## Technical Changes
+
+- Refreshes the models.dev catalog snapshot embedded in the binary (multiple updates)
+- Marks models.dev snapshot files as linguist-generated in `.gitattributes` to collapse diffs on GitHub
+- Migrates UUID generation and parsing to Go 1.27 stdlib `uuid` package, removing the `github.com/google/uuid` dependency from the common path
+- Adopts `errors.AsType` generic helper across 34 call sites, replacing the `var target *Type; errors.As` pattern
+- Adopts `sync.WaitGroup.Go` in the scheduler and test workers
+- Adopts `reflect.Value.Fields` for hook field iteration and `reflect.TypeAssert` in TUI test helpers
+- Replaces Bedrock AWS pointer helpers (`aws.String`, `aws.Int32`, `aws.Float32`) with Go 1.26 `new(expr)`
+- Replaces manual URL struct copy in `EgressProxyFromContext` with `url.URL.Clone`
+- Simplifies JSON tool result encoding using `encoding/json/v2`
+- Converts a large number of concurrency-heavy tests across the codebase to use Go's `synctest` framework for deterministic timing
+- Stores TUI frame dumps in test artifact directories via `testing.TB.ArtifactDir()`
+- Reverts OpenAI SDK bump pending license approval
+### Pull Requests
+
+- [#4368](https://github.com/docker/docker-agent/pull/4368) - chore(deps): bump the actions group across 1 directory with 2 updates
+- [#4369](https://github.com/docker/docker-agent/pull/4369) - chore: refresh models.dev snapshot (+262 -186 ~399)
+- [#4370](https://github.com/docker/docker-agent/pull/4370) - docs: update CHANGELOG.md for v1.142.0
+- [#4371](https://github.com/docker/docker-agent/pull/4371) - chore: mark models.dev snapshot files as generated in .gitattributes
+- [#4373](https://github.com/docker/docker-agent/pull/4373) - feat: add skill_content_guard and prompt_file_guard hook events
+- [#4374](https://github.com/docker/docker-agent/pull/4374) - chore(deps): bump Go dependencies (anthropic, openai, goja, libopenapi, doublestar, smithy-go, x/tools)
+- [#4375](https://github.com/docker/docker-agent/pull/4375) - feat: add provider-backed evaluators with TypeSafe Jev
+- [#4376](https://github.com/docker/docker-agent/pull/4376) - fix(acp): scope remembered approval to the selected tool
+- [#4377](https://github.com/docker/docker-agent/pull/4377) - fix(acp): reject unknown iteration-limit permission choices
+- [#4378](https://github.com/docker/docker-agent/pull/4378) - fix(tui): prevent stale scrollbar state from jumping the conversation
+- [#4379](https://github.com/docker/docker-agent/pull/4379) - fix(acp): load workspace-rooted teams per session
+- [#4380](https://github.com/docker/docker-agent/pull/4380) - fix(acp): enforce filesystem policies and post-edit hooks
+- [#4381](https://github.com/docker/docker-agent/pull/4381) - fix(acp): validate resume workspaces and replace additional roots
+- [#4382](https://github.com/docker/docker-agent/pull/4382) - chore(deps): bump portcullis v1.0.0→v1.1.0 and libopenapi v0.39.0→v0.39.1
+- [#4383](https://github.com/docker/docker-agent/pull/4383) - fix(acp): synchronize session close and shutdown
+- [#4385](https://github.com/docker/docker-agent/pull/4385) - fix(acp): decline unsupported elicitation requests
+- [#4386](https://github.com/docker/docker-agent/pull/4386) - feat(acp): support client-supplied stdio MCP servers
+- [#4387](https://github.com/docker/docker-agent/pull/4387) - feat: track evaluator usage and cost across sessions and budgets
+- [#4388](https://github.com/docker/docker-agent/pull/4388) - fix(acp): report accurate prompt outcomes and structured errors
+- [#4389](https://github.com/docker/docker-agent/pull/4389) - chore: refresh models.dev snapshot (+247 -54 ~151)
+- [#4390](https://github.com/docker/docker-agent/pull/4390) - fix(acp): filter and paginate session listings
+- [#4391](https://github.com/docker/docker-agent/pull/4391) - feat(acp): implement supported slash commands
+- [#4392](https://github.com/docker/docker-agent/pull/4392) - chore: refresh models.dev snapshot (+58 -0 ~74)
+- [#4393](https://github.com/docker/docker-agent/pull/4393) - fix(acp): capture accurate edit diffs and absolute tool locations
+- [#4394](https://github.com/docker/docker-agent/pull/4394) - fix(acp): report consistent tool-call lifecycles
+- [#4395](https://github.com/docker/docker-agent/pull/4395) - fix: treat GOOGLE_GENAI_USE_VERTEXAI as a boolean
+- [#4396](https://github.com/docker/docker-agent/pull/4396) - fix(acp): honor client filesystem capabilities and batch reads
+- [#4397](https://github.com/docker/docker-agent/pull/4397) - feat(providers): add provider_opts.extra_body passthrough for Chat Completions
+- [#4398](https://github.com/docker/docker-agent/pull/4398) - test: stabilize failed-turn conversation cache coverage
+- [#4399](https://github.com/docker/docker-agent/pull/4399) - refactor(httpclient): use URL.Clone for egress proxy URLs
+- [#4402](https://github.com/docker/docker-agent/pull/4402) - refactor: simplify JSON tool result encoding
+- [#4403](https://github.com/docker/docker-agent/pull/4403) - test(wire): use in-memory HTTP test servers
+- [#4404](https://github.com/docker/docker-agent/pull/4404) - refactor: migrate UUID generation and parsing to Go 1.27 stdlib
+- [#4405](https://github.com/docker/docker-agent/pull/4405) - test: remove environment and timing dependencies from flaky tests
+- [#4406](https://github.com/docker/docker-agent/pull/4406) - refactor(config): iterate hook fields with reflect.Value.Fields
+- [#4407](https://github.com/docker/docker-agent/pull/4407) - refactor(bedrock): use new expressions for pointer values
+- [#4408](https://github.com/docker/docker-agent/pull/4408) - test: store TUI frame dumps in test artifacts
+- [#4409](https://github.com/docker/docker-agent/pull/4409) - refactor: adopt errors.AsType in error handlers
+- [#4410](https://github.com/docker/docker-agent/pull/4410) - test(telemetry): use t.Output() for two lifetime-safe stderr loggers
+- [#4411](https://github.com/docker/docker-agent/pull/4411) - refactor: adopt WaitGroup.Go for scheduler and test workers
+- [#4412](https://github.com/docker/docker-agent/pull/4412) - fix(acp): preserve prompt attachments and decode file URIs once
+- [#4413](https://github.com/docker/docker-agent/pull/4413) - test(tui): use reflect.TypeAssert in command helpers
+- [#4414](https://github.com/docker/docker-agent/pull/4414) - fix: stop TUI goroutines when sessions close
+- [#4415](https://github.com/docker/docker-agent/pull/4415) - test: harden flaky-test isolation and failure cleanup
+- [#4416](https://github.com/docker/docker-agent/pull/4416) - test(acp): allow headroom for Windows workspace shell checks
+- [#4418](https://github.com/docker/docker-agent/pull/4418) - fix(acp): separate root context from multi-agent cost
+- [#4419](https://github.com/docker/docker-agent/pull/4419) - fix(tui): reconcile transcript geometry before scroll-state clamping
+- [#4421](https://github.com/docker/docker-agent/pull/4421) - fix(acp): emit empty plan snapshots
+- [#4422](https://github.com/docker/docker-agent/pull/4422) - chore(deps): bump github.com/pb33f/libopenapi v0.39.1→v0.40.0
+- [#4424](https://github.com/docker/docker-agent/pull/4424) - feat(lint): flag split-trim-join, new-expr, and fields-seq waste
+- [#4425](https://github.com/docker/docker-agent/pull/4425) - test(app): use B.Loop in event merging benchmarks
+- [#4426](https://github.com/docker/docker-agent/pull/4426) - fix(tui): keep redrawing when unfocused
+- [#4427](https://github.com/docker/docker-agent/pull/4427) - test: make isolated concurrency tests deterministic with synctest
+- [#4428](https://github.com/docker/docker-agent/pull/4428) - feat(acp): load sessions with persisted history replay
+
+
 ## [v1.142.0] - 2026-09-21
 
 This release adds several new features including background agent synchronization, native Anthropic compaction, expanded Gemini capabilities, OpenAI provider options, and a WebAssembly shared runtime, alongside numerous bug fixes for token accounting, streaming usage, and cost tracking.
@@ -6475,3 +6594,5 @@ This release improves the terminal user interface with better error handling and
 [v1.141.0]: https://github.com/docker/docker-agent/releases/tag/v1.141.0
 
 [v1.142.0]: https://github.com/docker/docker-agent/releases/tag/v1.142.0
+
+[v1.143.0]: https://github.com/docker/docker-agent/releases/tag/v1.143.0
