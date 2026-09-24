@@ -157,6 +157,15 @@ func f(input string) (result string) {
 		{"recover direct", `package p
 import "strings"
 func f() { defer func() { for range strings.Fields("x") { recover() } }(); panic("x") }`},
+		{"recover parenthesized", `package p
+import "strings"
+func f() { defer func() { for range strings.Fields("x") { (recover)() } }(); panic("x") }`},
+		{"recover assignment target", `package p
+import "strings"
+func f() { defer func() { a := []string{""}; for _, a[recover().(int)] = range strings.Fields("x") {} }(); panic(0) }`},
+		{"recover local assignment target", `package p
+import "strings"
+func f() { defer func() { a := []string{""}; words := strings.Fields("x"); for _, a[(recover)().(int)] = range words {} }(); panic(0) }`},
 		{"recover local", `package p
 import "strings"
 func f() { defer func() { words := strings.Fields("x"); for range words { recover() } }(); panic("x") }`},

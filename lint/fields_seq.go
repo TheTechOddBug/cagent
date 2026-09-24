@@ -91,15 +91,22 @@ func fieldsValueRange(info *types.Info, loop *ast.RangeStmt) bool {
 	}
 	// Iterator bodies run in a yield callback; a direct recover stops working.
 	valid := true
-	ast.Inspect(loop.Body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
+	for _, node := range []ast.Node{loop.Value, loop.Body} {
+		if node == nil {
+			continue
 		}
-		if call, ok := n.(*ast.CallExpr); ok && calleeObject(info, call) == types.Universe.Lookup("recover") {
-			valid = false
-		}
-		return valid
-	})
+		ast.Inspect(node, func(n ast.Node) bool {
+			if _, ok := n.(*ast.FuncLit); ok {
+				return false
+			}
+			if call, ok := n.(*ast.CallExpr); ok {
+				if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok && info.Uses[id] == types.Universe.Lookup("recover") {
+					valid = false
+				}
+			}
+			return valid
+		})
+	}
 	return valid
 }
 
