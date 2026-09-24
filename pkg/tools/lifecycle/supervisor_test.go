@@ -585,30 +585,32 @@ func TestSupervisor_RecoverFromFailedViaStart(t *testing.T) {
 func TestSupervisor_PermanentErrorsDontRestart(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	c := newScriptedConnector(scriptStep{session: sess1})
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		c := newScriptedConnector(scriptStep{session: sess1})
 
-	failedCh := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff: fastBackoff,
-		OnFailed: func(err error) {
-			select {
-			case failedCh <- err:
-			default:
-			}
-		},
+		failedCh := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff: fastBackoff,
+			OnFailed: func(err error) {
+				select {
+				case failedCh <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(lifecycle.ErrAuthRequired)
+
+		select {
+		case got := <-failedCh:
+			assert.Check(t, errors.Is(got, lifecycle.ErrAuthRequired))
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not transition to Failed")
+		}
+		assert.Check(t, is.Equal(c.Calls(), 1), "must not retry on permanent error")
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(lifecycle.ErrAuthRequired)
-
-	select {
-	case got := <-failedCh:
-		assert.Check(t, errors.Is(got, lifecycle.ErrAuthRequired))
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not transition to Failed")
-	}
-	assert.Check(t, is.Equal(c.Calls(), 1), "must not retry on permanent error")
 }
 
 // TestSupervisor_PermanentConnectErrorDoesNotRetry verifies that when
