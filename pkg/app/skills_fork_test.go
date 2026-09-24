@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -268,31 +269,35 @@ func TestApp_RunSkillFork_SynthesizesStreamStoppedWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	skill := writeSkill(t, "commit", true /* fork */, "# Commit\nPlease commit.\n")
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-		skipStop:    true,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	sess := session.New()
-	a := New(t.Context(), rt, sess)
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+			skipStop:    true,
+		}
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
+		sess := session.New()
+		a := New(t.Context(), rt, sess)
 
-	require.Eventually(t, func() bool { return rt.stopCall.Load() }, time.Second, 10*time.Millisecond,
-		"RunSkillFork goroutine should finish even without an explicit stop event")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
 
-	collected := collectUntilQuiet(t, a.events)
-	stops := streamStoppedEvents(collected)
-	require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
-	assert.Equal(t, "normal", stops[0].Reason)
-	assert.Equal(t, sess.ID, stops[0].SessionID,
-		"with no sub-session id ever observed, the fallback must use the parent session's own id")
-	assert.Equal(t, "mock", stops[0].AgentName, "must fall back to Runtime.CurrentAgentName since no event carried one")
+		synctest.Wait()
+		require.True(t, rt.stopCall.Load(),
+			"RunSkillFork goroutine should finish even without an explicit stop event")
+
+		collected := collectUntilQuiet(t, a.events)
+		stops := streamStoppedEvents(collected)
+		require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
+		assert.Equal(t, "normal", stops[0].Reason)
+		assert.Equal(t, sess.ID, stops[0].SessionID,
+			"with no sub-session id ever observed, the fallback must use the parent session's own id")
+		assert.Equal(t, "mock", stops[0].AgentName, "must fall back to Runtime.CurrentAgentName since no event carried one")
+	})
 }
 
 // TestApp_RunSkillFork_DoesNotDuplicateRealStreamStopped pins the flip
@@ -302,25 +307,29 @@ func TestApp_RunSkillFork_DoesNotDuplicateRealStreamStopped(t *testing.T) {
 	t.Parallel()
 
 	skill := writeSkill(t, "commit", true /* fork */, "# Commit\nPlease commit.\n")
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	a := New(t.Context(), rt, session.New())
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+		}
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
+		a := New(t.Context(), rt, session.New())
 
-	require.Eventually(t, func() bool { return rt.stopCall.Load() }, time.Second, 10*time.Millisecond,
-		"RunSkillFork goroutine should finish")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
 
-	collected := collectUntilQuiet(t, a.events)
-	stops := streamStoppedEvents(collected)
-	require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+		synctest.Wait()
+		require.True(t, rt.stopCall.Load(),
+			"RunSkillFork goroutine should finish")
+
+		collected := collectUntilQuiet(t, a.events)
+		stops := streamStoppedEvents(collected)
+		require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+	})
 }
 
 func (f *skillFakeRuntime) ReadSkillContent(ctx context.Context, sess *session.Session, name string) (string, error) {
