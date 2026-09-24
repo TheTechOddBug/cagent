@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -129,30 +130,32 @@ func TestRootViewCachePreservesExactViewOnCleanTick(t *testing.T) {
 }
 
 func TestRootViewCacheInvalidatesOnlyForDirtyAcceptedTick(t *testing.T) {
-	m, _ := newTestModel(t)
-	page := &countingChatPage{text: "stable"}
-	m.activeTab.chatPage = page
-	m.ready = true
-	m.leanMode = true
-	m.ar = animation.NewRuntime()
-	m.appName = "test"
-	m.activeTab.sessionState = &service.SessionState{}
-	_ = m.View()
+	synctest.Test(t, func(t *testing.T) {
+		m, _ := newTestModel(t)
+		page := &countingChatPage{text: "stable"}
+		m.activeTab.chatPage = page
+		m.ready = true
+		m.leanMode = true
+		m.ar = animation.NewRuntime()
+		m.appName = "test"
+		m.activeTab.sessionState = &service.SessionState{}
+		_ = m.View()
 
-	sub := m.ar.Subscribe()
-	cleanCmd := sub.Start()
-	clean := cleanCmd().(animation.TickMsg)
-	_, _ = m.update(clean)
-	_ = m.View()
-	assert.Equal(t, 1, page.views)
+		sub := m.ar.Subscribe()
+		cleanCmd := sub.Start()
+		clean := cleanCmd().(animation.TickMsg)
+		_, _ = m.update(clean)
+		_ = m.View()
+		assert.Equal(t, 1, page.views)
 
-	page.dirtyTick = true
-	dirtyCmd := m.ar.EnsureRunning()
-	dirty := dirtyCmd().(animation.TickMsg)
-	_, _ = m.update(dirty)
-	_ = m.View()
-	assert.Equal(t, 2, page.views)
-	sub.Stop()
+		page.dirtyTick = true
+		dirtyCmd := m.ar.EnsureRunning()
+		dirty := dirtyCmd().(animation.TickMsg)
+		_, _ = m.update(dirty)
+		_ = m.View()
+		assert.Equal(t, 2, page.views)
+		sub.Stop()
+	})
 }
 
 // mockEditor implements editor.Editor for testing.
