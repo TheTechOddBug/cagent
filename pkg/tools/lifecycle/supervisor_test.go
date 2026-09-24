@@ -346,36 +346,38 @@ func TestSupervisor_RestartAfterDisconnect(t *testing.T) {
 func TestSupervisor_GivesUpAfterMaxAttempts(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{err: errors.New("fail-1")},
-		scriptStep{err: errors.New("fail-2")},
-		scriptStep{err: errors.New("fail-3")},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{err: errors.New("fail-1")},
+			scriptStep{err: errors.New("fail-2")},
+			scriptStep{err: errors.New("fail-3")},
+		)
 
-	failed := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		MaxAttempts: 3,
-		Backoff:     fastBackoff,
-		OnFailed: func(err error) {
-			select {
-			case failed <- err:
-			default:
-			}
-		},
+		failed := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			MaxAttempts: 3,
+			Backoff:     fastBackoff,
+			OnFailed: func(err error) {
+				select {
+				case failed <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(errors.New("crash"))
+
+		select {
+		case <-failed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not call OnFailed")
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(errors.New("crash"))
-
-	select {
-	case <-failed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not call OnFailed")
-	}
-
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
 }
 
 func TestSupervisor_RestartNeverGoesToFailed(t *testing.T) {
