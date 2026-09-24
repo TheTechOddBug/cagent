@@ -698,32 +698,34 @@ func TestCallToolNoTimeoutWhenCallTimeoutUnset(t *testing.T) {
 func TestCallToolParentCancelWinsOverTimeout(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	mock := &mockMCPClient{
-		callToolFn: func(ctx context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-			close(started)
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
-	}
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		mock := &mockMCPClient{
+			callToolFn: func(ctx context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+				close(started)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		}
 
-	ts := newTestToolset("test-server", "test-server", mock)
-	ts.callTimeout = time.Hour // large enough that only the parent cancel can fire first
-	ts.markStartedForTesting()
+		ts := newTestToolset("test-server", "test-server", mock)
+		ts.callTimeout = time.Hour // large enough that only the parent cancel can fire first
+		ts.markStartedForTesting()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	go func() {
-		<-started
-		cancel()
-	}()
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() {
+			<-started
+			cancel()
+		}()
 
-	_, err := ts.callTool(ctx, tools.ToolCall{
-		Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
-	}, tools.NopRuntime{})
+		_, err := ts.callTool(ctx, tools.ToolCall{
+			Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
+		}, tools.NopRuntime{})
 
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.Canceled, "expected context.Canceled, got: %v", err)
-	assert.NotErrorIs(t, err, tools.ErrCallTimeout, "a parent cancel must not be misreported as a call_timeout")
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled, "expected context.Canceled, got: %v", err)
+		assert.NotErrorIs(t, err, tools.ErrCallTimeout, "a parent cancel must not be misreported as a call_timeout")
+	})
 }
 
 func TestCallToolTimeoutCoversReconnectRetry(t *testing.T) {
