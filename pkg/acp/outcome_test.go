@@ -33,39 +33,60 @@ func TestPromptOutcomeUsesOnlyRootSession(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
-		events []runtime.Event
+		events func() []runtime.Event
 		stop   acpsdk.StopReason
 		code   string
 	}{
-		{name: "normal", stop: acpsdk.StopReasonEndTurn, events: []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}},
-		{name: "length", stop: acpsdk.StopReasonMaxTokens, events: []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonLength)}},
-		{name: "refusal", stop: acpsdk.StopReasonRefusal, events: []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonRefusal)}},
-		{name: "iteration limit", stop: acpsdk.StopReasonMaxTurnRequests, events: []runtime.Event{stoppedEvent(testSessionID, runtime.StreamStopReasonMaxIterations, "")}},
-		{name: "runtime cancellation", stop: acpsdk.StopReasonCancelled, events: []runtime.Event{stoppedEvent(testSessionID, "canceled", "")}},
-		{name: "fatal before model", code: runtime.ErrorCodeModelError, events: []runtime.Event{runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeModelError, "provider failed")}},
-		{name: "fatal after partial output", code: runtime.ErrorCodeRateLimited, events: []runtime.Event{runtime.AgentChoice("root", testSessionID, "partial"), runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeRateLimited, "provider failed"), stoppedEvent(testSessionID, "error", "")}},
-		{name: "terminal error without details", code: "error", events: []runtime.Event{stoppedEvent(testSessionID, "error", "")}},
-		{name: "budget is not request limit", code: "budget_exceeded", events: []runtime.Event{stoppedEvent(testSessionID, "budget_exceeded", "")}},
-		{name: "recoverable diagnostics", stop: acpsdk.StopReasonEndTurn, events: []runtime.Event{runtime.ErrorForSession(testSessionID, "compaction failed"), runtime.Error("RAG diagnostic"), runtime.ErrorWithCodeForSession(testSessionID, "future_diagnostic", "nonterminal"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}},
-		{name: "child errors and limits", stop: acpsdk.StopReasonEndTurn, events: []runtime.Event{runtime.ErrorWithCodeForSession("child", runtime.ErrorCodeModelError, "child failed"), stoppedEvent("child", "error", chat.FinishReasonRefusal), stoppedEvent("child", runtime.StreamStopReasonMaxIterations, chat.FinishReasonLength), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}},
-		{name: "later successful result wins", stop: acpsdk.StopReasonEndTurn, events: []runtime.Event{runtime.MessageAdded(testSessionID, &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: chat.FinishReasonLength}}, "root"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}},
+		{name: "normal", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
+			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		}},
+		{name: "length", stop: acpsdk.StopReasonMaxTokens, events: func() []runtime.Event {
+			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonLength)}
+		}},
+		{name: "refusal", stop: acpsdk.StopReasonRefusal, events: func() []runtime.Event {
+			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonRefusal)}
+		}},
+		{name: "iteration limit", stop: acpsdk.StopReasonMaxTurnRequests, events: func() []runtime.Event {
+			return []runtime.Event{stoppedEvent(testSessionID, runtime.StreamStopReasonMaxIterations, "")}
+		}},
+		{name: "runtime cancellation", stop: acpsdk.StopReasonCancelled, events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "canceled", "")} }},
+		{name: "fatal before model", code: runtime.ErrorCodeModelError, events: func() []runtime.Event {
+			return []runtime.Event{runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeModelError, "provider failed")}
+		}},
+		{name: "fatal after partial output", code: runtime.ErrorCodeRateLimited, events: func() []runtime.Event {
+			return []runtime.Event{runtime.AgentChoice("root", testSessionID, "partial"), runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeRateLimited, "provider failed"), stoppedEvent(testSessionID, "error", "")}
+		}},
+		{name: "terminal error without details", code: "error", events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "error", "")} }},
+		{name: "budget is not request limit", code: "budget_exceeded", events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "budget_exceeded", "")} }},
+		{name: "recoverable diagnostics", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
+			return []runtime.Event{runtime.ErrorForSession(testSessionID, "compaction failed"), runtime.Error("RAG diagnostic"), runtime.ErrorWithCodeForSession(testSessionID, "future_diagnostic", "nonterminal"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		}},
+		{name: "child errors and limits", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
+			return []runtime.Event{runtime.ErrorWithCodeForSession("child", runtime.ErrorCodeModelError, "child failed"), stoppedEvent("child", "error", chat.FinishReasonRefusal), stoppedEvent("child", runtime.StreamStopReasonMaxIterations, chat.FinishReasonLength), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		}},
+		{name: "later successful result wins", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
+			return []runtime.Event{runtime.MessageAdded(testSessionID, &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: chat.FinishReasonLength}}, "root"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			a, _, _ := newPromptTestAgent(t, &fakeRuntime{events: tc.events})
-			response, err := a.Prompt(t.Context(), promptRequest("test"))
-			if tc.code != "" {
-				var rpcErr *acpsdk.RequestError
-				require.ErrorAs(t, err, &rpcErr)
-				assert.Equal(t, -32603, rpcErr.Code)
-				data := rpcErr.Data.(map[string]any)
-				assert.Equal(t, tc.code, data["runtimeCode"])
-				assert.Equal(t, testSessionID, data["sessionId"])
-				assert.Empty(t, response.StopReason)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tc.stop, response.StopReason)
-			}
+
+			synctest.Test(t, func(t *testing.T) {
+				a, _, _ := newPromptTestAgent(t, &fakeRuntime{events: tc.events()})
+				response, err := a.Prompt(t.Context(), promptRequest("test"))
+				if tc.code != "" {
+					var rpcErr *acpsdk.RequestError
+					require.ErrorAs(t, err, &rpcErr)
+					assert.Equal(t, -32603, rpcErr.Code)
+					data := rpcErr.Data.(map[string]any)
+					assert.Equal(t, tc.code, data["runtimeCode"])
+					assert.Equal(t, testSessionID, data["sessionId"])
+					assert.Empty(t, response.StopReason)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, tc.stop, response.StopReason)
+				}
+			})
 		})
 	}
 }
@@ -161,50 +182,53 @@ func TestPromptOutcomeWaitsForDrainAndCancellationWins(t *testing.T) {
 
 func TestPromptStructuredErrorsOnWire(t *testing.T) {
 	t.Parallel()
-	a, s := newResumeFixture(t, t.TempDir())
-	s.rt = &fakeRuntime{events: []runtime.Event{runtime.ErrorWithCodeForSession(s.sess.ID, runtime.ErrorCodeRateLimited, "provider rate limited")}}
-	reader, send := io.Pipe()
-	receive, writer := io.Pipe()
-	conn := acpsdk.NewAgentSideConnection(a, writer, reader)
-	a.SetAgentConnection(conn)
-	t.Cleanup(func() { _ = send.Close(); _ = receive.Close(); <-conn.Done() })
-	encoder, decoder := json.NewEncoder(send), json.NewDecoder(receive)
-	for i, tc := range []struct {
-		method      string
-		params      map[string]any
-		code        int
-		runtimeCode string
-	}{
-		{"session/prompt", map[string]any{"sessionId": "missing", "prompt": []any{}}, -32002, ""},
-		{"session/resume", map[string]any{"sessionId": "missing", "cwd": s.workingDir}, -32002, ""},
-		{"session/new", map[string]any{"cwd": filepath.Join(t.TempDir(), "missing"), "mcpServers": []any{}}, -32602, ""},
-		{"session/new", map[string]any{"cwd": s.workingDir, "additionalDirectories": []string{"relative"}, "mcpServers": []any{}}, -32602, ""},
-		{"session/prompt", map[string]any{"sessionId": s.id, "prompt": []any{map[string]any{"type": "text", "text": "hello"}}}, -32603, runtime.ErrorCodeRateLimited},
-	} {
-		require.NoError(t, encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": i, "method": tc.method, "params": tc.params}))
-		for {
-			var response struct {
-				ID     *int                 `json:"id"`
-				Error  *acpsdk.RequestError `json:"error"`
-				Method string               `json:"method"`
+
+	synctest.Test(t, func(t *testing.T) {
+		a, s := newResumeFixture(t, t.TempDir())
+		s.rt = &fakeRuntime{events: []runtime.Event{runtime.ErrorWithCodeForSession(s.sess.ID, runtime.ErrorCodeRateLimited, "provider rate limited")}}
+		reader, send := io.Pipe()
+		receive, writer := io.Pipe()
+		conn := acpsdk.NewAgentSideConnection(a, writer, reader)
+		a.SetAgentConnection(conn)
+		t.Cleanup(func() { _ = send.Close(); _ = receive.Close(); <-conn.Done() })
+		encoder, decoder := json.NewEncoder(send), json.NewDecoder(receive)
+		for i, tc := range []struct {
+			method      string
+			params      map[string]any
+			code        int
+			runtimeCode string
+		}{
+			{"session/prompt", map[string]any{"sessionId": "missing", "prompt": []any{}}, -32002, ""},
+			{"session/resume", map[string]any{"sessionId": "missing", "cwd": s.workingDir}, -32002, ""},
+			{"session/new", map[string]any{"cwd": filepath.Join(t.TempDir(), "missing"), "mcpServers": []any{}}, -32602, ""},
+			{"session/new", map[string]any{"cwd": s.workingDir, "additionalDirectories": []string{"relative"}, "mcpServers": []any{}}, -32602, ""},
+			{"session/prompt", map[string]any{"sessionId": s.id, "prompt": []any{map[string]any{"type": "text", "text": "hello"}}}, -32603, runtime.ErrorCodeRateLimited},
+		} {
+			require.NoError(t, encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": i, "method": tc.method, "params": tc.params}))
+			for {
+				var response struct {
+					ID     *int                 `json:"id"`
+					Error  *acpsdk.RequestError `json:"error"`
+					Method string               `json:"method"`
+				}
+				require.NoError(t, decoder.Decode(&response))
+				if response.ID == nil {
+					assert.Equal(t, "session/update", response.Method)
+					continue
+				}
+				assert.Equal(t, i, *response.ID)
+				require.NotNil(t, response.Error)
+				assert.Equal(t, tc.code, response.Error.Code)
+				if tc.runtimeCode != "" {
+					data := response.Error.Data.(map[string]any)
+					assert.Equal(t, tc.runtimeCode, data["runtimeCode"])
+					assert.Equal(t, s.id, data["sessionId"])
+					assert.Equal(t, "provider rate limited", data["error"])
+				}
+				break
 			}
-			require.NoError(t, decoder.Decode(&response))
-			if response.ID == nil {
-				assert.Equal(t, "session/update", response.Method)
-				continue
-			}
-			assert.Equal(t, i, *response.ID)
-			require.NotNil(t, response.Error)
-			assert.Equal(t, tc.code, response.Error.Code)
-			if tc.runtimeCode != "" {
-				data := response.Error.Data.(map[string]any)
-				assert.Equal(t, tc.runtimeCode, data["runtimeCode"])
-				assert.Equal(t, s.id, data["sessionId"])
-				assert.Equal(t, "provider rate limited", data["error"])
-			}
-			break
 		}
-	}
+	})
 }
 
 type failureProvider struct{ mockProvider }
