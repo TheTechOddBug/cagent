@@ -625,40 +625,42 @@ func TestSupervisor_PermanentErrorsDontRestart(t *testing.T) {
 func TestSupervisor_PermanentConnectErrorDoesNotRetry(t *testing.T) {
 	t.Parallel()
 
-	// sess1 is the initial successful connection; then the reconnect
-	// returns a permanent auth error.
-	sess1 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{err: lifecycle.ErrAuthRequired}, // permanent: must NOT burn MaxAttempts
-	)
+	synctest.Test(t, func(t *testing.T) {
+		// sess1 is the initial successful connection; then the reconnect
+		// returns a permanent auth error.
+		sess1 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{err: lifecycle.ErrAuthRequired}, // permanent: must NOT burn MaxAttempts
+		)
 
-	failedCh := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		MaxAttempts: 5, // budget that must NOT be consumed
-		Backoff:     fastBackoff,
-		OnFailed: func(err error) {
-			select {
-			case failedCh <- err:
-			default:
-			}
-		},
+		failedCh := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			MaxAttempts: 5, // budget that must NOT be consumed
+			Backoff:     fastBackoff,
+			OnFailed: func(err error) {
+				select {
+				case failedCh <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		// Make the session fail non-permanently so tryRestart is entered.
+		sess1.fail(errors.New("transport closed"))
+
+		select {
+		case got := <-failedCh:
+			assert.Check(t, errors.Is(got, lifecycle.ErrAuthRequired))
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not call OnFailed")
+		}
+
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
+		// One initial Connect + one reconnect attempt that returned permanent error.
+		assert.Check(t, is.Equal(c.Calls(), 2), "must fail-fast after one reconnect attempt on permanent error")
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	// Make the session fail non-permanently so tryRestart is entered.
-	sess1.fail(errors.New("transport closed"))
-
-	select {
-	case got := <-failedCh:
-		assert.Check(t, errors.Is(got, lifecycle.ErrAuthRequired))
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not call OnFailed")
-	}
-
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateFailed))
-	// One initial Connect + one reconnect attempt that returned permanent error.
-	assert.Check(t, is.Equal(c.Calls(), 2), "must fail-fast after one reconnect attempt on permanent error")
 }
 
 func TestSupervisor_CleanClosePolicyBoundary(t *testing.T) {
