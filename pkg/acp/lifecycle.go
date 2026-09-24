@@ -13,6 +13,7 @@ import (
 // sessionLifecycle is also the publication token for constructors admitted before close.
 type sessionLifecycle struct {
 	id      string
+	newRoot bool // NewSession allocates a root ID before it may be persisted.
 	closing bool
 	active  int
 	pending sync.WaitGroup
@@ -77,6 +78,9 @@ func (a *Agent) beginSessionConstruction(ctx context.Context, sid string) (conte
 	defer a.mu.Unlock()
 	if a.stopped {
 		return nil, nil, errors.New("agent stopped")
+	}
+	if a.deletion != nil {
+		return nil, nil, errors.New("session deletion in progress; retry after it finishes")
 	}
 	if a.team == nil {
 		return nil, nil, errors.New("agent not initialized")

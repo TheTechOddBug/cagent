@@ -170,6 +170,16 @@ Concurrent close requests join the same cleanup. Canceling a close request only 
 
 Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
 
+## Deleting Sessions
+
+`session/delete` permanently removes a root conversation's stored history, descendant sessions, and stored generated-media records/blobs. It does not remove files from the workspace. The agent advertises `sessionCapabilities.delete`; the pinned Go SDK still names the handler `UnstableDeleteSession`, but the wire method is `session/delete`. An empty session ID is invalid; already-deleted and unknown IDs succeed without creating a session. Subsequent load/resume requests for deleted history return not found.
+
+Deletion closes the root session first, canceling its foreground work and joining loads/resumes, runtime/background tasks, and client MCP cleanup before deleting storage. Cleanup failure preserves history and remains an error for that lifecycle. An ordinary store error leaves the session closed and can be retried; SQLite subtree/media changes occur in one transaction.
+
+Direct deletion of child sessions is rejected. Independently loaded descendants must be closed, with successful cleanup, before their root can be deleted. While a delete is admitted, new session construction and reconnects are temporarily rejected agent-wide to prevent a descendant from being loaded during the cascade. A delete also returns busy if another session already has an in-flight constructor whose ancestry is not yet known. Different-ID deletes are serialized by returning busy; concurrent requests for the same ID join one operation. Unrelated already-running sessions are not canceled.
+
+Canceling a joining request stops only that caller's wait. Canceling the initiating request before storage deletion lets cleanup finish but skips deletion, keeping the admission barrier until the drain ends. Cancellation during a database call does not prove whether it committed; retrying deletion is safe. Shutdown joins any admitted deletion before the caller closes the store. These guarantees cover this agent instance, not other processes concurrently writing the same database; they do not provide an atomic filesystem revocation or a deadline for uncooperative cleanup.
+
 ## Plan Snapshots
 
 Todo tool results with typed todo metadata produce complete ACP plan snapshots. An empty todo snapshot sends `entries: []`, replacing and clearing the previous plan; completed entries remain visible until the todo storage is cleared. Missing or unrelated metadata does not change the plan, and textual tool output is not parsed to infer one. This uses the stable v1 `plan` update, not ID-based plan-removal extensions.
