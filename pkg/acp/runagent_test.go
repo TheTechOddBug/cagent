@@ -271,107 +271,113 @@ func mustReadACPFile(t *testing.T, path string) []byte {
 func TestPromptReplacementCancelsQueuedTurnWithoutSideEffects(t *testing.T) {
 	t.Parallel()
 
-	rt := &blockingPromptRuntime{
-		started:       make(chan int, 2),
-		firstCanceled: make(chan struct{}),
-		releaseFirst:  make(chan struct{}),
-	}
-	agent, sess, peer := newPromptTestAgent(t, rt)
-	agent.clientFS.ReadTextFile = true
-	peer.readTextFile = func(req acpsdk.ReadTextFileRequest) acpsdk.ReadTextFileResponse {
-		return acpsdk.ReadTextFileResponse{Content: "resource contents"}
-	}
+	synctest.Test(t, func(t *testing.T) {
+		rt := &blockingPromptRuntime{
+			started:       make(chan int, 2),
+			firstCanceled: make(chan struct{}),
+			releaseFirst:  make(chan struct{}),
+		}
+		agent, sess, peer := newPromptTestAgent(t, rt)
+		agent.clientFS.ReadTextFile = true
+		peer.readTextFile = func(req acpsdk.ReadTextFileRequest) acpsdk.ReadTextFileResponse {
+			return acpsdk.ReadTextFileResponse{Content: "resource contents"}
+		}
 
-	firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
-	require.Equal(t, 1, <-rt.started)
+		firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
+		require.Equal(t, 1, <-rt.started)
 
-	second := promptRequest("second")
-	second.Prompt = []acpsdk.ContentBlock{{ResourceLink: &acpsdk.ContentBlockResourceLink{
-		Type: "resource_link", Name: "second.txt", Uri: "second.txt",
-	}}}
-	secondDone := promptAsync(agent, t.Context(), second)
-	<-rt.firstCanceled
+		second := promptRequest("second")
+		second.Prompt = []acpsdk.ContentBlock{{ResourceLink: &acpsdk.ContentBlockResourceLink{
+			Type: "resource_link", Name: "second.txt", Uri: "second.txt",
+		}}}
+		secondDone := promptAsync(agent, t.Context(), second)
+		<-rt.firstCanceled
 
-	thirdDone := promptAsync(agent, t.Context(), promptRequest("third"))
-	secondResult := <-secondDone
-	require.NoError(t, secondResult.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, secondResult.response.StopReason)
+		thirdDone := promptAsync(agent, t.Context(), promptRequest("third"))
+		secondResult := <-secondDone
+		require.NoError(t, secondResult.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, secondResult.response.StopReason)
 
-	assert.Equal(t, int32(1), rt.calls.Load())
-	assert.Empty(t, peer.recordedReadRequests())
-	assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
+		assert.Equal(t, int32(1), rt.calls.Load())
+		assert.Empty(t, peer.recordedReadRequests())
+		assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
 
-	close(rt.releaseFirst)
-	firstResult := <-firstDone
-	require.NoError(t, firstResult.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
-	require.Equal(t, 2, <-rt.started)
+		close(rt.releaseFirst)
+		firstResult := <-firstDone
+		require.NoError(t, firstResult.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
+		require.Equal(t, 2, <-rt.started)
 
-	require.NoError(t, agent.Cancel(t.Context(), acpsdk.CancelNotification{SessionId: testSessionID}))
-	thirdResult := <-thirdDone
-	require.NoError(t, thirdResult.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, thirdResult.response.StopReason)
-	assert.Equal(t, int32(1), rt.max.Load())
-	assert.Equal(t, []string{"first", "third"}, sessionUserMessages(sess.sess))
+		require.NoError(t, agent.Cancel(t.Context(), acpsdk.CancelNotification{SessionId: testSessionID}))
+		thirdResult := <-thirdDone
+		require.NoError(t, thirdResult.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, thirdResult.response.StopReason)
+		assert.Equal(t, int32(1), rt.max.Load())
+		assert.Equal(t, []string{"first", "third"}, sessionUserMessages(sess.sess))
+	})
 }
 
 func TestPromptRejectsCanceledContextBeforeAdmission(t *testing.T) {
 	t.Parallel()
 
-	rt := &blockingPromptRuntime{started: make(chan int, 1)}
-	agent, sess, _ := newPromptTestAgent(t, rt)
+	synctest.Test(t, func(t *testing.T) {
+		rt := &blockingPromptRuntime{started: make(chan int, 1)}
+		agent, sess, _ := newPromptTestAgent(t, rt)
 
-	firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
-	<-rt.started
+		firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
+		<-rt.started
 
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	result := <-promptAsync(agent, ctx, promptRequest("canceled"))
-	require.NoError(t, result.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, result.response.StopReason)
-	assert.Equal(t, int32(1), rt.calls.Load())
-	assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		result := <-promptAsync(agent, ctx, promptRequest("canceled"))
+		require.NoError(t, result.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, result.response.StopReason)
+		assert.Equal(t, int32(1), rt.calls.Load())
+		assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
 
-	select {
-	case result := <-firstDone:
-		t.Fatalf("canceled prompt superseded the active turn: %+v", result)
-	case <-time.After(50 * time.Millisecond):
-	}
+		select {
+		case result := <-firstDone:
+			t.Fatalf("canceled prompt superseded the active turn: %+v", result)
+		case <-time.After(50 * time.Millisecond):
+		}
 
-	require.NoError(t, agent.Cancel(t.Context(), acpsdk.CancelNotification{SessionId: testSessionID}))
-	firstResult := <-firstDone
-	require.NoError(t, firstResult.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
+		require.NoError(t, agent.Cancel(t.Context(), acpsdk.CancelNotification{SessionId: testSessionID}))
+		firstResult := <-firstDone
+		require.NoError(t, firstResult.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
+	})
 }
 
 func TestCloseSessionCancelsActiveAndQueuedPrompts(t *testing.T) {
 	t.Parallel()
 
-	rt := &blockingPromptRuntime{
-		started:       make(chan int, 1),
-		firstCanceled: make(chan struct{}),
-		releaseFirst:  make(chan struct{}),
-	}
-	agent, sess, _ := newPromptTestAgent(t, rt)
+	synctest.Test(t, func(t *testing.T) {
+		rt := &blockingPromptRuntime{
+			started:       make(chan int, 1),
+			firstCanceled: make(chan struct{}),
+			releaseFirst:  make(chan struct{}),
+		}
+		agent, sess, _ := newPromptTestAgent(t, rt)
 
-	firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
-	<-rt.started
-	secondDone := promptAsync(agent, t.Context(), promptRequest("second"))
-	<-rt.firstCanceled
+		firstDone := promptAsync(agent, t.Context(), promptRequest("first"))
+		<-rt.started
+		secondDone := promptAsync(agent, t.Context(), promptRequest("second"))
+		<-rt.firstCanceled
 
-	closeDone := closeSessionAsync(agent, t.Context(), testSessionID)
-	secondResult := <-secondDone
-	require.ErrorContains(t, secondResult.err, "not found")
-	assert.Empty(t, secondResult.response.StopReason)
-	assert.Equal(t, int32(1), rt.calls.Load())
-	assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
+		closeDone := closeSessionAsync(agent, t.Context(), testSessionID)
+		secondResult := <-secondDone
+		require.ErrorContains(t, secondResult.err, "not found")
+		assert.Empty(t, secondResult.response.StopReason)
+		assert.Equal(t, int32(1), rt.calls.Load())
+		assert.Equal(t, []string{"first"}, sessionUserMessages(sess.sess))
 
-	close(rt.releaseFirst)
-	firstResult := <-firstDone
-	require.NoError(t, firstResult.err)
-	assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
-	require.NoError(t, <-closeDone)
-	assert.Empty(t, agent.sessions)
+		close(rt.releaseFirst)
+		firstResult := <-firstDone
+		require.NoError(t, firstResult.err)
+		assert.Equal(t, acpsdk.StopReasonCancelled, firstResult.response.StopReason)
+		require.NoError(t, <-closeDone)
+		assert.Empty(t, agent.sessions)
+	})
 }
 
 type promptResult struct {
@@ -649,117 +655,8 @@ func agentMessageText(t *testing.T, update acpsdk.SessionUpdate) string {
 func TestRunAgent_EmitsAvailableCommandsFirst(t *testing.T) {
 	t.Parallel()
 
-	f := newRunAgentFixture(t, &fakeRuntime{}, &captureWriter{})
-
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 1)
-	requireAvailableCommands(t, updates[0])
-}
-
-func TestRunAgent_StreamsAssistantAndDiagnosticEvents(t *testing.T) {
-	t.Parallel()
-
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.AgentChoice("root", testSessionID, "Hello"),
-		runtime.AgentChoiceReasoning("root", testSessionID, "pondering"),
-		runtime.Error("boom"),
-		runtime.Warning("careful", "root"),
-		runtime.ModelFallback("root", "gpt-5", "gpt-4o", "rate limited", 1, 3),
-	}}
-	f := newRunAgentFixture(t, rt, &captureWriter{})
-
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 6)
-	requireAvailableCommands(t, updates[0])
-
-	assert.Equal(t, "Hello", agentMessageText(t, updates[1]))
-
-	require.NotNil(t, updates[2].AgentThoughtChunk)
-	require.NotNil(t, updates[2].AgentThoughtChunk.Content.Text)
-	assert.Equal(t, "pondering", updates[2].AgentThoughtChunk.Content.Text.Text)
-
-	assert.Equal(t, "\n\nError: boom\n", agentMessageText(t, updates[3]))
-	assert.Equal(t, "\nWarning: careful\n", agentMessageText(t, updates[4]))
-	assert.Equal(t, "\nModel gpt-5 failed, falling back to gpt-4o (rate limited)\n", agentMessageText(t, updates[5]))
-
-	assert.Empty(t, rt.resumeRequests())
-}
-
-func TestRunAgent_SessionTitleUpdate(t *testing.T) {
-	t.Parallel()
-
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.SessionTitle(testSessionID, "Refactor plan"),
-	}}
-	f := newRunAgentFixture(t, rt, &captureWriter{})
-
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 2)
-	require.NotNil(t, updates[1].SessionInfoUpdate)
-	require.NotNil(t, updates[1].SessionInfoUpdate.Title)
-	assert.Equal(t, "Refactor plan", *updates[1].SessionInfoUpdate.Title)
-}
-
-func TestRunAgent_TokenUsageUpdates(t *testing.T) {
-	t.Parallel()
-
-	t.Run("with cost", func(t *testing.T) {
-		t.Parallel()
-
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
-				ContextLength: 1234,
-				ContextLimit:  200000,
-				Cost:          0.75,
-			}),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
-
-		require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-		updates := f.sessionUpdates(t)
-		require.Len(t, updates, 2)
-		require.NotNil(t, updates[1].UsageUpdate)
-		assert.Equal(t, 200000, updates[1].UsageUpdate.Size)
-		assert.Equal(t, 1234, updates[1].UsageUpdate.Used)
-		require.NotNil(t, updates[1].UsageUpdate.Cost)
-		assert.Equal(t, acpsdk.Cost{Amount: 0.75, Currency: "USD"}, *updates[1].UsageUpdate.Cost)
-	})
-
-	t.Run("without cost", func(t *testing.T) {
-		t.Parallel()
-
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
-				ContextLength: 42,
-				ContextLimit:  1000,
-			}),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
-
-		require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-		updates := f.sessionUpdates(t)
-		require.Len(t, updates, 2)
-		require.NotNil(t, updates[1].UsageUpdate)
-		assert.Equal(t, 1000, updates[1].UsageUpdate.Size)
-		assert.Equal(t, 42, updates[1].UsageUpdate.Used)
-		assert.Nil(t, updates[1].UsageUpdate.Cost)
-	})
-
-	t.Run("nil usage emits nothing", func(t *testing.T) {
-		t.Parallel()
-
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.NewTokenUsageEvent(testSessionID, "root", nil),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
+	synctest.Test(t, func(t *testing.T) {
+		f := newRunAgentFixture(t, &fakeRuntime{}, &captureWriter{})
 
 		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
@@ -769,162 +666,290 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 	})
 }
 
+func TestRunAgent_StreamsAssistantAndDiagnosticEvents(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.AgentChoice("root", testSessionID, "Hello"),
+			runtime.AgentChoiceReasoning("root", testSessionID, "pondering"),
+			runtime.Error("boom"),
+			runtime.Warning("careful", "root"),
+			runtime.ModelFallback("root", "gpt-5", "gpt-4o", "rate limited", 1, 3),
+		}}
+		f := newRunAgentFixture(t, rt, &captureWriter{})
+
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 6)
+		requireAvailableCommands(t, updates[0])
+
+		assert.Equal(t, "Hello", agentMessageText(t, updates[1]))
+
+		require.NotNil(t, updates[2].AgentThoughtChunk)
+		require.NotNil(t, updates[2].AgentThoughtChunk.Content.Text)
+		assert.Equal(t, "pondering", updates[2].AgentThoughtChunk.Content.Text.Text)
+
+		assert.Equal(t, "\n\nError: boom\n", agentMessageText(t, updates[3]))
+		assert.Equal(t, "\nWarning: careful\n", agentMessageText(t, updates[4]))
+		assert.Equal(t, "\nModel gpt-5 failed, falling back to gpt-4o (rate limited)\n", agentMessageText(t, updates[5]))
+
+		assert.Empty(t, rt.resumeRequests())
+	})
+}
+
+func TestRunAgent_SessionTitleUpdate(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.SessionTitle(testSessionID, "Refactor plan"),
+		}}
+		f := newRunAgentFixture(t, rt, &captureWriter{})
+
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 2)
+		require.NotNil(t, updates[1].SessionInfoUpdate)
+		require.NotNil(t, updates[1].SessionInfoUpdate.Title)
+		assert.Equal(t, "Refactor plan", *updates[1].SessionInfoUpdate.Title)
+	})
+}
+
+func TestRunAgent_TokenUsageUpdates(t *testing.T) {
+	t.Parallel()
+
+	t.Run("with cost", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
+					ContextLength: 1234,
+					ContextLimit:  200000,
+					Cost:          0.75,
+				}),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
+
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 2)
+			require.NotNil(t, updates[1].UsageUpdate)
+			assert.Equal(t, 200000, updates[1].UsageUpdate.Size)
+			assert.Equal(t, 1234, updates[1].UsageUpdate.Used)
+			require.NotNil(t, updates[1].UsageUpdate.Cost)
+			assert.Equal(t, acpsdk.Cost{Amount: 0.75, Currency: "USD"}, *updates[1].UsageUpdate.Cost)
+		})
+	})
+
+	t.Run("without cost", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
+					ContextLength: 42,
+					ContextLimit:  1000,
+				}),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
+
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 2)
+			require.NotNil(t, updates[1].UsageUpdate)
+			assert.Equal(t, 1000, updates[1].UsageUpdate.Size)
+			assert.Equal(t, 42, updates[1].UsageUpdate.Used)
+			assert.Nil(t, updates[1].UsageUpdate.Cost)
+		})
+	})
+
+	t.Run("nil usage emits nothing", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.NewTokenUsageEvent(testSessionID, "root", nil),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
+
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 1)
+			requireAvailableCommands(t, updates[0])
+		})
+	})
+}
+
 func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 	t.Parallel()
 
-	shellTool := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{Title: "Run Shell"}}
-	editTool := tools.Tool{Name: "edit_file"}
-	wd := t.TempDir()
-	editPath := filepath.Join(wd, "f.go")
-	editResult := &tools.ToolCallResult{Output: "ok", Meta: &fileChange{path: editPath, oldText: new("a"), newText: "b"}}
-	editArgs := `{"path":"/tmp/f.go","edits":[{"oldText":"a","newText":"b"}]}`
+	synctest.Test(t, func(t *testing.T) {
+		shellTool := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{Title: "Run Shell"}}
+		editTool := tools.Tool{Name: "edit_file"}
+		wd := t.TempDir()
+		editPath := filepath.Join(wd, "f.go")
+		editResult := &tools.ToolCallResult{Output: "ok", Meta: &fileChange{path: editPath, oldText: new("a"), newText: "b"}}
+		editArgs := `{"path":"/tmp/f.go","edits":[{"oldText":"a","newText":"b"}]}`
 
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.ToolCall(tools.ToolCall{
-			ID:       "call-1",
-			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls","path":"."}`},
-		}, shellTool, "root"),
-		runtime.ToolCallResponse("call-1", shellTool, tools.ResultSuccess("file.txt"), "file.txt", "root"),
-		runtime.ToolCall(tools.ToolCall{
-			ID:       "call-2",
-			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm"}`},
-		}, shellTool, "root"),
-		runtime.ToolCallResponse("call-2", shellTool, tools.ResultError("denied"), "denied", "root"),
-		runtime.ToolCall(tools.ToolCall{
-			ID:       "call-3",
-			Function: tools.FunctionCall{Name: "edit_file", Arguments: editArgs},
-		}, editTool, "root"),
-		runtime.ToolCallResponse("call-3", editTool, editResult, "ok", "root"),
-	}}
-	f := newRunAgentFixture(t, rt, &captureWriter{})
-	f.sess.workingDir = wd
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.ToolCall(tools.ToolCall{
+				ID:       "call-1",
+				Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls","path":"."}`},
+			}, shellTool, "root"),
+			runtime.ToolCallResponse("call-1", shellTool, tools.ResultSuccess("file.txt"), "file.txt", "root"),
+			runtime.ToolCall(tools.ToolCall{
+				ID:       "call-2",
+				Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm"}`},
+			}, shellTool, "root"),
+			runtime.ToolCallResponse("call-2", shellTool, tools.ResultError("denied"), "denied", "root"),
+			runtime.ToolCall(tools.ToolCall{
+				ID:       "call-3",
+				Function: tools.FunctionCall{Name: "edit_file", Arguments: editArgs},
+			}, editTool, "root"),
+			runtime.ToolCallResponse("call-3", editTool, editResult, "ok", "root"),
+		}}
+		f := newRunAgentFixture(t, rt, &captureWriter{})
+		f.sess.workingDir = wd
 
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 7)
-	requireAvailableCommands(t, updates[0])
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 7)
+		requireAvailableCommands(t, updates[0])
 
-	start := updates[1].ToolCall
-	require.NotNil(t, start)
-	assert.NotEmpty(t, start.ToolCallId)
-	assert.Equal(t, "Run Shell", start.Title)
-	assert.Equal(t, acpsdk.ToolKindExecute, start.Kind)
-	assert.Equal(t, acpsdk.ToolCallStatusInProgress, start.Status)
-	assert.Equal(t, map[string]any{"command": "ls", "path": "."}, start.RawInput)
-	assert.Equal(t, []acpsdk.ToolCallLocation{{Path: wd}}, start.Locations)
+		start := updates[1].ToolCall
+		require.NotNil(t, start)
+		assert.NotEmpty(t, start.ToolCallId)
+		assert.Equal(t, "Run Shell", start.Title)
+		assert.Equal(t, acpsdk.ToolKindExecute, start.Kind)
+		assert.Equal(t, acpsdk.ToolCallStatusInProgress, start.Status)
+		assert.Equal(t, map[string]any{"command": "ls", "path": "."}, start.RawInput)
+		assert.Equal(t, []acpsdk.ToolCallLocation{{Path: wd}}, start.Locations)
 
-	completed := updates[2].ToolCallUpdate
-	require.NotNil(t, completed)
-	assert.Equal(t, start.ToolCallId, completed.ToolCallId)
-	require.NotNil(t, completed.Status)
-	assert.Equal(t, acpsdk.ToolCallStatusCompleted, *completed.Status)
-	require.Len(t, completed.Content, 1)
-	require.NotNil(t, completed.Content[0].Content)
-	require.NotNil(t, completed.Content[0].Content.Content.Text)
-	assert.Equal(t, "file.txt", completed.Content[0].Content.Content.Text.Text)
-	assert.Equal(t, map[string]any{"content": "file.txt"}, completed.RawOutput)
+		completed := updates[2].ToolCallUpdate
+		require.NotNil(t, completed)
+		assert.Equal(t, start.ToolCallId, completed.ToolCallId)
+		require.NotNil(t, completed.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusCompleted, *completed.Status)
+		require.Len(t, completed.Content, 1)
+		require.NotNil(t, completed.Content[0].Content)
+		require.NotNil(t, completed.Content[0].Content.Content.Text)
+		assert.Equal(t, "file.txt", completed.Content[0].Content.Content.Text.Text)
+		assert.Equal(t, map[string]any{"content": "file.txt"}, completed.RawOutput)
 
-	require.NotNil(t, updates[3].ToolCall)
-	failed := updates[4].ToolCallUpdate
-	require.NotNil(t, failed)
-	assert.Equal(t, updates[3].ToolCall.ToolCallId, failed.ToolCallId)
-	require.NotNil(t, failed.Status)
-	assert.Equal(t, acpsdk.ToolCallStatusFailed, *failed.Status)
+		require.NotNil(t, updates[3].ToolCall)
+		failed := updates[4].ToolCallUpdate
+		require.NotNil(t, failed)
+		assert.Equal(t, updates[3].ToolCall.ToolCallId, failed.ToolCallId)
+		require.NotNil(t, failed.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusFailed, *failed.Status)
 
-	editStart := updates[5].ToolCall
-	require.NotNil(t, editStart)
-	assert.Equal(t, acpsdk.ToolKindEdit, editStart.Kind)
+		editStart := updates[5].ToolCall
+		require.NotNil(t, editStart)
+		assert.Equal(t, acpsdk.ToolKindEdit, editStart.Kind)
 
-	editDone := updates[6].ToolCallUpdate
-	require.NotNil(t, editDone)
-	require.NotNil(t, editDone.Status)
-	assert.Equal(t, acpsdk.ToolCallStatusCompleted, *editDone.Status)
-	require.Len(t, editDone.Content, 2)
-	diff := editDone.Content[1].Diff
-	require.NotNil(t, diff)
-	assert.Equal(t, editPath, diff.Path)
-	assert.Equal(t, "b", diff.NewText)
-	require.NotNil(t, diff.OldText)
-	assert.Equal(t, "a", *diff.OldText)
+		editDone := updates[6].ToolCallUpdate
+		require.NotNil(t, editDone)
+		require.NotNil(t, editDone.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusCompleted, *editDone.Status)
+		require.Len(t, editDone.Content, 2)
+		diff := editDone.Content[1].Diff
+		require.NotNil(t, diff)
+		assert.Equal(t, editPath, diff.Path)
+		assert.Equal(t, "b", diff.NewText)
+		require.NotNil(t, diff.OldText)
+		assert.Equal(t, "a", *diff.OldText)
 
-	assert.Empty(t, rt.resumeRequests())
+		assert.Empty(t, rt.resumeRequests())
+	})
 }
 
 func TestRunAgent_ToolCallResponseWithoutStartCreatesTerminalCall(t *testing.T) {
 	t.Parallel()
-	for _, failed := range []bool{false, true} {
-		result := tools.ResultSuccess("result")
-		status := acpsdk.ToolCallStatusCompleted
-		if failed {
-			result = tools.ResultError("rejected")
-			status = acpsdk.ToolCallStatusFailed
+
+	synctest.Test(t, func(t *testing.T) {
+		for _, failed := range []bool{false, true} {
+			result := tools.ResultSuccess("result")
+			status := acpsdk.ToolCallStatusCompleted
+			if failed {
+				result = tools.ResultError("rejected")
+				status = acpsdk.ToolCallStatusFailed
+			}
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, result, result.Output, "root"),
+				runtime.AgentChoice("root", testSessionID, "continued"),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 3)
+			require.NotNil(t, updates[1].ToolCall)
+			assert.Equal(t, status, updates[1].ToolCall.Status)
+			assert.Equal(t, "shell", updates[1].ToolCall.Title)
+			assert.Nil(t, updates[1].ToolCall.RawInput)
+			assert.Equal(t, "continued", agentMessageText(t, updates[2]))
 		}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, result, result.Output, "root"),
-			runtime.AgentChoice("root", testSessionID, "continued"),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
-		require.NoError(t, f.runAgent(t.Context(), f.sess))
-		updates := f.sessionUpdates(t)
-		require.Len(t, updates, 3)
-		require.NotNil(t, updates[1].ToolCall)
-		assert.Equal(t, status, updates[1].ToolCall.Status)
-		assert.Equal(t, "shell", updates[1].ToolCall.Title)
-		assert.Nil(t, updates[1].ToolCall.RawInput)
-		assert.Equal(t, "continued", agentMessageText(t, updates[2]))
-	}
+	})
 }
 
 func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 	t.Parallel()
 
-	tool := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{Title: "Run Shell"}}
-	call := tools.ToolCall{
-		ID:       "confirm-1",
-		Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm -rf /tmp/scratch"}`},
-	}
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.ToolCallConfirmation(call, tool, "root", nil),
-		runtime.AgentChoice("root", testSessionID, "approved"),
-	}}
-	f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
-		return permissionSelected("allow")
+	synctest.Test(t, func(t *testing.T) {
+		tool := tools.Tool{Name: "shell", Annotations: tools.ToolAnnotations{Title: "Run Shell"}}
+		call := tools.ToolCall{
+			ID:       "confirm-1",
+			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm -rf /tmp/scratch"}`},
+		}
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.ToolCallConfirmation(call, tool, "root", nil),
+			runtime.AgentChoice("root", testSessionID, "approved"),
+		}}
+		f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
+			return permissionSelected("allow")
+		})
+
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+		reqs := f.peer.recordedRequests()
+		require.Len(t, reqs, 1)
+		req := reqs[0]
+		assert.Equal(t, acpsdk.SessionId(testSessionID), req.SessionId)
+		assert.NotEmpty(t, req.ToolCall.ToolCallId)
+		require.NotNil(t, req.ToolCall.Title)
+		assert.Equal(t, "Run Shell", *req.ToolCall.Title)
+		require.NotNil(t, req.ToolCall.Kind)
+		assert.Equal(t, acpsdk.ToolKindExecute, *req.ToolCall.Kind)
+		require.NotNil(t, req.ToolCall.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusPending, *req.ToolCall.Status)
+		assert.Equal(t, map[string]any{"command": "rm -rf /tmp/scratch"}, req.ToolCall.RawInput)
+		assert.Equal(t, []acpsdk.PermissionOption{
+			{Kind: acpsdk.PermissionOptionKindAllowOnce, Name: "Allow this action", OptionId: "allow"},
+			{Kind: acpsdk.PermissionOptionKindAllowAlways, Name: "Always allow this tool for this session", OptionId: "allow-always"},
+			{Kind: acpsdk.PermissionOptionKindRejectOnce, Name: "Skip this action", OptionId: "reject"},
+		}, req.Options)
+
+		assert.Equal(t, []runtime.ResumeRequest{{Type: runtime.ResumeTypeApprove}}, rt.resumeRequests())
+
+		// The turn keeps streaming after the permission round trip and the
+		// interleaved request does not disturb the captured notifications.
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 4)
+		requireAvailableCommands(t, updates[0])
+		require.NotNil(t, updates[1].ToolCall)
+		assert.Equal(t, req.ToolCall.ToolCallId, updates[1].ToolCall.ToolCallId)
+		assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
+		assert.Equal(t, "approved", agentMessageText(t, updates[2]))
+		assert.Equal(t, req.ToolCall.ToolCallId, updates[3].ToolCallUpdate.ToolCallId)
+		assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[3].ToolCallUpdate.Status)
 	})
-
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-	reqs := f.peer.recordedRequests()
-	require.Len(t, reqs, 1)
-	req := reqs[0]
-	assert.Equal(t, acpsdk.SessionId(testSessionID), req.SessionId)
-	assert.NotEmpty(t, req.ToolCall.ToolCallId)
-	require.NotNil(t, req.ToolCall.Title)
-	assert.Equal(t, "Run Shell", *req.ToolCall.Title)
-	require.NotNil(t, req.ToolCall.Kind)
-	assert.Equal(t, acpsdk.ToolKindExecute, *req.ToolCall.Kind)
-	require.NotNil(t, req.ToolCall.Status)
-	assert.Equal(t, acpsdk.ToolCallStatusPending, *req.ToolCall.Status)
-	assert.Equal(t, map[string]any{"command": "rm -rf /tmp/scratch"}, req.ToolCall.RawInput)
-	assert.Equal(t, []acpsdk.PermissionOption{
-		{Kind: acpsdk.PermissionOptionKindAllowOnce, Name: "Allow this action", OptionId: "allow"},
-		{Kind: acpsdk.PermissionOptionKindAllowAlways, Name: "Always allow this tool for this session", OptionId: "allow-always"},
-		{Kind: acpsdk.PermissionOptionKindRejectOnce, Name: "Skip this action", OptionId: "reject"},
-	}, req.Options)
-
-	assert.Equal(t, []runtime.ResumeRequest{{Type: runtime.ResumeTypeApprove}}, rt.resumeRequests())
-
-	// The turn keeps streaming after the permission round trip and the
-	// interleaved request does not disturb the captured notifications.
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 4)
-	requireAvailableCommands(t, updates[0])
-	require.NotNil(t, updates[1].ToolCall)
-	assert.Equal(t, req.ToolCall.ToolCallId, updates[1].ToolCall.ToolCallId)
-	assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
-	assert.Equal(t, "approved", agentMessageText(t, updates[2]))
-	assert.Equal(t, req.ToolCall.ToolCallId, updates[3].ToolCallUpdate.ToolCallId)
-	assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[3].ToolCallUpdate.Status)
 }
 
 func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
@@ -961,22 +986,24 @@ func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCallConfirmation(
-					tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
-					tools.Tool{Name: "shell"},
-					"root",
-					nil,
-				),
-			}}
-			f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
-				return tt.result
+			synctest.Test(t, func(t *testing.T) {
+				rt := &fakeRuntime{events: []runtime.Event{
+					runtime.ToolCallConfirmation(
+						tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
+						tools.Tool{Name: "shell"},
+						"root",
+						nil,
+					),
+				}}
+				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
+					return tt.result
+				})
+
+				require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+				assert.Equal(t, tt.wantResume, rt.resumeRequests())
+				assert.Len(t, f.peer.recordedRequests(), 1)
 			})
-
-			require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-			assert.Equal(t, tt.wantResume, rt.resumeRequests())
-			assert.Len(t, f.peer.recordedRequests(), 1)
 		})
 	}
 }
@@ -1087,31 +1114,33 @@ func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCallConfirmation(
-					tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
-					tools.Tool{Name: "shell"},
-					"root",
-					nil,
-				),
-				runtime.AgentChoice("root", testSessionID, "never emitted"),
-			}}
-			f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
-				return tt.result
+			synctest.Test(t, func(t *testing.T) {
+				rt := &fakeRuntime{events: []runtime.Event{
+					runtime.ToolCallConfirmation(
+						tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
+						tools.Tool{Name: "shell"},
+						"root",
+						nil,
+					),
+					runtime.AgentChoice("root", testSessionID, "never emitted"),
+				}}
+				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
+					return tt.result
+				})
+
+				err := f.runAgent(t.Context(), f.sess)
+				require.EqualError(t, err, tt.wantErr)
+
+				assert.Empty(t, rt.resumeRequests())
+				// The failure must stop the loop before later events are mapped.
+				updates := f.sessionUpdates(t)
+				require.Len(t, updates, 3)
+				requireAvailableCommands(t, updates[0])
+				require.NotNil(t, updates[1].ToolCall)
+				assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
+				require.NotNil(t, updates[2].ToolCallUpdate)
+				assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[2].ToolCallUpdate.Status)
 			})
-
-			err := f.runAgent(t.Context(), f.sess)
-			require.EqualError(t, err, tt.wantErr)
-
-			assert.Empty(t, rt.resumeRequests())
-			// The failure must stop the loop before later events are mapped.
-			updates := f.sessionUpdates(t)
-			require.Len(t, updates, 3)
-			requireAvailableCommands(t, updates[0])
-			require.NotNil(t, updates[1].ToolCall)
-			assert.Equal(t, acpsdk.ToolCallStatusPending, updates[1].ToolCall.Status)
-			require.NotNil(t, updates[2].ToolCallUpdate)
-			assert.Equal(t, acpsdk.ToolCallStatusFailed, *updates[2].ToolCallUpdate.Status)
 		})
 	}
 }
@@ -1119,33 +1148,35 @@ func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
 func TestRunAgent_MaxIterationsReachedRequestFields(t *testing.T) {
 	t.Parallel()
 
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.MaxIterationsReached(25),
-	}}
-	f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
-		return permissionSelected("continue")
+	synctest.Test(t, func(t *testing.T) {
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.MaxIterationsReached(25),
+		}}
+		f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
+			return permissionSelected("continue")
+		})
+
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+		reqs := f.peer.recordedRequests()
+		require.Len(t, reqs, 1)
+		req := reqs[0]
+		assert.Equal(t, acpsdk.SessionId(testSessionID), req.SessionId)
+		assert.Equal(t, acpsdk.ToolCallId("max_iterations"), req.ToolCall.ToolCallId)
+		require.NotNil(t, req.ToolCall.Title)
+		assert.Equal(t, "Maximum iterations (25) reached", *req.ToolCall.Title)
+		require.NotNil(t, req.ToolCall.Kind)
+		assert.Equal(t, acpsdk.ToolKindExecute, *req.ToolCall.Kind)
+		require.NotNil(t, req.ToolCall.Status)
+		assert.Equal(t, acpsdk.ToolCallStatusPending, *req.ToolCall.Status)
+		assert.Nil(t, req.ToolCall.RawInput)
+		assert.Equal(t, []acpsdk.PermissionOption{
+			{Kind: acpsdk.PermissionOptionKindAllowOnce, Name: "Continue", OptionId: "continue"},
+			{Kind: acpsdk.PermissionOptionKindRejectOnce, Name: "Stop", OptionId: "stop"},
+		}, req.Options)
+
+		assert.Equal(t, []runtime.ResumeRequest{{Type: runtime.ResumeTypeApprove}}, rt.resumeRequests())
 	})
-
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-	reqs := f.peer.recordedRequests()
-	require.Len(t, reqs, 1)
-	req := reqs[0]
-	assert.Equal(t, acpsdk.SessionId(testSessionID), req.SessionId)
-	assert.Equal(t, acpsdk.ToolCallId("max_iterations"), req.ToolCall.ToolCallId)
-	require.NotNil(t, req.ToolCall.Title)
-	assert.Equal(t, "Maximum iterations (25) reached", *req.ToolCall.Title)
-	require.NotNil(t, req.ToolCall.Kind)
-	assert.Equal(t, acpsdk.ToolKindExecute, *req.ToolCall.Kind)
-	require.NotNil(t, req.ToolCall.Status)
-	assert.Equal(t, acpsdk.ToolCallStatusPending, *req.ToolCall.Status)
-	assert.Nil(t, req.ToolCall.RawInput)
-	assert.Equal(t, []acpsdk.PermissionOption{
-		{Kind: acpsdk.PermissionOptionKindAllowOnce, Name: "Continue", OptionId: "continue"},
-		{Kind: acpsdk.PermissionOptionKindRejectOnce, Name: "Stop", OptionId: "stop"},
-	}, req.Options)
-
-	assert.Equal(t, []runtime.ResumeRequest{{Type: runtime.ResumeTypeApprove}}, rt.resumeRequests())
 }
 
 func TestRunAgent_MaxIterationsReachedOutcomes(t *testing.T) {
@@ -1204,15 +1235,17 @@ func TestRunAgent_MaxIterationsReachedOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rt := &fakeRuntime{events: []runtime.Event{runtime.MaxIterationsReached(3)}}
-			f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
-				return tt.result
+			synctest.Test(t, func(t *testing.T) {
+				rt := &fakeRuntime{events: []runtime.Event{runtime.MaxIterationsReached(3)}}
+				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
+					return tt.result
+				})
+
+				require.NoError(t, f.runAgent(t.Context(), f.sess))
+
+				assert.Equal(t, tt.wantResume, rt.resumeRequests())
+				assert.Len(t, f.peer.recordedRequests(), 1)
 			})
-
-			require.NoError(t, f.runAgent(t.Context(), f.sess))
-
-			assert.Equal(t, tt.wantResume, rt.resumeRequests())
-			assert.Len(t, f.peer.recordedRequests(), 1)
 		})
 	}
 }
@@ -1229,115 +1262,125 @@ func TestRunAgent_TodoToolEmitsPlanUpdate(t *testing.T) {
 	t.Run("todo metadata becomes a plan", func(t *testing.T) {
 		t.Parallel()
 
-		result := &tools.ToolCallResult{
-			Output: "ok",
-			Meta: []todo.Todo{
-				{ID: "1", Description: "write tests", Status: "in-progress"},
-				{ID: "2", Description: "review", Status: "pending"},
-			},
-		}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCall(todoCall, todoTool, "root"),
-			runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
+		synctest.Test(t, func(t *testing.T) {
+			result := &tools.ToolCallResult{
+				Output: "ok",
+				Meta: []todo.Todo{
+					{ID: "1", Description: "write tests", Status: "in-progress"},
+					{ID: "2", Description: "review", Status: "pending"},
+				},
+			}
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.ToolCall(todoCall, todoTool, "root"),
+				runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.runAgent(t.Context(), f.sess))
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
 
-		updates := f.sessionUpdates(t)
-		require.Len(t, updates, 4)
-		require.NotNil(t, updates[1].ToolCall)
-		require.NotNil(t, updates[2].ToolCallUpdate)
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 4)
+			require.NotNil(t, updates[1].ToolCall)
+			require.NotNil(t, updates[2].ToolCallUpdate)
 
-		plan := updates[3].Plan
-		require.NotNil(t, plan)
-		assert.Equal(t, []acpsdk.PlanEntry{
-			{Content: "write tests", Status: acpsdk.PlanEntryStatusInProgress, Priority: acpsdk.PlanEntryPriorityMedium},
-			{Content: "review", Status: acpsdk.PlanEntryStatusPending, Priority: acpsdk.PlanEntryPriorityMedium},
-		}, plan.Entries)
+			plan := updates[3].Plan
+			require.NotNil(t, plan)
+			assert.Equal(t, []acpsdk.PlanEntry{
+				{Content: "write tests", Status: acpsdk.PlanEntryStatusInProgress, Priority: acpsdk.PlanEntryPriorityMedium},
+				{Content: "review", Status: acpsdk.PlanEntryStatusPending, Priority: acpsdk.PlanEntryPriorityMedium},
+			}, plan.Entries)
+		})
 	})
 
 	t.Run("unexpected metadata emits no plan", func(t *testing.T) {
 		t.Parallel()
 
-		result := &tools.ToolCallResult{Output: "ok", Meta: "not-todos"}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCall(todoCall, todoTool, "root"),
-			runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
-		}}
-		f := newRunAgentFixture(t, rt, &captureWriter{})
+		synctest.Test(t, func(t *testing.T) {
+			result := &tools.ToolCallResult{Output: "ok", Meta: "not-todos"}
+			rt := &fakeRuntime{events: []runtime.Event{
+				runtime.ToolCall(todoCall, todoTool, "root"),
+				runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
+			}}
+			f := newRunAgentFixture(t, rt, &captureWriter{})
 
-		require.NoError(t, f.runAgent(t.Context(), f.sess))
+			require.NoError(t, f.runAgent(t.Context(), f.sess))
 
-		updates := f.sessionUpdates(t)
-		require.Len(t, updates, 3)
-		assert.Nil(t, updates[2].Plan)
+			updates := f.sessionUpdates(t)
+			require.Len(t, updates, 3)
+			assert.Nil(t, updates[2].Plan)
+		})
 	})
 }
 
 func TestRunAgent_SendUpdateFailureStopsRun(t *testing.T) {
 	t.Parallel()
 
-	out := &captureWriter{failOn: func(n int) error {
-		if n >= 2 {
-			return errors.New("peer gone")
-		}
-		return nil
-	}}
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.AgentChoice("root", testSessionID, "one"),
-		runtime.AgentChoice("root", testSessionID, "two"),
-	}}
-	f := newRunAgentFixture(t, rt, out)
+	synctest.Test(t, func(t *testing.T) {
+		out := &captureWriter{failOn: func(n int) error {
+			if n >= 2 {
+				return errors.New("peer gone")
+			}
+			return nil
+		}}
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.AgentChoice("root", testSessionID, "one"),
+			runtime.AgentChoice("root", testSessionID, "two"),
+		}}
+		f := newRunAgentFixture(t, rt, out)
 
-	err := f.runAgent(t.Context(), f.sess)
-	require.ErrorContains(t, err, "peer gone")
+		err := f.runAgent(t.Context(), f.sess)
+		require.ErrorContains(t, err, "peer gone")
 
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 1)
-	requireAvailableCommands(t, updates[0])
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 1)
+		requireAvailableCommands(t, updates[0])
+	})
 }
 
 func TestRunAgent_AvailableCommandsFailureIsNonFatal(t *testing.T) {
 	t.Parallel()
 
-	out := &captureWriter{failOn: func(n int) error {
-		if n == 1 {
-			return errors.New("transient failure")
-		}
-		return nil
-	}}
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.AgentChoice("root", testSessionID, "hello"),
-	}}
-	f := newRunAgentFixture(t, rt, out)
+	synctest.Test(t, func(t *testing.T) {
+		out := &captureWriter{failOn: func(n int) error {
+			if n == 1 {
+				return errors.New("transient failure")
+			}
+			return nil
+		}}
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.AgentChoice("root", testSessionID, "hello"),
+		}}
+		f := newRunAgentFixture(t, rt, out)
 
-	require.NoError(t, f.runAgent(t.Context(), f.sess))
+		require.NoError(t, f.runAgent(t.Context(), f.sess))
 
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 1)
-	assert.Equal(t, "hello", agentMessageText(t, updates[0]))
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 1)
+		assert.Equal(t, "hello", agentMessageText(t, updates[0]))
+	})
 }
 
 func TestRunAgent_ContextCancellationStopsEventLoop(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	rt := &fakeRuntime{events: []runtime.Event{
-		runtime.AgentChoice("root", testSessionID, "never emitted"),
-	}}
-	// Cancel the turn after available commands were emitted but before the
-	// first event is consumed.
-	rt.onRunStream = cancel
-	f := newRunAgentFixture(t, rt, &captureWriter{})
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		rt := &fakeRuntime{events: []runtime.Event{
+			runtime.AgentChoice("root", testSessionID, "never emitted"),
+		}}
+		// Cancel the turn after available commands were emitted but before the
+		// first event is consumed.
+		rt.onRunStream = cancel
+		f := newRunAgentFixture(t, rt, &captureWriter{})
 
-	err := f.runAgent(ctx, f.sess)
-	require.ErrorIs(t, err, context.Canceled)
+		err := f.runAgent(ctx, f.sess)
+		require.ErrorIs(t, err, context.Canceled)
 
-	updates := f.sessionUpdates(t)
-	require.Len(t, updates, 1)
-	requireAvailableCommands(t, updates[0])
-	assert.Empty(t, rt.resumeRequests())
+		updates := f.sessionUpdates(t)
+		require.Len(t, updates, 1)
+		requireAvailableCommands(t, updates[0])
+		assert.Empty(t, rt.resumeRequests())
+	})
 }
 
 func (f *fakeRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {
