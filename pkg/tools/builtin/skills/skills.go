@@ -216,10 +216,18 @@ func (s *ToolSet) ReadSkillFile(ctx context.Context, skillName, relativePath str
 		return "", fmt.Errorf("path %q escapes skill directory", relativePath)
 	}
 
-	content, err := readFileContent(absPath)
+	// Anchor the read to the skill directory so symlinks cannot escape it.
+	root, err := os.OpenRoot(skill.BaseDir)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("reading file: %w", err)
 	}
+	defer root.Close()
+
+	data, err := root.ReadFile(filepath.FromSlash(relativePath))
+	if err != nil {
+		return "", fmt.Errorf("reading file: %w", err)
+	}
+	content := string(data)
 
 	if err := checkContent(ctx, rt, skill, absPath, content); err != nil {
 		return "", err

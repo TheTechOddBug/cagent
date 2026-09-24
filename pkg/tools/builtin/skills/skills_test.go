@@ -70,13 +70,11 @@ func TestSkillsToolset_ReadSkillFile_PathTraversal(t *testing.T) {
 		{Name: "my-skill", Description: "My skill", FilePath: filepath.Join(tmpDir, "SKILL.md"), BaseDir: tmpDir},
 	}, "")
 
-	_, err := st.ReadSkillFile(t.Context(), "my-skill", "../../../etc/passwd", tools.NopRuntime{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid file path")
-
-	_, err = st.ReadSkillFile(t.Context(), "my-skill", "/etc/passwd", tools.NopRuntime{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid file path")
+	for _, path := range []string{"../../../etc/passwd", "/etc/passwd", `\etc\passwd`, "", "references/../SKILL.md", "references/file..md"} {
+		content, err := st.ReadSkillFile(t.Context(), "my-skill", path, tools.NopRuntime{})
+		require.ErrorContains(t, err, "invalid file path", "path: %q", path)
+		assert.Empty(t, content)
+	}
 }
 
 func TestSkillsToolset_ReadSkillFile_SkillNotFound(t *testing.T) {
