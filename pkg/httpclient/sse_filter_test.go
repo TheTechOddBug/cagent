@@ -118,13 +118,12 @@ func TestSSEFilter_ContentTypeMatching(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", tt.contentType)
 				_, _ = io.WriteString(w, in)
 			}))
-			t.Cleanup(srv.Close)
 
-			assert.Equal(t, want, fetchThroughFilter(t, srv.URL))
+			assert.Equal(t, want, fetchThroughFilter(t, srv))
 		})
 	}
 }
@@ -136,13 +135,12 @@ func TestSSEFilter_NoOpOnNonSSEResponse(t *testing.T) {
 	t.Parallel()
 
 	const body = ": this colon-prefixed line would be dropped from SSE\n\nplain payload"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(body))
 	}))
-	t.Cleanup(srv.Close)
 
-	assert.Equal(t, body, fetchThroughFilter(t, srv.URL))
+	assert.Equal(t, body, fetchThroughFilter(t, srv))
 }
 
 // TestSSEFilter_LargeEvent verifies that events larger than the default
@@ -280,13 +278,13 @@ func (c *closeTracker) Close() error {
 func TestSSEFilter_ConcurrentRequests(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(": comment\n\ndata: test\n\n"))
 	}))
-	t.Cleanup(srv.Close)
 
-	client := &http.Client{Transport: &sseFilterTransport{base: http.DefaultTransport}}
+	client := srv.Client()
+	client.Transport = &sseFilterTransport{base: client.Transport}
 
 	const numRequests = 10
 	var wg sync.WaitGroup
@@ -313,27 +311,27 @@ func TestSSEFilter_ConcurrentRequests(t *testing.T) {
 
 // fetchSSE serves `payload` as `text/event-stream` and returns the body a
 // client would observe after pulling it through the filtering transport.
-// Going via a real HTTP server (rather than the reader directly) also
+// Going through HTTP (rather than the reader directly) also
 // exercises the Content-Type sniffing in sseFilterTransport.RoundTrip.
 func fetchSSE(t *testing.T, payload string) string {
 	t.Helper()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.Copy(w, strings.NewReader(payload))
 	}))
-	t.Cleanup(srv.Close)
 
-	return fetchThroughFilter(t, srv.URL)
+	return fetchThroughFilter(t, srv)
 }
 
-// fetchThroughFilter performs a GET against `url` through the filtering
+// fetchThroughFilter performs a GET against srv through the filtering
 // transport and returns the response body as a string.
-func fetchThroughFilter(t *testing.T, url string) string {
+func fetchThroughFilter(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 
-	client := &http.Client{Transport: &sseFilterTransport{base: http.DefaultTransport}}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+	client := srv.Client()
+	client.Transport = &sseFilterTransport{base: client.Transport}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
 	require.NoError(t, err)
 
 	res, err := client.Do(req)
