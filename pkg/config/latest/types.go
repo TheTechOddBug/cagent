@@ -408,8 +408,7 @@ func joinInstructionValue(value any) (*string, error) {
 		}
 		parts = append(parts, s)
 	}
-	joined := strings.Join(parts, "\n\n")
-	return &joined, nil
+	return new(strings.Join(parts, "\n\n")), nil
 }
 
 func (c Agents) MarshalYAML() (any, error) {

@@ -197,8 +197,7 @@ func summaryUsage(result *compactor.Result) *chat.Usage {
 	if result.Usage == (chat.Usage{}) {
 		return nil
 	}
-	usage := result.Usage
-	return &usage
+	return new(result.Usage)
 }
 
 // summaryFromHook lifts a before_compaction hook's Summary verdict into

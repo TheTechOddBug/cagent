@@ -1065,8 +1065,7 @@ func readInitialMessage(args []string) (*string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read from stdin: %w", err)
 		}
-		text := string(buf)
-		return &text, nil
+		return new(string(buf)), nil
 	}
 
 	return &args[1], nil

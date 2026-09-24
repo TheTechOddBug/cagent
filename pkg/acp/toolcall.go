@@ -229,8 +229,7 @@ func buildPlanUpdateFromTodos(meta any) *acp.SessionUpdate {
 		})
 	}
 
-	update := acp.UpdatePlan(entries...)
-	return &update
+	return new(acp.UpdatePlan(entries...))
 }
 
 func mapTodoStatusToACP(status string) acp.PlanEntryStatus {

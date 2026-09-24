@@ -40,6 +40,7 @@ var cops = []cop.Cop{
 	WrapErrors,
 	ErrorStringMatching,
 	DeferMutexUnlock,
+	NewExpr,
 	EnvironmentVariablePrefix,
 	NoStdoutInLibraries,
 	OTelTracerName,
@@ -52,6 +53,8 @@ var cops = []cop.Cop{
 // programCops lists whole-program, inter-procedural cops. These run once over
 // the entire loaded program rather than once per file.
 var programCops = []prog.Cop{
+	SplitTrimJoin,
+	FieldsSeq,
 	SessionStateAccessors,
 	StreamCloseSafety,
 	ExclusiveStreamLease,

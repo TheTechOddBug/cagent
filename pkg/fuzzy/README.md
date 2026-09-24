@@ -41,7 +41,8 @@ on native platforms (`!js`).
 - Lint-driven cosmetics: `Ascii` → `ASCII` in identifiers, `if/else` chains
   → `switch`, combined parameter types, `posArray(len)` → `posArray(n)`,
   `indexAt(max)` → `indexAt(length)`, `slices.Backward` in
-  `lastIndexByteTwo`, `//nolint:gosec` on guarded `rune → byte` conversions.
+  `lastIndexByteTwo`, `new(make(...))` in `posArray`, `//nolint:gosec` on
+  guarded `rune → byte` conversions.
 
 ### `Init` is not called
 

@@ -1215,11 +1215,10 @@ func computeMessageCost(usage *chat.Usage, m *modelsdev.Model) *float64 {
 		return nil
 	}
 	rates := m.Cost.RatesFor(usage.PromptTokens())
-	cost := (float64(usage.InputTokens)*rates.Input +
+	return new((float64(usage.InputTokens)*rates.Input +
 		float64(usage.OutputTokens)*rates.Output +
 		float64(usage.CachedInputTokens)*rates.CacheRead +
-		float64(usage.CacheWriteTokens)*rates.CacheWrite) / 1e6
-	return &cost
+		float64(usage.CacheWriteTokens)*rates.CacheWrite) / 1e6)
 }
 
 func shouldWarnOnCacheMiss(sess *session.Session, usage *MessageUsage) bool {

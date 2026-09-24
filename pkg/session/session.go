@@ -1194,8 +1194,7 @@ func (s *Session) Termination() *Termination {
 	defer s.mu.RUnlock()
 	for i := range s.Messages {
 		if s.Messages[i].Termination != nil {
-			t := *s.Messages[i].Termination
-			return &t
+			return new(*s.Messages[i].Termination)
 		}
 	}
 	return nil

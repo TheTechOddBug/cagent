@@ -291,8 +291,7 @@ func (d *memoryVectorDB) GetFileMetadata(ctx context.Context, sourcePath string)
 	if !ok {
 		return nil, nil
 	}
-	metadata := file.metadata(sourcePath)
-	return &metadata, nil
+	return new(file.metadata(sourcePath)), nil
 }
 
 func (d *memoryVectorDB) GetAllFileMetadata(ctx context.Context) ([]database.FileMetadata, error) {
