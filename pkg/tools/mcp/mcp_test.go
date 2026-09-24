@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -608,35 +609,37 @@ func callToolResult(content ...mcp.Content) *mcp.CallToolResult {
 func TestCallToolRecoversFromErrSessionMissing(t *testing.T) {
 	t.Parallel()
 
-	var callCount atomic.Int32
+	synctest.Test(t, func(t *testing.T) {
+		var callCount atomic.Int32
 
-	mock := newReconnectableMock()
-	mock.callToolFn = func(_ context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-		n := callCount.Add(1)
-		if n == 1 {
-			// First call: simulate server restart by returning ErrSessionMissing.
-			return nil, fmt.Errorf("tools/call: %w", mcp.ErrSessionMissing)
+		mock := newReconnectableMock()
+		mock.callToolFn = func(_ context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				// First call: simulate server restart by returning ErrSessionMissing.
+				return nil, fmt.Errorf("tools/call: %w", mcp.ErrSessionMissing)
+			}
+			// Second call (after reconnect): succeed.
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "recovered"}},
+			}, nil
 		}
-		// Second call (after reconnect): succeed.
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "recovered"}},
-		}, nil
-	}
 
-	ts := newTestToolset("test-server", "test-server", mock)
-	require.NoError(t, ts.Start(t.Context()))
-	t.Cleanup(func() { _ = ts.Stop(t.Context()) })
+		ts := newTestToolset("test-server", "test-server", mock)
+		require.NoError(t, ts.Start(t.Context()))
+		t.Cleanup(func() { _ = ts.Stop(context.WithoutCancel(t.Context())) })
 
-	result, err := ts.callTool(t.Context(), tools.ToolCall{
-		Function: tools.FunctionCall{
-			Name:      "test_tool",
-			Arguments: `{"key": "value"}`,
-		},
-	}, tools.NopRuntime{})
+		result, err := ts.callTool(t.Context(), tools.ToolCall{
+			Function: tools.FunctionCall{
+				Name:      "test_tool",
+				Arguments: `{"key": "value"}`,
+			},
+		}, tools.NopRuntime{})
 
-	require.NoError(t, err)
-	assert.Equal(t, "recovered", result.Output)
-	assert.Equal(t, int32(2), callCount.Load(), "expected exactly 2 CallTool invocations (1 failed + 1 retry)")
+		require.NoError(t, err)
+		assert.Equal(t, "recovered", result.Output)
+		assert.Equal(t, int32(2), callCount.Load(), "expected exactly 2 CallTool invocations (1 failed + 1 retry)")
+	})
 }
 
 func TestCallToolTimeoutFires(t *testing.T) {
