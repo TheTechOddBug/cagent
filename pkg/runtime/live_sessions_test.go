@@ -646,51 +646,53 @@ func TestCompactLiveSession_CancelledStreamEmitsSingleSkippedEvent(t *testing.T)
 func TestCompactLiveSession_HookVetoSynthesizesSkipped(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		// Turn 1: tool call keeps the loop running (Stopped=false) so the
-		// hook veto fires at the iteration boundary, not at teardown.
-		{stream: newStreamBuilder().
-			AddToolCallName("call_1", "unknown_tool").
-			AddToolCallArguments("call_1", "{}").
-			AddToolCallStopWithUsage(1, 1).
-			Build(), started: started, release: release},
-		// Turn 2: natural stop (model call after the tool result, compaction vetoed).
-		{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build()},
-	}}
-	rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000},
-		agent.WithHooks(&latest.HooksConfig{
-			PreCompact: []latest.HookDefinition{{Type: "builtin", Command: "test-veto-compact"}},
-		}),
-	)
-	require.NoError(t, rt.hooksRegistry.RegisterBuiltin(
-		"test-veto-compact",
-		func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
-			return &hooks.Output{Decision: hooks.DecisionBlockValue, Reason: "vetoed"}, nil
-		},
-	))
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			// Turn 1: tool call keeps the loop running (Stopped=false) so the
+			// hook veto fires at the iteration boundary, not at teardown.
+			{stream: newStreamBuilder().
+				AddToolCallName("call_1", "unknown_tool").
+				AddToolCallArguments("call_1", "{}").
+				AddToolCallStopWithUsage(1, 1).
+				Build(), started: started, release: release},
+			// Turn 2: natural stop (model call after the tool result, compaction vetoed).
+			{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build()},
+		}}
+		rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000},
+			agent.WithHooks(&latest.HooksConfig{
+				PreCompact: []latest.HookDefinition{{Type: "builtin", Command: "test-veto-compact"}},
+			}),
+		)
+		require.NoError(t, rt.hooksRegistry.RegisterBuiltin(
+			"test-veto-compact",
+			func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
+				return &hooks.Output{Decision: hooks.DecisionBlockValue, Reason: "vetoed"}, nil
+			},
+		))
 
-	child := newWorkerSession("child-1")
-	stream := rt.RunStream(t.Context(), child)
-	waitClosed(t, started, "first child turn")
+		child := newWorkerSession("child-1")
+		stream := rt.RunStream(t.Context(), child)
+		waitClosed(t, started, "first child turn")
 
-	requestEvents := make(chan Event, 64)
-	require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
+		requestEvents := make(chan Event, 64)
+		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
-	close(release)
-	drainStream(t, stream)
-	close(requestEvents)
+		close(release)
+		drainStream(t, stream)
+		close(requestEvents)
 
-	var statuses []string
-	for ev := range requestEvents {
-		if e, ok := ev.(*SessionCompactionEvent); ok {
-			statuses = append(statuses, e.Status+":"+e.Outcome)
+		var statuses []string
+		for ev := range requestEvents {
+			if e, ok := ev.(*SessionCompactionEvent); ok {
+				statuses = append(statuses, e.Status+":"+e.Outcome)
+			}
 		}
-	}
-	assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, statuses,
-		"a vetoed request must synthesize the terminal skipped event, with no started pair")
-	assert.Empty(t, child.LastSummary(), "a vetoed compaction must not modify the session")
+		assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, statuses,
+			"a vetoed request must synthesize the terminal skipped event, with no started pair")
+		assert.Empty(t, child.LastSummary(), "a vetoed compaction must not modify the session")
+	})
 }
 
 // TestLiveSessions_ConcurrentAccess exercises the registry under -race:
