@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -167,57 +169,61 @@ func (b *blockingNamedToolSet) Stop(context.Context) error { return nil }
 func TestAgentConfigInfo_ToolsetMidStartReportsStartingWithDeclaredTools(t *testing.T) {
 	t.Parallel()
 
-	ctx := t.Context()
-	prov := &mockProvider{id: "openai/gpt-5"}
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		prov := &mockProvider{id: "openai/gpt-5"}
 
-	inner := &blockingNamedToolSet{entered: make(chan struct{}), release: make(chan struct{})}
-	ragTS := tools.WithName(inner, "docs")
+		inner := &blockingNamedToolSet{entered: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(inner.release) })
+		t.Cleanup(release)
+		ragTS := tools.WithName(inner, "docs")
 
-	root := agent.New("root", "", agent.WithModel(prov), agent.WithToolSets(ragTS))
+		root := agent.New("root", "", agent.WithModel(prov), agent.WithToolSets(ragTS))
 
-	cfg := latest.AgentConfig{
-		Name: "root",
-		Toolsets: []latest.Toolset{
-			{Type: "rag", Name: "docs", Tools: []string{"search_docs"}},
-		},
-	}
+		cfg := latest.AgentConfig{
+			Name: "root",
+			Toolsets: []latest.Toolset{
+				{Type: "rag", Name: "docs", Tools: []string{"search_docs"}},
+			},
+		}
 
-	tm := team.New(
-		team.WithAgents(root),
-		team.WithAgentConfigs(map[string]latest.AgentConfig{"root": cfg}),
-	)
-	r := &LocalRuntime{team: tm, agents: newAgentRouter(tm, "root")}
+		tm := team.New(
+			team.WithAgents(root),
+			team.WithAgentConfigs(map[string]latest.AgentConfig{"root": cfg}),
+		)
+		r := &LocalRuntime{team: tm, agents: newAgentRouter(tm, "root")}
 
-	startable := root.ToolSets()[0].(*tools.StartableToolSet)
-	startDone := make(chan error, 1)
-	go func() { startDone <- startable.Start(ctx) }()
-	<-inner.entered
+		startable := root.ToolSets()[0].(*tools.StartableToolSet)
+		startDone := make(chan error, 1)
+		go func() { startDone <- startable.Start(ctx) }()
+		<-inner.entered
 
-	infoDone := make(chan AgentConfigInfo, 1)
-	go func() { infoDone <- r.AgentConfigInfo(ctx, "root") }()
+		infoDone := make(chan AgentConfigInfo, 1)
+		go func() { infoDone <- r.AgentConfigInfo(ctx, "root") }()
 
-	var got AgentConfigInfo
-	select {
-	case got = <-infoDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("AgentConfigInfo blocked behind an in-flight Start instead of reporting Starting")
-	}
+		var got AgentConfigInfo
+		select {
+		case got = <-infoDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("AgentConfigInfo blocked behind an in-flight Start instead of reporting Starting")
+		}
 
-	require.Len(t, got.Toolsets, 1)
-	docs := got.Toolsets[0]
-	assert.Equal(t, "docs", docs.Name)
-	assert.Equal(t, ToolsetStarted, docs.State, "the Starting lifecycle state buckets as started/serving, not stopped or error")
-	assert.Equal(t, []string{"search_docs"}, docs.Tools, "mid-start toolset falls back to the declared allow-list, not an empty live list")
+		require.Len(t, got.Toolsets, 1)
+		docs := got.Toolsets[0]
+		assert.Equal(t, "docs", docs.Name)
+		assert.Equal(t, ToolsetStarted, docs.State, "the Starting lifecycle state buckets as started/serving, not stopped or error")
+		assert.Equal(t, []string{"search_docs"}, docs.Tools, "mid-start toolset falls back to the declared allow-list, not an empty live list")
 
-	statuses := r.AgentToolsetStatuses("root")
-	require.Len(t, statuses, 1)
-	assert.Equal(t, lifecycle.StateStarting, statuses[0].State, "the underlying lifecycle state must read as Starting while the Start is in flight")
+		statuses := r.AgentToolsetStatuses("root")
+		require.Len(t, statuses, 1)
+		assert.Equal(t, lifecycle.StateStarting, statuses[0].State, "the underlying lifecycle state must read as Starting while the Start is in flight")
 
-	close(inner.release)
-	require.NoError(t, <-startDone)
+		release()
+		require.NoError(t, <-startDone)
 
-	statuses = r.AgentToolsetStatuses("root")
-	assert.Equal(t, lifecycle.StateReady, statuses[0].State, "settled start reports Ready")
+		statuses = r.AgentToolsetStatuses("root")
+		assert.Equal(t, lifecycle.StateReady, statuses[0].State, "settled start reports Ready")
+	})
 }
 
 // TestAgentConfigInfo_Degrades verifies graceful degradation: an unknown agent
