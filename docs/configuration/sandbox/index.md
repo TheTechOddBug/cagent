@@ -268,6 +268,11 @@ When building a kit, `add_prompt_files` entries must be local relative paths
 escaping via `..`. Staged writes are confined to the kit directory, including
 when a destination contains a symlink.
 
+Skill traversal and file reads are anchored to the skill directory, so replacing
+a file or parent directory with an escaping symlink cannot copy outside content
+into the kit. File symlinks targeting the skill directory (relative or absolute)
+are supported; outside, dangling, and directory symlinks are skipped.
+
 ### Secret redaction
 
 Every text file copied into the kit is run through [portcullis](https://github.com/docker/portcullis), which redacts secrets that match its detection patterns (API keys, tokens, …) in the staged copy. The kit's printed summary marks files as `(redacted)` whenever at least one secret was replaced. Detection is best-effort — portcullis recognises common secret formats but novel or obfuscated tokens may slip through, so the kit is not a substitute for keeping secrets out of skill sources in the first place.

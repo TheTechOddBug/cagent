@@ -660,62 +660,112 @@ func sanitise(name string) string {
 // [copyFile] so [Redaction.Target] entries are recorded relative to
 // it (matching [Entry.Target]).
 func copyTree(kitRoot, src, dst string) ([]Redaction, error) {
-	root := resolveAbs(src)
-	if root == "" {
-		return nil, fmt.Errorf("resolving source: %s", src)
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		return nil, err
+	}
+	canonicalParent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return nil, err
+	}
+	parent, err := os.OpenRoot(canonicalParent)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	name := filepath.Base(abs)
+	info, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return nil, nil
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	opened, err := root.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, opened) {
+		return nil, fmt.Errorf("skill directory %q changed while opening", src)
+	}
+	return copyRootedTree(kitRoot, root, src, dst)
+}
+
+func copyRootedTree(kitRoot string, root *os.Root, src, dst string) ([]Redaction, error) {
+	destination, err := os.OpenRoot(kitRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer destination.Close()
+	dstRel, err := filepath.Rel(kitRoot, dst)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsLocal(dstRel) {
+		return nil, fmt.Errorf("destination %q escapes kit directory", dst)
 	}
 
 	var redactions []Redaction
-	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, relErr := filepath.Rel(src, path)
-		if relErr != nil {
-			return relErr
-		}
+		rel := filepath.FromSlash(name)
 		out := filepath.Join(dst, rel)
+		source := filepath.Join(src, rel)
 
-		switch {
-		case d.IsDir():
-			return os.MkdirAll(out, 0o750)
-		case d.Type()&fs.ModeSymlink != 0:
-			realTarget, terr := filepath.EvalSymlinks(path)
-			if terr != nil {
-				return nil
-			}
-			if !isUnder(realTarget, root) {
-				slog.Warn("kit: skipping symlink that escapes skill root",
-					"link", path, "target", realTarget, "root", root)
-				return nil
-			}
-			info, sterr := os.Stat(realTarget)
-			if sterr != nil || info.IsDir() {
-				return nil
-			}
-			red, copyErr := copyFile(kitRoot, realTarget, out)
-			if copyErr != nil {
-				return copyErr
-			}
-			if red != nil {
-				redactions = append(redactions, *red)
-			}
-			return nil
-		default:
-			red, copyErr := copyFile(kitRoot, path, out)
-			if copyErr != nil {
-				return copyErr
-			}
-			if red != nil {
-				redactions = append(redactions, *red)
-			}
-			return nil
+		if d.IsDir() {
+			return destination.MkdirAll(filepath.Join(dstRel, rel), 0o750)
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			info, err := root.Stat(rel)
+			if err != nil {
+				path := filepath.Join(root.Name(), rel)
+				realTarget, resolveErr := filepath.EvalSymlinks(path)
+				if resolveErr != nil {
+					return nil
+				}
+				// Map absolute in-root links to relative names; the rooted open enforces confinement.
+				rel, err = filepath.Rel(root.Name(), realTarget)
+				if err != nil || !filepath.IsLocal(rel) {
+					slog.Warn("kit: skipping symlink that escapes skill root",
+						"link", path, "target", realTarget, "root", root.Name())
+					return nil
+				}
+				source = realTarget
+				info, err = root.Stat(rel)
+			}
+			if err != nil || info.IsDir() {
+				return nil
+			}
+		}
+		red, err := copyRootedFile(kitRoot, root, rel, source, out)
+		if err != nil {
+			return err
+		}
+		if red != nil {
+			redactions = append(redactions, *red)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return redactions, nil
+}
+
+func copyRootedFile(kitRoot string, root *os.Root, name, src, dst string) (*Redaction, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return copyOpenedFile(kitRoot, file, src, dst)
 }
 
 // copyFile copies a regular file from src to dst, redacting via
@@ -731,6 +781,15 @@ func copyTree(kitRoot, src, dst string) ([]Redaction, error) {
 // sandbox anyway and there's no reason to expose it to other users
 // on the host.
 func copyFile(kitRoot, src, dst string) (*Redaction, error) {
+	file, err := os.Open(src)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return copyOpenedFile(kitRoot, file, src, dst)
+}
+
+func copyOpenedFile(kitRoot string, file *os.File, src, dst string) (*Redaction, error) {
 	rel, err := filepath.Rel(kitRoot, dst)
 	if err != nil {
 		return nil, err
@@ -744,11 +803,11 @@ func copyFile(kitRoot, src, dst string) (*Redaction, error) {
 	}
 	defer root.Close()
 
-	srcInfo, err := os.Stat(src)
+	srcInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(src)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
