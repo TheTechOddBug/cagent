@@ -220,41 +220,43 @@ func TestApp_AcquireStreamGuard_NoopWhenUnset(t *testing.T) {
 func TestApp_Retry_SuppressesReEmittedUserMessage(t *testing.T) {
 	t.Parallel()
 
-	events := make(chan tea.Msg, 16)
-	app := &App{
-		runtime: &retryMockRuntime{},
-		session: session.New(),
-		events:  events,
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	app.Retry(ctx, cancel)
-
-	var userMessages []string
-	var sawStreamStarted, sawStreamStopped bool
-	deadline := time.After(2 * time.Second)
-	for !sawStreamStopped {
-		select {
-		case ev := <-events:
-			switch e := ev.(type) {
-			case *runtime.UserMessageEvent:
-				userMessages = append(userMessages, e.Message)
-			case *runtime.StreamStartedEvent:
-				sawStreamStarted = true
-			case *runtime.StreamStoppedEvent:
-				sawStreamStopped = true
-			}
-		case <-deadline:
-			t.Fatal("timed out waiting for StreamStopped")
+	synctest.Test(t, func(t *testing.T) {
+		events := make(chan tea.Msg, 16)
+		app := &App{
+			runtime: &retryMockRuntime{},
+			session: session.New(),
+			events:  events,
 		}
-	}
 
-	assert.True(t, sawStreamStarted, "StreamStarted should be forwarded")
-	// The pre-StreamStarted re-emission is dropped; the post-StreamStarted
-	// (steered) user message is kept.
-	assert.Equal(t, []string{"steered"}, userMessages,
-		"only the post-StreamStarted user message should be forwarded")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		app.Retry(ctx, cancel)
+
+		var userMessages []string
+		var sawStreamStarted, sawStreamStopped bool
+		deadline := time.After(2 * time.Second)
+		for !sawStreamStopped {
+			select {
+			case ev := <-events:
+				switch e := ev.(type) {
+				case *runtime.UserMessageEvent:
+					userMessages = append(userMessages, e.Message)
+				case *runtime.StreamStartedEvent:
+					sawStreamStarted = true
+				case *runtime.StreamStoppedEvent:
+					sawStreamStopped = true
+				}
+			case <-deadline:
+				t.Fatal("timed out waiting for StreamStopped")
+			}
+		}
+
+		assert.True(t, sawStreamStarted, "StreamStarted should be forwarded")
+		// The pre-StreamStarted re-emission is dropped; the post-StreamStarted
+		// (steered) user message is kept.
+		assert.Equal(t, []string{"steered"}, userMessages,
+			"only the post-StreamStarted user message should be forwarded")
+	})
 }
 
 // backgroundEventMockRuntime captures the handler App.Start registers via
@@ -275,29 +277,31 @@ func (m *backgroundEventMockRuntime) OnBackgroundEvent(handler func(runtime.Even
 func TestApp_Start_ForwardsBackgroundEvents(t *testing.T) {
 	t.Parallel()
 
-	rt := &backgroundEventMockRuntime{}
-	events := make(chan tea.Msg, 16)
-	app := &App{
-		runtime: rt,
-		session: session.New(),
-		events:  events,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		rt := &backgroundEventMockRuntime{}
+		events := make(chan tea.Msg, 16)
+		app := &App{
+			runtime: rt,
+			session: session.New(),
+			events:  events,
+		}
 
-	app.Start(t.Context())
-	require.NotNil(t, rt.handler, "Start must register the background-event handler")
+		app.Start(t.Context())
+		require.NotNil(t, rt.handler, "Start must register the background-event handler")
 
-	usage := runtime.NewTokenUsageEvent("bg-session", "worker", &runtime.Usage{
-		ContextLength: 150,
-		ContextLimit:  1000,
+		usage := runtime.NewTokenUsageEvent("bg-session", "worker", &runtime.Usage{
+			ContextLength: 150,
+			ContextLimit:  1000,
+		})
+		rt.handler(usage)
+
+		select {
+		case msg := <-events:
+			assert.Equal(t, usage, msg, "the background event must reach the app's event stream unchanged")
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for the forwarded background event")
+		}
 	})
-	rt.handler(usage)
-
-	select {
-	case msg := <-events:
-		assert.Equal(t, usage, msg, "the background event must reach the app's event stream unchanged")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the forwarded background event")
-	}
 }
 
 // elicitationRequestMockRuntime captures the handler App.Start registers via
@@ -341,26 +345,28 @@ func (m *elicitationRequestMockRuntime) ResumeElicitation(_ context.Context, act
 func TestApp_Start_ForwardsElicitationRequests(t *testing.T) {
 	t.Parallel()
 
-	rt := &elicitationRequestMockRuntime{}
-	events := make(chan tea.Msg, 16)
-	app := &App{
-		runtime: rt,
-		session: session.New(),
-		events:  events,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		rt := &elicitationRequestMockRuntime{}
+		events := make(chan tea.Msg, 16)
+		app := &App{
+			runtime: rt,
+			session: session.New(),
+			events:  events,
+		}
 
-	app.Start(t.Context())
-	require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
+		app.Start(t.Context())
+		require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
 
-	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "sess-1", nil, "worker")
-	rt.handler(ev)
+		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "sess-1", nil, "worker")
+		rt.handler(ev)
 
-	select {
-	case msg := <-events:
-		assert.Equal(t, ev, msg, "the elicitation request must reach the app's event stream unchanged")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the forwarded elicitation request")
-	}
+		select {
+		case msg := <-events:
+			assert.Equal(t, ev, msg, "the elicitation request must reach the app's event stream unchanged")
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for the forwarded elicitation request")
+		}
+	})
 }
 
 // TestApp_SendEvent_DeliversElicitationWithoutDedupe pins the #3584 fix that
@@ -984,21 +990,23 @@ func TestApp_LiveSessions_PassesCurrentSession(t *testing.T) {
 func TestApp_CompactLiveSession_BridgesEventsIntoStream(t *testing.T) {
 	t.Parallel()
 
-	rt := &liveSessionsMockRuntime{}
-	app := New(t.Context(), rt, session.New())
+	synctest.Test(t, func(t *testing.T) {
+		rt := &liveSessionsMockRuntime{}
+		app := New(t.Context(), rt, session.New())
 
-	require.NoError(t, app.CompactLiveSession(t.Context(), "child-1", ""))
-	assert.Equal(t, "child-1", rt.compactedID)
+		require.NoError(t, app.CompactLiveSession(t.Context(), "child-1", ""))
+		assert.Equal(t, "child-1", rt.compactedID)
 
-	select {
-	case msg := <-app.events:
-		evt, ok := msg.(*runtime.SessionCompactionEvent)
-		require.True(t, ok, "expected SessionCompactionEvent, got %T", msg)
-		assert.Equal(t, "child-1", evt.SessionID)
-		assert.Equal(t, "completed", evt.Status)
-	case <-time.After(time.Second):
-		t.Fatal("compaction event was not bridged into the app event stream")
-	}
+		select {
+		case msg := <-app.events:
+			evt, ok := msg.(*runtime.SessionCompactionEvent)
+			require.True(t, ok, "expected SessionCompactionEvent, got %T", msg)
+			assert.Equal(t, "child-1", evt.SessionID)
+			assert.Equal(t, "completed", evt.Status)
+		case <-time.After(time.Second):
+			t.Fatal("compaction event was not bridged into the app event stream")
+		}
+	})
 }
 
 func TestApp_CompactLiveSession_ForwardsRuntimeError(t *testing.T) {
@@ -1113,17 +1121,19 @@ func countElicitationDeliveries(t *testing.T, events <-chan tea.Msg) int {
 func TestReview_RemoteRuntimeElicitationIsStillDelivered(t *testing.T) {
 	t.Parallel()
 
-	rt := &remoteLikeMockRuntime{}
-	events := make(chan tea.Msg, 16)
-	app := &App{runtime: rt, session: session.New(), events: events}
+	synctest.Test(t, func(t *testing.T) {
+		rt := &remoteLikeMockRuntime{}
+		events := make(chan tea.Msg, 16)
+		app := &App{runtime: rt, session: session.New(), events: events}
 
-	app.Start(t.Context())
+		app.Start(t.Context())
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	app.Run(ctx, cancel, "hello", nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		app.Run(ctx, cancel, "hello", nil)
 
-	assert.Equal(t, 1, countElicitationDeliveries(t, events), "a remote/no-sink runtime's elicitation must still reach the app via RunStream")
+		assert.Equal(t, 1, countElicitationDeliveries(t, events), "a remote/no-sink runtime's elicitation must still reach the app via RunStream")
+	})
 }
 
 // TestReview_ForegroundElicitationIsNotDeliveredTwice is the reviewer's
@@ -1135,18 +1145,20 @@ func TestReview_RemoteRuntimeElicitationIsStillDelivered(t *testing.T) {
 func TestReview_ForegroundElicitationIsNotDeliveredTwice(t *testing.T) {
 	t.Parallel()
 
-	rt := &composedElicitationMockRuntime{}
-	events := make(chan tea.Msg, 16)
-	app := &App{runtime: rt, session: session.New(), events: events}
+	synctest.Test(t, func(t *testing.T) {
+		rt := &composedElicitationMockRuntime{}
+		events := make(chan tea.Msg, 16)
+		app := &App{runtime: rt, session: session.New(), events: events}
 
-	app.Start(t.Context())
-	require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
+		app.Start(t.Context())
+		require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	app.Run(ctx, cancel, "hello", nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		app.Run(ctx, cancel, "hello", nil)
 
-	assert.Equal(t, 1, countElicitationDeliveries(t, events), "a single foreground elicitation must open exactly one dialog")
+		assert.Equal(t, 1, countElicitationDeliveries(t, events), "a single foreground elicitation must open exactly one dialog")
+	})
 }
 
 // TestMustSkipMirroredElicitation_ConcreteRuntimeClassification pins
@@ -1212,34 +1224,38 @@ func TestElicitationDeliveryAcrossEntryPoints(t *testing.T) {
 			t.Run("mirrored runtime delivers exactly once", func(t *testing.T) {
 				t.Parallel()
 
-				rt := &composedElicitationMockRuntime{}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: session.New(), events: events}
-				app.Start(t.Context())
-				require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
+				synctest.Test(t, func(t *testing.T) {
+					rt := &composedElicitationMockRuntime{}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: session.New(), events: events}
+					app.Start(t.Context())
+					require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				assert.Equal(t, 1, countElicitationDeliveries(t, events),
-					"a mirrored/local-shaped runtime's foreground elicitation must open exactly one dialog")
+					assert.Equal(t, 1, countElicitationDeliveries(t, events),
+						"a mirrored/local-shaped runtime's foreground elicitation must open exactly one dialog")
+				})
 			})
 
 			t.Run("unmirrored runtime still delivers once", func(t *testing.T) {
 				t.Parallel()
 
-				rt := &remoteLikeMockRuntime{}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: session.New(), events: events}
-				app.Start(t.Context())
+				synctest.Test(t, func(t *testing.T) {
+					rt := &remoteLikeMockRuntime{}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: session.New(), events: events}
+					app.Start(t.Context())
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				assert.Equal(t, 1, countElicitationDeliveries(t, events),
-					"an unmirrored/remote-shaped runtime's elicitation must still reach the app via RunStream")
+					assert.Equal(t, 1, countElicitationDeliveries(t, events),
+						"an unmirrored/remote-shaped runtime's elicitation must still reach the app via RunStream")
+				})
 			})
 		})
 	}
