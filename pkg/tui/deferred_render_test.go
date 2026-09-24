@@ -234,3 +234,41 @@ func TestRootBlurMouseReleasePreservesFollowTail(t *testing.T) {
 		})
 	}
 }
+
+func TestActualProgramBlurHoverPreservesFollowTail(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "streaming", true: "completed"}[stopped], func(t *testing.T) {
+			root, _, _ := frozenClockRoot(t, 120, 40)
+			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"+strings.Repeat("history paragraph\n\n", 40)))
+			_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+			_ = root.View()
+			model := &streamingMotionModel{root: root, ready: make(chan struct{})}
+			writer := &wallClockCountingWriter{}
+			program := startStreamingMotionProgram(t, model, tea.WithOutput(writer))
+			program.Send(tea.BlurMsg{})
+			programAck(t, program)
+			before := programFrame(t, program)
+
+			program.Send(agentruntime.AgentChoice("root", "profile", strings.Repeat("background paragraph\n\n", 40)+"LATEST-RESPONSE\n\n"))
+			if stopped {
+				program.Send(agentruntime.StreamStopped("profile", "root", "normal"))
+			}
+			programAck(t, program)
+			// Let the returned bottom-scroll commands run while composition is deferred.
+			waitForProgramQuiescence(t, model, writer)
+			require.Equal(t, before, programFrame(t, program))
+			program.Send(tea.MouseMotionMsg{X: 40, Y: 15})
+			programAck(t, program)
+			require.Equal(t, before, programFrame(t, program))
+			program.Send(tea.FocusMsg{})
+			programAck(t, program)
+			after := ansi.Strip(programFrame(t, program))
+			require.Contains(t, after, "LATEST-RESPONSE")
+			require.NotContains(t, after, "START-OF-CONVERSATION")
+
+			program.Send(agentruntime.AgentChoice("root", "profile", strings.Repeat("new paragraph\n\n", 20)+"STILL-FOLLOWING\n\n"))
+			programAck(t, program)
+			require.Contains(t, ansi.Strip(programFrame(t, program)), "STILL-FOLLOWING")
+		})
+	}
+}

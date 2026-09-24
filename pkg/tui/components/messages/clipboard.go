@@ -160,7 +160,7 @@ func (m *model) extractSelectedText() string {
 		return ""
 	}
 
-	m.ensureAllItemsRendered()
+	m.updateScrollState()
 	startLine, startCol, endLine, endCol := m.selection.normalized()
 
 	if startLine < 0 || startLine >= m.totalHeight {
