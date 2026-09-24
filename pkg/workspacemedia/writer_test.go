@@ -1,6 +1,7 @@
 package workspacemedia
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -267,15 +268,48 @@ func TestWrite_CollisionAfterExtensionCorrection(t *testing.T) {
 	assert.True(t, res.ExtensionCorrected)
 }
 
-func TestWrite_CollisionExhaustionReturnsErrNameExhausted(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "pic.png"), []byte("x"), 0o644))
-	for n := 1; n < maxNameAttempts; n++ {
-		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("pic-%d.png", n)), []byte("x"), 0o644))
-	}
+func TestClaimAndPublish_AttemptLimit(t *testing.T) {
+	t.Parallel()
 
-	_, err := Write(root, "pic.png", pngData, "image/png")
-	require.ErrorIs(t, err, ErrNameExhausted)
+	const attempts = 3
+	for _, taken := range []int{attempts - 1, attempts} {
+		t.Run(fmt.Sprintf("%d names taken", taken), func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			root, err := os.OpenRoot(dir)
+			require.NoError(t, err)
+			defer root.Close()
+
+			for n := range taken {
+				name := "pic.png"
+				if n > 0 {
+					name = fmt.Sprintf("pic-%d.png", n)
+				}
+				require.NoError(t, root.WriteFile(name, []byte("existing"), 0o644))
+			}
+
+			name, err := claimAndPublish(root, "", "pic", ".png", bytes.NewReader(pngData), attempts)
+			if taken == attempts {
+				require.ErrorIs(t, err, ErrNameExhausted)
+				require.ErrorContains(t, err, "after 3 attempts")
+				assert.Empty(t, name)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, "pic-2.png", name)
+				assert.Equal(t, pngData, readWorkspaceFile(t, dir, name))
+			}
+
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			require.Len(t, entries, attempts, "publication must not leak its sibling temp file")
+			for _, entry := range entries {
+				if entry.Name() != name {
+					assert.Equal(t, []byte("existing"), readWorkspaceFile(t, dir, entry.Name()))
+				}
+			}
+		})
+	}
 }
 
 func TestWrite_ConcurrentSameNameWriters(t *testing.T) {

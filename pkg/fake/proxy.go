@@ -34,6 +34,11 @@ type ProxyOptions struct {
 	// StreamChunkDelay is the delay between SSE chunks when SimulateStream is true.
 	// Defaults to 15ms if not set.
 	StreamChunkDelay time.Duration
+	// StreamEventGate optionally pauses after an SSE event (or EOF fragment) is flushed.
+	// Return nil to continue, or a channel to await; request cancellation also releases it.
+	// The event is only valid during the call. Calls from different streams may overlap.
+	// Overrides simulated delays when set.
+	StreamEventGate func(event []byte) <-chan struct{}
 	// UpstreamGateway, when set, forwards requests to this models gateway
 	// instead of the provider's public endpoint. Used when recording a
 	// session that normally routes through a models gateway. Only honored
@@ -505,6 +510,9 @@ func Handle(transport http.RoundTripper, headerUpdater func(host string, req *ht
 		c.Response().WriteHeader(resp.StatusCode)
 
 		if IsStreamResponse(resp) {
+			if options.StreamEventGate != nil {
+				return gatedStreamCopy(c, resp, options.StreamEventGate)
+			}
 			if options.SimulateStream {
 				return SimulatedStreamCopy(c, resp, options.StreamChunkDelay)
 			}
@@ -513,6 +521,39 @@ func Handle(transport http.RoundTripper, headerUpdater func(host string, req *ht
 
 		_, err = io.Copy(c.Response().Writer, resp.Body)
 		return err
+	}
+}
+
+func gatedStreamCopy(c echo.Context, resp *http.Response, gate func([]byte) <-chan struct{}) error {
+	ctx := c.Request().Context()
+	reader := bufio.NewReader(resp.Body)
+	var event []byte
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		event = append(event, line...)
+		if err == nil && !bytes.Equal(line, []byte("\n")) && !bytes.Equal(line, []byte("\r\n")) {
+			continue
+		}
+		if len(event) > 0 {
+			if _, err := c.Response().Write(event); err != nil {
+				return err
+			}
+			c.Response().Flush()
+			if resume := gate(event); resume != nil {
+				select {
+				case <-resume:
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			event = event[:0]
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 	}
 }
 

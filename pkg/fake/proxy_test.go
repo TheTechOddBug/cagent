@@ -3,6 +3,7 @@ package fake
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -455,6 +456,65 @@ func TestDefaultMatcherNormalizesPromptFilePaths(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://example.test/v1", strings.NewReader(body))
 		if !matcher(req, cassette.Request{Method: http.MethodPost, URL: "https://example.test/v1", Body: cassetteBody}) {
 			t.Fatalf("prompt path was not normalized: %s", body)
+		}
+	}
+}
+
+func TestGatedStreamCopy(t *testing.T) {
+	t.Parallel()
+
+	for _, newline := range []string{"\n", "\r\n"} {
+		for _, cancelStream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("newline=%q/cancel=%t", newline, cancelStream), func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					first := strings.Join([]string{"event: delta", "data: first", "data: second", "", ""}, newline)
+					rest := "data: last" + newline + newline + "data: unterminated"
+					resp := &http.Response{Body: io.NopCloser(strings.NewReader(first + rest))}
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
+					rec := httptest.NewRecorder()
+					c := echo.New().NewContext(req, rec)
+
+					resume := make(chan struct{})
+					var events []string
+					done := make(chan error, 1)
+					go func() {
+						done <- gatedStreamCopy(c, resp, func(event []byte) <-chan struct{} {
+							events = append(events, string(event))
+							if string(event) == first {
+								return resume
+							}
+							return nil
+						})
+					}()
+					synctest.Wait()
+
+					assert.Equal(t, first, rec.Body.String(), "flush the complete event before waiting")
+					assert.True(t, rec.Flushed)
+					assert.Equal(t, []string{first}, events)
+					select {
+					case <-done:
+						t.Fatal("stream finished before the gate was released")
+					default:
+					}
+
+					if cancelStream {
+						cancel()
+					} else {
+						close(resume)
+					}
+					require.NoError(t, <-done)
+					if cancelStream {
+						assert.Equal(t, first, rec.Body.String())
+						assert.Equal(t, []string{first}, events)
+					} else {
+						assert.Equal(t, first+rest, rec.Body.String())
+						assert.Equal(t, []string{first, "data: last" + newline + newline, "data: unterminated"}, events)
+					}
+				})
+			})
 		}
 	}
 }
