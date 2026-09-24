@@ -26,6 +26,15 @@ type acpToolsetRegistry struct {
 }
 
 func (r *acpToolsetRegistry) CreateTool(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, agentName string) (tools.ToolSet, error) {
+	r.agent.mu.Lock()
+	clientTerminal := r.agent.clientTerminal
+	r.agent.mu.Unlock()
+	if clientTerminal && toolset.Type == "shell" {
+		return newTerminalToolset(ctx, toolset, runConfig)
+	}
+	if clientTerminal && toolset.Type == "environment" {
+		return &terminalEnvironment{}, nil
+	}
 	if toolset.Type == "filesystem" {
 		wd := runConfig.WorkingDir
 		if wd == "" {

@@ -27,6 +27,10 @@ For example:
 
 Each description also points the model at `get_environment_info` for edge cases the static hint does not cover. This reduces wasted turns where models assume POSIX syntax on Windows or vice versa.
 
+### ACP client execution
+
+In ACP mode, clients advertising terminal support execute the configured `shell` tool through client terminals rather than a host subprocess. The adapter uses `/bin/sh` or the absolute Windows system `cmd.exe`, requires matching client/agent platform and paths, forwards only configured environment overrides, retains a bounded output tail, and does not support `sudo_askpass`. Without terminal capability, native behavior is unchanged; client failures never trigger native fallback. See [ACP client terminals](../../features/acp/#client-terminals) for cleanup, cancellation, and unknown-create limitations.
+
 ### Dialect-error correction
 
 If a command still fails with a known shell-dialect error (for example PowerShell's `'&&' is not a valid statement separator`, a `cmd.exe`/`pwsh` "not recognized" error, or a POSIX-style `2>/dev/null` redirection on Windows), the tool prepends a `[shell-hint]` line to the output pointing the model at the corrective syntax before it retries. Hints are gated on the resolved shell so they only fire for genuine dialect mismatches (e.g. a PowerShell `&&` hint never fires for `pwsh`, which supports `&&` natively).
