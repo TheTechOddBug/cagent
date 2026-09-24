@@ -170,41 +170,43 @@ func TestWaitIfPaused_BroadcastsToAllWaiters(t *testing.T) {
 func TestTogglePause_RaceFreeUnderConcurrentCallers(t *testing.T) {
 	t.Parallel()
 
-	r := &LocalRuntime{}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		r := &LocalRuntime{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	var wg sync.WaitGroup
-	const togglers = 4
-	const waiters = 4
+		var wg sync.WaitGroup
+		const togglers = 4
+		const waiters = 4
 
-	for range togglers {
-		wg.Go(func() {
-			for range 200 {
-				_, _ = r.TogglePause(ctx)
-			}
-		})
-	}
-	for range waiters {
-		wg.Go(func() {
-			for range 200 {
-				_ = r.waitIfPaused(ctx)
-			}
-		})
-	}
+		for range togglers {
+			wg.Go(func() {
+				for range 200 {
+					_, _ = r.TogglePause(ctx)
+				}
+			})
+		}
+		for range waiters {
+			wg.Go(func() {
+				for range 200 {
+					_ = r.waitIfPaused(ctx)
+				}
+			})
+		}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
 
-	// If a waiter is left blocked on a pause that no toggler will flip,
-	// cancelling the context unblocks it so wg.Wait() can return.
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		cancel()
-		<-done
-	}
+		// If a waiter is left blocked on a pause that no toggler will flip,
+		// cancelling the context unblocks it so wg.Wait() can return.
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			cancel()
+			<-done
+		}
+	})
 }
