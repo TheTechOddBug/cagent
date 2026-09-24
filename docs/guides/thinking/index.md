@@ -23,7 +23,7 @@ Docker Agent exposes this through a single `thinking_budget` field on any named 
 
 | Provider            | Format     | Values                                                                                  | Default            |
 | ------------------- | ---------- | --------------------------------------------------------------------------------------- | ------------------ |
-| OpenAI              | string     | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `xhigh` on gpt-5.2+, `none`/`max` on gpt-5.6+ only, `minimal` dropped on gpt-5.6+ | `medium` (API default) |
+| OpenAI              | string     | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `xhigh` on gpt-5.2+, `max` on gpt-5.6+; API-level `none` on GPT-5.x from 5.6 onward and GPT-6 Sol/Luna, `minimal` dropped on gpt-5.6+ | `medium` (API default) |
 | Anthropic           | int or str | 1024–32768 tokens, or `minimal`–`max`, `adaptive`, `adaptive/<effort>`, `none`          | off                |
 | Gemini 2.5          | int        | `0` (off), `-1` (dynamic), or token count (max 24576 / 32768)                           | `-1` (dynamic)     |
 | Gemini 3            | string     | `minimal`, `low`, `medium`, `high`                                                      | API default (model-dependent) |
@@ -36,7 +36,7 @@ String values are case-insensitive. The full set of accepted strings is `none`, 
 
 ## OpenAI
 
-OpenAI reasoning models (o-series, gpt-5, gpt-5-mini, gpt-5.6 family) use a string effort level that maps to their `reasoning_effort` API parameter. The `xhigh` level requires gpt-5.2+; `none` and `max` require gpt-5.6+ (Sol/Terra/Luna); `minimal` is dropped on gpt-5.6+.
+OpenAI reasoning models (o-series, gpt-5, gpt-5-mini, gpt-5.6 family, gpt-6 family) use a string effort level that maps to their `reasoning_effort` API parameter. The `xhigh` level requires gpt-5.2+; `max` requires gpt-5.6+; API-level `none` is supported on GPT-5.x from 5.6 onward and GPT-6 Sol/Luna, but not Astra; `minimal` is dropped on gpt-5.6+.
 
 ```yaml
 models:
@@ -50,7 +50,7 @@ models:
 
 | Level     | Description                                              |
 | --------- | -------------------------------------------------------- |
-| `none`    | No reasoning. Sent as-is on gpt-5.6+ (a real API value); on older models it just disables the local `thinking_budget` (the API's own default still applies). |
+| `none`    | No reasoning. Sent as-is on GPT-5.x from 5.6 onward and GPT-6 Sol/Luna (a real API value); on Astra and older models it just disables the local `thinking_budget` (the API's own default still applies). |
 | `minimal` | Fastest; lightest reasoning pass. Not accepted on gpt-5.6+ (dropped from the API). |
 | `low`     | Quick reasoning for straightforward tasks.               |
 | `medium`  | Balanced default.                                        |
@@ -58,12 +58,12 @@ models:
 | `xhigh`   | Near-maximum effort; slower but most accurate. Requires gpt-5.2+. |
 | `max`     | Maximum effort. Requires gpt-5.6+.                       |
 
-Token counts, `adaptive`, and `adaptive/<effort>` are rejected with a configuration error at request time. `xhigh` is only supported by gpt-5.2 and later minor versions (e.g. gpt-5.2, gpt-5.4-mini); `none` and `max` are only supported by gpt-5.6 and later (Sol/Terra/Luna); `minimal` is not accepted on gpt-5.6+. Older models (o1, o3-mini) only accept `low`/`medium`/`high` — sending an unsupported level returns an API error.
+Token counts, `adaptive`, and `adaptive/<effort>` are rejected with a configuration error at request time. `xhigh` is only supported by gpt-5.2 and later minor versions (e.g. gpt-5.2, gpt-5.4-mini); `max` is supported by gpt-5.6 and later; API-level `none` is supported on GPT-5.x from 5.6 onward and GPT-6 Sol/Luna, but not Astra; `minimal` is not accepted on gpt-5.6+. Older models (o1, o3-mini) only accept `low`/`medium`/`high` — sending an unsupported level returns an API error.
 
 > [!WARNING]
 > **Tokens and max_tokens**
 >
-> Older OpenAI reasoning models always reason internally — even with `thinking_budget: none` there are hidden reasoning tokens that count against `max_tokens`. On gpt-5.6+ (Sol/Terra/Luna), `none` is a real API value that genuinely disables reasoning. Docker Agent automatically raises the output-token floor for its internal low-effort calls (e.g. title generation) so hidden reasoning cannot starve visible text output.
+> Older OpenAI reasoning models always reason internally — even with `thinking_budget: none` there are hidden reasoning tokens that count against `max_tokens`. On GPT-5.x from 5.6 onward and GPT-6 Sol/Luna, `none` is a real API value that genuinely disables reasoning. Docker Agent automatically raises the output-token floor for its internal low-effort calls (e.g. title generation) so hidden reasoning cannot starve visible text output.
 
 ## Anthropic
 
@@ -308,7 +308,7 @@ models:
     thinking_budget: 0
 ```
 
-`none` and `0` clear Docker Agent's thinking configuration — no thinking parameter is sent. Models that always reason (OpenAI o-series, gpt-5 through gpt-5.5, Gemini 3) then fall back to the API's default behavior and still reason internally; gpt-5.6+ (Sol/Terra/Luna) sends `none` as a real API value that genuinely disables reasoning.
+`none` and `0` clear Docker Agent's thinking configuration — no thinking parameter is sent. Models that always reason (OpenAI o-series, gpt-5 through gpt-5.5, GPT-6 Astra, Gemini 3) then fall back to the API's default behavior and still reason internally; GPT-5.x from 5.6 onward and GPT-6 Sol/Luna send `none` as a real API value that genuinely disables reasoning.
 
 Local models and other OpenAI-compatible backends may reason by default even when
 `thinking_budget` is cleared. Use

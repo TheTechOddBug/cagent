@@ -278,7 +278,7 @@ func cloneModelConfig(cfg *latest.ModelConfig) *latest.ModelConfig {
 //     applies since most providers have no real "off" switch.
 //   - thinking_budget: none  →  normally normalised the same way (nil), EXCEPT
 //     on an OpenAI-family model that has a real API-level "none" effort
-//     (gpt-5.6+, see [modelinfo.OpenAISupportsNoneEffort]): there the explicit
+//     (see [modelinfo.OpenAISupportsNoneEffort]): there the explicit
 //     value is preserved so it actually reaches the API instead of silently
 //     falling back to the model's default ("medium").
 //   - thinking_budget explicitly set to a real value  →  kept as-is; interleaved_thinking
