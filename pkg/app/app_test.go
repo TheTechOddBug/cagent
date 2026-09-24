@@ -685,43 +685,42 @@ func TestApp_SnapshotsEnabled_DoesNotRequireSession(t *testing.T) {
 func TestApp_SubscribeWith_FanOutToMultipleSubscribers(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	rt := &mockRuntime{}
-	app := New(t.Context(), rt, session.New())
+		rt := &mockRuntime{}
+		app := New(t.Context(), rt, session.New())
 
-	recv := func() (chan tea.Msg, context.CancelFunc) {
-		subCtx, subCancel := context.WithCancel(ctx)
-		ch := make(chan tea.Msg, 16)
-		go app.SubscribeWith(subCtx, func(m tea.Msg) { ch <- m })
-		return ch, subCancel
-	}
-
-	a, cancelA := recv()
-	b, cancelB := recv()
-	defer cancelA()
-	defer cancelB()
-
-	// Wait until both subscribers are registered before publishing.
-	require.Eventually(t, func() bool {
-		app.subsMu.Lock()
-		defer app.subsMu.Unlock()
-		return len(app.subs) == 2
-	}, time.Second, 5*time.Millisecond)
-
-	app.events <- runtime.SessionTitle("sess", "hello")
-
-	for _, ch := range []chan tea.Msg{a, b} {
-		select {
-		case msg := <-ch:
-			ev, ok := msg.(*runtime.SessionTitleEvent)
-			require.True(t, ok)
-			assert.Equal(t, "hello", ev.Title)
-		case <-time.After(time.Second):
-			t.Fatal("subscriber did not receive event")
+		recv := func() (chan tea.Msg, context.CancelFunc) {
+			subCtx, subCancel := context.WithCancel(ctx)
+			ch := make(chan tea.Msg, 16)
+			go app.SubscribeWith(subCtx, func(m tea.Msg) { ch <- m })
+			return ch, subCancel
 		}
-	}
+
+		a, cancelA := recv()
+		b, cancelB := recv()
+		defer cancelA()
+		defer cancelB()
+
+		// Wait until both subscribers are registered before publishing.
+		synctest.Wait()
+		require.Len(t, app.subs, 2)
+
+		app.events <- runtime.SessionTitle("sess", "hello")
+
+		for _, ch := range []chan tea.Msg{a, b} {
+			select {
+			case msg := <-ch:
+				ev, ok := msg.(*runtime.SessionTitleEvent)
+				require.True(t, ok)
+				assert.Equal(t, "hello", ev.Title)
+			case <-time.After(time.Second):
+				t.Fatal("subscriber did not receive event")
+			}
+		}
+	})
 }
 
 func TestApp_RegenerateSessionTitle(t *testing.T) {
