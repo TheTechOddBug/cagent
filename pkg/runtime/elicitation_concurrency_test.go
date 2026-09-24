@@ -539,109 +539,108 @@ func (e *elicitingToolSet) Tools(context.Context) ([]tools.Tool, error) {
 func TestConcurrentBackgroundElicitations_AllSurfaceAndRouteToCorrectWaiter(t *testing.T) {
 	t.Parallel()
 
-	newWorker := func(name, question string) (*agent.Agent, *elicitingToolSet) {
-		ts := &elicitingToolSet{message: question}
-		toolCallStream := newStreamBuilder().AddToolCallWithStop("call_1", "ask_user", "{}").Build()
-		followUpStream := newStreamBuilder().AddContent("done").AddStopWithUsage(5, 5).Build()
-		prov := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{toolCallStream, followUpStream}}
-		a := agent.New(name, "worker", agent.WithModel(prov), agent.WithToolSets(ts))
-		return a, ts
-	}
+	synctest.Test(t, func(t *testing.T) {
+		newWorker := func(name, question string) (*agent.Agent, *elicitingToolSet) {
+			ts := &elicitingToolSet{message: question}
+			toolCallStream := newStreamBuilder().AddToolCallWithStop("call_1", "ask_user", "{}").Build()
+			followUpStream := newStreamBuilder().AddContent("done").AddStopWithUsage(5, 5).Build()
+			prov := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{toolCallStream, followUpStream}}
+			a := agent.New(name, "worker", agent.WithModel(prov), agent.WithToolSets(ts))
+			return a, ts
+		}
 
-	worker1, ts1 := newWorker("worker1", "worker1 needs input")
-	worker2, ts2 := newWorker("worker2", "worker2 needs input")
-	root := agent.New("root", "root", agent.WithModel(&mockProvider{id: "test/mock-model", stream: &mockStream{}}))
-	agent.WithSubAgents(worker1, worker2)(root)
+		worker1, ts1 := newWorker("worker1", "worker1 needs input")
+		worker2, ts2 := newWorker("worker2", "worker2 needs input")
+		root := agent.New("root", "root", agent.WithModel(&mockProvider{id: "test/mock-model", stream: &mockStream{}}))
+		agent.WithSubAgents(worker1, worker2)(root)
 
-	tm := team.New(team.WithAgents(root, worker1, worker2))
-	rt, err := NewLocalRuntime(t.Context(), tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
-	require.NoError(t, err)
+		tm := team.New(team.WithAgents(root, worker1, worker2))
+		rt, err := NewLocalRuntime(t.Context(), tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+		require.NoError(t, err)
 
-	// deliveries counts sink invocations per ElicitationID. Each ID must be
-	// delivered exactly once: any count > 1 means the exactly-once guarantee
-	// (elicitationHandler is the sole caller of emitElicitationRequest) has
-	// regressed, since nothing else in the App/runtime layer masks
-	// duplicates any more.
-	var mu sync.Mutex
-	deliveries := make(map[string]int)
-	requests := make(map[string]*ElicitationRequestEvent)
-	rt.OnElicitationRequest(func(ev Event) {
-		req := ev.(*ElicitationRequestEvent)
+		// deliveries counts sink invocations per ElicitationID. Each ID must be
+		// delivered exactly once: any count > 1 means the exactly-once guarantee
+		// (elicitationHandler is the sole caller of emitElicitationRequest) has
+		// regressed, since nothing else in the App/runtime layer masks
+		// duplicates any more.
+		var mu sync.Mutex
+		deliveries := make(map[string]int)
+		requests := make(map[string]*ElicitationRequestEvent)
+		rt.OnElicitationRequest(func(ev Event) {
+			req := ev.(*ElicitationRequestEvent)
+			mu.Lock()
+			defer mu.Unlock()
+			deliveries[req.ElicitationID]++
+			requests[req.ElicitationID] = req
+		})
+
+		results := make(chan *agenttool.RunResult, 2)
+		launch := func(agentName string) {
+			go func() {
+				parent := session.New(session.WithUserMessage("go"), session.WithToolsApproved(true))
+				res := rt.RunAgent(t.Context(), agenttool.RunParams{
+					AgentName:     agentName,
+					Task:          "do it",
+					ParentSession: parent,
+				})
+				results <- res
+			}()
+		}
+		launch("worker1")
+		launch("worker2")
+
+		// Wait until both elicitations have surfaced, then respond to each by
+		// its own ID with a distinguishable payload so a swapped response would
+		// be caught by the assertions below.
+		synctest.Wait()
 		mu.Lock()
-		defer mu.Unlock()
-		deliveries[req.ElicitationID]++
-		requests[req.ElicitationID] = req
+		reqs := maps.Clone(requests)
+		mu.Unlock()
+		require.Len(t, reqs, 2, "both concurrent background elicitations must surface via the sink")
+
+		mu.Lock()
+		for id, count := range deliveries {
+			assert.Equal(t, 1, count, "elicitation %s must be delivered to the sink exactly once", id)
+		}
+		mu.Unlock()
+
+		var worker1ID, worker2ID string
+		for id, ev := range reqs {
+			switch ev.Message {
+			case "worker1 needs input":
+				worker1ID = id
+			case "worker2 needs input":
+				worker2ID = id
+			}
+		}
+		require.NotEmpty(t, worker1ID, "worker1's elicitation must have surfaced")
+		require.NotEmpty(t, worker2ID, "worker2's elicitation must have surfaced")
+		require.NotEqual(t, worker1ID, worker2ID, "concurrent elicitations must get distinct correlation IDs")
+
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"answer": "1"}, worker1ID))
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"answer": "2"}, worker2ID))
+
+		var got []*agenttool.RunResult
+		for range 2 {
+			select {
+			case r := <-results:
+				got = append(got, r)
+			case <-time.After(5 * time.Second):
+				t.Fatal("a background job never completed after its elicitation was resumed")
+			}
+		}
+		for _, r := range got {
+			require.Empty(t, r.ErrMsg, "background job must not fail")
+		}
+
+		worker1Result, ok1 := ts1.snapshot()
+		require.True(t, ok1, "worker1's tool call must have received an elicitation result")
+		worker2Result, ok2 := ts2.snapshot()
+		require.True(t, ok2, "worker2's tool call must have received an elicitation result")
+
+		assert.Equal(t, map[string]any{"answer": "1"}, worker1Result.Content,
+			"worker1 must receive its own response, not worker2's (no swap)")
+		assert.Equal(t, map[string]any{"answer": "2"}, worker2Result.Content,
+			"worker2 must receive its own response, not worker1's (no swap)")
 	})
-
-	results := make(chan *agenttool.RunResult, 2)
-	launch := func(agentName string) {
-		go func() {
-			parent := session.New(session.WithUserMessage("go"), session.WithToolsApproved(true))
-			res := rt.RunAgent(t.Context(), agenttool.RunParams{
-				AgentName:     agentName,
-				Task:          "do it",
-				ParentSession: parent,
-			})
-			results <- res
-		}()
-	}
-	launch("worker1")
-	launch("worker2")
-
-	// Wait until both elicitations have surfaced, then respond to each by
-	// its own ID with a distinguishable payload so a swapped response would
-	// be caught by the assertions below.
-	var reqs map[string]*ElicitationRequestEvent
-	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		reqs = make(map[string]*ElicitationRequestEvent, len(requests))
-		maps.Copy(reqs, requests)
-		return len(reqs) == 2
-	}, 5*time.Second, 10*time.Millisecond, "both concurrent background elicitations must surface via the sink")
-
-	mu.Lock()
-	for id, count := range deliveries {
-		assert.Equal(t, 1, count, "elicitation %s must be delivered to the sink exactly once", id)
-	}
-	mu.Unlock()
-
-	var worker1ID, worker2ID string
-	for id, ev := range reqs {
-		switch ev.Message {
-		case "worker1 needs input":
-			worker1ID = id
-		case "worker2 needs input":
-			worker2ID = id
-		}
-	}
-	require.NotEmpty(t, worker1ID, "worker1's elicitation must have surfaced")
-	require.NotEmpty(t, worker2ID, "worker2's elicitation must have surfaced")
-	require.NotEqual(t, worker1ID, worker2ID, "concurrent elicitations must get distinct correlation IDs")
-
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"answer": "1"}, worker1ID))
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"answer": "2"}, worker2ID))
-
-	var got []*agenttool.RunResult
-	for range 2 {
-		select {
-		case r := <-results:
-			got = append(got, r)
-		case <-time.After(5 * time.Second):
-			t.Fatal("a background job never completed after its elicitation was resumed")
-		}
-	}
-	for _, r := range got {
-		require.Empty(t, r.ErrMsg, "background job must not fail")
-	}
-
-	worker1Result, ok1 := ts1.snapshot()
-	require.True(t, ok1, "worker1's tool call must have received an elicitation result")
-	worker2Result, ok2 := ts2.snapshot()
-	require.True(t, ok2, "worker2's tool call must have received an elicitation result")
-
-	assert.Equal(t, map[string]any{"answer": "1"}, worker1Result.Content,
-		"worker1 must receive its own response, not worker2's (no swap)")
-	assert.Equal(t, map[string]any{"answer": "2"}, worker2Result.Content,
-		"worker2 must receive its own response, not worker1's (no swap)")
 }
