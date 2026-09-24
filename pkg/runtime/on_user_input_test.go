@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -240,33 +241,35 @@ func TestEnforceMaxIterations_PinnedSessionAgent_AttributesHookToThatAgent(t *te
 func TestOnUserInputHooks_Elicitation_CarriesConversationID(t *testing.T) {
 	t.Parallel()
 
-	r, rb := runtimeWithRecordedUserInput(t)
+	synctest.Test(t, func(t *testing.T) {
+		r, rb := runtimeWithRecordedUserInput(t)
 
-	sinkCalled := make(chan Event, 1)
-	r.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
+		sinkCalled := make(chan Event, 1)
+		r.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	ctx = genai.WithConversationID(ctx, "elicit-sess-1")
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		ctx = genai.WithConversationID(ctx, "elicit-sess-1")
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := r.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
-		done <- err
-	}()
+		done := make(chan error, 1)
+		go func() {
+			_, err := r.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
+			done <- err
+		}()
 
-	var ev *ElicitationRequestEvent
-	select {
-	case e := <-sinkCalled:
-		ev = e.(*ElicitationRequestEvent)
-	case <-time.After(time.Second):
-		t.Fatal("elicitation request event not delivered to the sink")
-	}
-	require.NoError(t, r.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
-	require.NoError(t, <-done)
+		var ev *ElicitationRequestEvent
+		select {
+		case e := <-sinkCalled:
+			ev = e.(*ElicitationRequestEvent)
+		case <-time.After(time.Second):
+			t.Fatal("elicitation request event not delivered to the sink")
+		}
+		require.NoError(t, r.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
+		require.NoError(t, <-done)
 
-	got := rb.snapshot()
-	require.Len(t, got, 1, "elicitation wait must fire on_user_input once")
-	assert.Equal(t, "elicit-sess-1", got[0].SessionID,
-		"on_user_input must carry the conversation id from ctx, not an empty session id")
+		got := rb.snapshot()
+		require.Len(t, got, 1, "elicitation wait must fire on_user_input once")
+		assert.Equal(t, "elicit-sess-1", got[0].SessionID,
+			"on_user_input must carry the conversation id from ctx, not an empty session id")
+	})
 }
