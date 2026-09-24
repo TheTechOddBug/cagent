@@ -397,43 +397,45 @@ func TestElicitationHandler_HeadlessBackgroundFastDeclines(t *testing.T) {
 func TestElicitationHandler_BackgroundWithSinkStillWaitsForResponse(t *testing.T) {
 	t.Parallel()
 
-	rt := newElicitationTestRuntime(t)
+	synctest.Test(t, func(t *testing.T) {
+		rt := newElicitationTestRuntime(t)
 
-	received := make(chan Event, 1)
-	rt.OnElicitationRequest(func(ev Event) { received <- ev })
+		received := make(chan Event, 1)
+		rt.OnElicitationRequest(func(ev Event) { received <- ev })
 
-	ctx := mcptools.WithoutInteractivePrompts(t.Context())
-	ctx = genai.WithConversationID(ctx, "bg-sess-2")
+		ctx := mcptools.WithoutInteractivePrompts(t.Context())
+		ctx = genai.WithConversationID(ctx, "bg-sess-2")
 
-	type handlerResult struct {
-		result tools.ElicitationResult
-		err    error
-	}
-	done := make(chan handlerResult, 1)
-	go func() {
-		result, err := rt.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
-		done <- handlerResult{result, err}
-	}()
+		type handlerResult struct {
+			result tools.ElicitationResult
+			err    error
+		}
+		done := make(chan handlerResult, 1)
+		go func() {
+			result, err := rt.elicitationHandler(ctx, &mcp.ElicitParams{Message: "confirm?"})
+			done <- handlerResult{result, err}
+		}()
 
-	var ev *ElicitationRequestEvent
-	select {
-	case e := <-received:
-		ev = e.(*ElicitationRequestEvent)
-	case <-time.After(2 * time.Second):
-		t.Fatal("sink never received the elicitation request")
-	}
-	assert.Equal(t, "bg-sess-2", ev.SessionID, "the event must carry the originating (sub-)session ID")
+		var ev *ElicitationRequestEvent
+		select {
+		case e := <-received:
+			ev = e.(*ElicitationRequestEvent)
+		case <-time.After(2 * time.Second):
+			t.Fatal("sink never received the elicitation request")
+		}
+		assert.Equal(t, "bg-sess-2", ev.SessionID, "the event must carry the originating (sub-)session ID")
 
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, nil, ev.ElicitationID))
 
-	select {
-	case got := <-done:
-		require.NoError(t, got.err)
-		assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
-	case <-time.After(2 * time.Second):
-		t.Fatal("elicitationHandler never returned")
-	}
-	assert.Empty(t, rt.elicitationDeclines.drain("bg-sess-2"), "must not fast-decline once a sink is registered")
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
+		case <-time.After(2 * time.Second):
+			t.Fatal("elicitationHandler never returned")
+		}
+		assert.Empty(t, rt.elicitationDeclines.drain("bg-sess-2"), "must not fast-decline once a sink is registered")
+	})
 }
 
 // TestElicitationHandler_TOCTOU_ResolveImmediatelyAfterRegister promotes the
