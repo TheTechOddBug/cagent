@@ -158,6 +158,10 @@ Concurrent close requests join the same cleanup. Canceling a close request only 
 
 Server shutdown rejects new work, cancels admitted initialization/session/list operations, and drains them before closing the session store. Shutdown is a final join rather than a bounded timeout: an uncooperative runtime or tool can delay it. Toolset stop errors are surfaced, not treated as successful cleanup. These guarantees do not add disposal support to toolsets whose resources fall outside the existing lifecycle contract, nor undo already-issued client I/O.
 
+## Plan Snapshots
+
+Todo tool results with typed todo metadata produce complete ACP plan snapshots. An empty todo snapshot sends `entries: []`, replacing and clearing the previous plan; completed entries remain visible until the todo storage is cleared. Missing or unrelated metadata does not change the plan, and textual tool output is not parsed to infer one. This uses the stable v1 `plan` update, not ID-based plan-removal extensions.
+
 ## Context and Cost Accounting
 
 The context gauge describes the root ACP conversation, not a delegated or background agent's separate context window. Child usage updates can change the displayed cost without replacing the root's token count or limit. Context changes reported for an in-place root handoff or compaction replace the root snapshot.

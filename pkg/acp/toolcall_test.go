@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -341,7 +342,10 @@ func TestBuildPlanUpdateFromTodos(t *testing.T) {
 	}{
 		{name: "not a todo slice", meta: "bogus", want: nil},
 		{name: "nil meta", meta: nil, want: nil},
-		{name: "empty todos", meta: []todo.Todo{}, want: nil},
+		{name: "empty todos", meta: []todo.Todo{}, want: []acpsdk.PlanEntry{}},
+		{name: "typed nil todos", meta: []todo.Todo(nil), want: []acpsdk.PlanEntry{}},
+		{name: "untyped empty slice", meta: []any{}, want: nil},
+		{name: "JSON output is not metadata", meta: `{"todos":[]}`, want: nil},
 		{
 			name: "todos map to plan entries",
 			meta: []todo.Todo{
@@ -369,6 +373,11 @@ func TestBuildPlanUpdateFromTodos(t *testing.T) {
 			require.NotNil(t, update)
 			require.NotNil(t, update.Plan)
 			assert.Equal(t, tt.want, update.Plan.Entries)
+			if len(tt.want) == 0 {
+				encoded, err := json.Marshal(update)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"sessionUpdate":"plan","entries":[]}`, string(encoded))
+			}
 		})
 	}
 }

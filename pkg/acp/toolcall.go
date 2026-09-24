@@ -220,10 +220,6 @@ func buildPlanUpdateFromTodos(meta any) *acp.SessionUpdate {
 		return nil
 	}
 
-	if len(todos) == 0 {
-		return nil
-	}
-
 	entries := make([]acp.PlanEntry, 0, len(todos))
 	for _, td := range todos {
 		entries = append(entries, acp.PlanEntry{
