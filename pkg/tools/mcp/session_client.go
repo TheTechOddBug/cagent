@@ -35,9 +35,15 @@ type sessionClient struct {
 	samplingHandler          tools.SamplingHandler
 	samplingWithToolsHandler tools.SamplingWithToolsHandler
 	oauthSuccessHandler      func()
-	inflight                 map[uint64]tools.HandlerScope
+	inflight                 map[uint64]inflightCall
 	nextInflight             uint64
 	mu                       sync.RWMutex
+}
+
+type inflightCall struct {
+	scope  tools.HandlerScope
+	ctx    context.Context //nolint:containedctx // bounded by CallTool; canceled when unregistered
+	cancel context.CancelFunc
 }
 
 // setSession stores the session under the write lock.
@@ -263,9 +269,10 @@ func (c *sessionClient) registerCallContext(ctx context.Context) uint64 {
 	defer c.mu.Unlock()
 	c.nextInflight++
 	if c.inflight == nil {
-		c.inflight = make(map[uint64]tools.HandlerScope)
+		c.inflight = make(map[uint64]inflightCall)
 	}
-	c.inflight[c.nextInflight] = scope
+	ownerCtx, cancel := context.WithCancel(ctx)
+	c.inflight[c.nextInflight] = inflightCall{scope: scope, ctx: ownerCtx, cancel: cancel}
 	return c.nextInflight
 }
 
@@ -275,6 +282,9 @@ func (c *sessionClient) unregisterCallContext(id uint64) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if call, ok := c.inflight[id]; ok {
+		call.cancel()
+	}
 	delete(c.inflight, id)
 }
 
@@ -287,17 +297,34 @@ func (c *sessionClient) requestContext(fallback context.Context) context.Context
 	if len(c.inflight) != 1 {
 		return tools.WithoutHandlerScope(fallback)
 	}
-	for _, scope := range c.inflight {
-		return tools.WithHandlerScope(fallback, scope)
+	for _, call := range c.inflight {
+		return tools.WithHandlerScope(fallback, call.scope)
 	}
 	return tools.WithoutHandlerScope(fallback)
+}
+
+func (c *sessionClient) elicitationContext(fallback context.Context) (context.Context, func()) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.inflight) == 1 {
+		for _, call := range c.inflight {
+			ctx, cancel := context.WithCancel(tools.WithHandlerScope(fallback, call.scope))
+			stop := context.AfterFunc(call.ctx, cancel)
+			if call.ctx.Err() != nil {
+				cancel()
+			}
+			return ctx, func() { stop(); cancel() }
+		}
+	}
+	return tools.WithoutHandlerScope(fallback), func() {}
 }
 
 // handleElicitationRequest forwards incoming elicitation requests from the MCP
 // server to the registered handler. It is used as the gomcp ElicitationHandler
 // callback for both stdio and remote clients.
 func (c *sessionClient) handleElicitationRequest(ctx context.Context, req *gomcp.ElicitRequest) (*gomcp.ElicitResult, error) {
-	ctx = c.requestContext(ctx)
+	ctx, release := c.elicitationContext(ctx)
+	defer release()
 	slog.DebugContext(ctx, "Received elicitation request from MCP server", "message", req.Params.Message)
 
 	c.mu.RLock()

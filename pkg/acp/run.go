@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 
-	acpsdk "github.com/coder/acp-go-sdk"
-
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/sources"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
@@ -33,9 +31,8 @@ func Run(ctx context.Context, agentFilename string, stdin io.Reader, stdout io.W
 	}
 
 	acpAgent := NewAgent(agentSource, runConfig, sessStore)
-	conn := acpsdk.NewAgentSideConnection(acpAgent, stdout, stdin)
+	conn := acpAgent.NewConnection(stdout, stdin)
 	conn.SetLogger(slog.Default())
-	acpAgent.SetAgentConnection(conn)
 	defer func() { retErr = errors.Join(retErr, acpAgent.Stop(ctx)) }()
 
 	slog.DebugContext(ctx, "acp started, waiting for conn")

@@ -33,11 +33,13 @@ type Agent struct {
 	sessionStore session.Store
 	sessions     map[string]*Session
 
-	conn     *acp.AgentSideConnection
-	clientFS acp.FileSystemCapabilities
-	team     *team.Team // Initialization validation only; sessions load their own teams.
-	loadTeam func(context.Context, string) (*teamloader.LoadResult, error)
-	loadGate chan struct{}
+	conn              *acp.AgentSideConnection
+	clientFS          acp.FileSystemCapabilities
+	clientElicitation acp.ElicitationCapabilities
+	elicitationConn   *acp.AgentSideConnection
+	team              *team.Team // Initialization validation only; sessions load their own teams.
+	loadTeam          func(context.Context, string) (*teamloader.LoadResult, error)
+	loadGate          chan struct{}
 
 	mu           sync.Mutex
 	stopped      bool
@@ -260,6 +262,7 @@ func NewAgent(agentSource config.Source, runConfig *config.RuntimeConfig, sessio
 // SetAgentConnection sets the ACP connection.
 func (a *Agent) SetAgentConnection(conn *acp.AgentSideConnection) {
 	a.conn = conn
+	a.elicitationConn = nil
 }
 
 // Initialize implements [acp.Agent].
@@ -296,6 +299,9 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 		return acp.InitializeResponse{}, errors.Join(context.Canceled, cleanupErr)
 	}
 	a.clientFS = params.ClientCapabilities.Fs
+	if caps := params.ClientCapabilities.Elicitation; caps != nil {
+		a.clientElicitation = *caps
+	}
 	a.team = loadResult.Team
 	a.mu.Unlock()
 	slog.DebugContext(ctx, "Teams loaded successfully", "source", a.agentSource.Name(), "agent_count", loadResult.Team.Size())
@@ -331,7 +337,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 }
 
 // newRuntime creates a session-owned team and runtime using the default agent.
-func (a *Agent) newRuntime(ctx context.Context, workingDir string, servers []acp.McpServerStdio) (*Session, *agent.Agent, error) {
+func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, servers []acp.McpServerStdio) (*Session, *agent.Agent, error) {
 	workingDir = cmp.Or(workingDir, a.defaultWorkingDir())
 	loadResult, err := a.loadTeamSerialized(ctx, workingDir)
 	if err != nil {
@@ -351,10 +357,12 @@ func (a *Agent) newRuntime(ctx context.Context, workingDir string, servers []acp
 		return acpSess, nil, fmt.Errorf("failed to resolve default agent: %w", err)
 	}
 
+	handler := a.elicitationHandler(sessionID)
 	rt, err := runtime.New(ctx, acpSess.team,
 		runtime.WithCurrentAgent(defaultAgent.Name()),
-		// Decline unsupported elicitation; keep session permission and iteration prompts interactive.
-		runtime.WithNonInteractive(true),
+		// Permission and iteration prompts retain their session-level interactivity.
+		runtime.WithNonInteractive(handler == nil),
+		runtime.WithElicitationHandler(handler),
 		runtime.WithSessionStore(a.sessionStore),
 		runtime.WithProviderRegistry(loadResult.ProviderRegistry),
 		runtime.WithWorkingDir(workingDir),
@@ -432,7 +440,7 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 	op.lifecycle.newRoot = true
 	a.mu.Unlock()
 	defer a.finishOperation(op)
-	acpSess, defaultAgent, err := a.newRuntime(ctx, workingDir, servers)
+	acpSess, defaultAgent, err := a.newRuntime(ctx, sess.ID, workingDir, servers)
 	stored := false
 	defer func() {
 		if !stored && acpSess != nil {
@@ -559,7 +567,7 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 		return acp.NewInvalidParams(err.Error())
 	}
 
-	acpSess, _, err := a.newRuntime(ctx, sess.WorkingDir, servers)
+	acpSess, _, err := a.newRuntime(ctx, sid, sess.WorkingDir, servers)
 	stored := false
 	defer func() {
 		if !stored && acpSess != nil {
