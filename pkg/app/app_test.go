@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -1328,126 +1329,136 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 			t.Run("no stop event: synthesizes exactly one, reason normal, as the last event", func(t *testing.T) {
 				t.Parallel()
 
-				sess := session.New()
-				rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-					runtime.StreamStarted(sess.ID, "mock"),
-					runtime.AgentChoice("mock", sess.ID, "partial content"),
-				}}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: sess, events: events}
+				synctest.Test(t, func(t *testing.T) {
+					sess := session.New()
+					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
+						runtime.StreamStarted(sess.ID, "mock"),
+						runtime.AgentChoice("mock", sess.ID, "partial content"),
+					}}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: sess, events: events}
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				collected := collectUntilQuiet(t, events)
-				require.NotEmpty(t, collected, "the script's own events must still be forwarded")
-				stops := streamStoppedEvents(collected)
-				require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
-				assert.Equal(t, sess.ID, stops[0].SessionID)
-				assert.Equal(t, "normal", stops[0].Reason)
-				assert.Equal(t, "mock", stops[0].AgentName, "must fall back to the last observed root-session agent name")
-				assert.Same(t, tea.Msg(stops[0]), collected[len(collected)-1],
-					"the synthesized stop must be the last event forwarded")
+					collected := collectUntilQuiet(t, events)
+					require.NotEmpty(t, collected, "the script's own events must still be forwarded")
+					stops := streamStoppedEvents(collected)
+					require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
+					assert.Equal(t, sess.ID, stops[0].SessionID)
+					assert.Equal(t, "normal", stops[0].Reason)
+					assert.Equal(t, "mock", stops[0].AgentName, "must fall back to the last observed root-session agent name")
+					assert.Same(t, tea.Msg(stops[0]), collected[len(collected)-1],
+						"the synthesized stop must be the last event forwarded")
+				})
 			})
 
 			t.Run("real root stop: no duplicate is synthesized", func(t *testing.T) {
 				t.Parallel()
 
-				sess := session.New()
-				rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-					runtime.StreamStarted(sess.ID, "mock"),
-					runtime.AgentChoice("mock", sess.ID, "partial content"),
-					runtime.StreamStopped(sess.ID, "mock", "normal"),
-				}}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: sess, events: events}
+				synctest.Test(t, func(t *testing.T) {
+					sess := session.New()
+					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
+						runtime.StreamStarted(sess.ID, "mock"),
+						runtime.AgentChoice("mock", sess.ID, "partial content"),
+						runtime.StreamStopped(sess.ID, "mock", "normal"),
+					}}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: sess, events: events}
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				collected := collectUntilQuiet(t, events)
-				stops := streamStoppedEvents(collected)
-				require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
-				assert.Equal(t, sess.ID, stops[0].SessionID)
-				assert.Equal(t, "normal", stops[0].Reason)
+					collected := collectUntilQuiet(t, events)
+					stops := streamStoppedEvents(collected)
+					require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+					assert.Equal(t, sess.ID, stops[0].SessionID)
+					assert.Equal(t, "normal", stops[0].Reason)
+				})
 			})
 
 			t.Run("sub-session stop only: root stop is still synthesized", func(t *testing.T) {
 				t.Parallel()
 
-				sess := session.New()
-				const subSessionID = "sub-session"
-				rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-					runtime.StreamStarted(sess.ID, "mock"),
-					runtime.StreamStopped(subSessionID, "worker", "normal"),
-				}}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: sess, events: events}
+				synctest.Test(t, func(t *testing.T) {
+					sess := session.New()
+					const subSessionID = "sub-session"
+					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
+						runtime.StreamStarted(sess.ID, "mock"),
+						runtime.StreamStopped(subSessionID, "worker", "normal"),
+					}}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: sess, events: events}
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				collected := collectUntilQuiet(t, events)
-				stops := streamStoppedEvents(collected)
-				require.Len(t, stops, 2, "the sub-session stop must not satisfy the root fallback")
-				assert.Equal(t, subSessionID, stops[0].SessionID, "the sub-session's own stop is forwarded first")
-				assert.Equal(t, sess.ID, stops[1].SessionID, "a root stop must still be synthesized")
-				assert.Equal(t, "normal", stops[1].Reason)
-				assert.Equal(t, "mock", stops[1].AgentName,
-					"must use the root StreamStarted's agent name, not the sub-session's")
-				assert.Same(t, tea.Msg(stops[1]), collected[len(collected)-1],
-					"the synthesized root stop must be the last event forwarded")
+					collected := collectUntilQuiet(t, events)
+					stops := streamStoppedEvents(collected)
+					require.Len(t, stops, 2, "the sub-session stop must not satisfy the root fallback")
+					assert.Equal(t, subSessionID, stops[0].SessionID, "the sub-session's own stop is forwarded first")
+					assert.Equal(t, sess.ID, stops[1].SessionID, "a root stop must still be synthesized")
+					assert.Equal(t, "normal", stops[1].Reason)
+					assert.Equal(t, "mock", stops[1].AgentName,
+						"must use the root StreamStarted's agent name, not the sub-session's")
+					assert.Same(t, tea.Msg(stops[1]), collected[len(collected)-1],
+						"the synthesized root stop must be the last event forwarded")
+				})
 			})
 
 			t.Run("ctx cancelled mid-stream: synthesized with reason canceled", func(t *testing.T) {
 				t.Parallel()
 
-				sess := session.New()
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				rt := &scriptedStreamMockRuntime{
-					script: []runtime.Event{
-						runtime.StreamStarted(sess.ID, "mock"),
-						runtime.AgentChoice("mock", sess.ID, "partial content"),
-					},
-					cancelAfterScript: cancel,
-				}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: sess, events: events}
+				synctest.Test(t, func(t *testing.T) {
+					sess := session.New()
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					rt := &scriptedStreamMockRuntime{
+						script: []runtime.Event{
+							runtime.StreamStarted(sess.ID, "mock"),
+							runtime.AgentChoice("mock", sess.ID, "partial content"),
+						},
+						cancelAfterScript: cancel,
+					}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: sess, events: events}
 
-				ep.invoke(app, ctx, cancel)
+					ep.invoke(app, ctx, cancel)
 
-				collected := collectUntilQuiet(t, events)
-				stops := streamStoppedEvents(collected)
-				require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
-				assert.Equal(t, sess.ID, stops[0].SessionID)
-				assert.Equal(t, "canceled", stops[0].Reason)
+					collected := collectUntilQuiet(t, events)
+					stops := streamStoppedEvents(collected)
+					require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
+					assert.Equal(t, sess.ID, stops[0].SessionID)
+					assert.Equal(t, "canceled", stops[0].Reason)
+				})
 			})
 
 			t.Run("root error event: synthesized with reason error", func(t *testing.T) {
 				t.Parallel()
 
-				sess := session.New()
-				rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-					runtime.StreamStarted(sess.ID, "mock"),
-					runtime.ErrorForSession(sess.ID, "boom"),
-				}}
-				events := make(chan tea.Msg, 16)
-				app := &App{runtime: rt, session: sess, events: events}
+				synctest.Test(t, func(t *testing.T) {
+					sess := session.New()
+					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
+						runtime.StreamStarted(sess.ID, "mock"),
+						runtime.ErrorForSession(sess.ID, "boom"),
+					}}
+					events := make(chan tea.Msg, 16)
+					app := &App{runtime: rt, session: sess, events: events}
 
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				ep.invoke(app, ctx, cancel)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ep.invoke(app, ctx, cancel)
 
-				collected := collectUntilQuiet(t, events)
-				stops := streamStoppedEvents(collected)
-				require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
-				assert.Equal(t, sess.ID, stops[0].SessionID)
-				assert.Equal(t, "error", stops[0].Reason)
-				assert.Equal(t, "mock", stops[0].AgentName)
+					collected := collectUntilQuiet(t, events)
+					stops := streamStoppedEvents(collected)
+					require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
+					assert.Equal(t, sess.ID, stops[0].SessionID)
+					assert.Equal(t, "error", stops[0].Reason)
+					assert.Equal(t, "mock", stops[0].AgentName)
+				})
 			})
 		})
 	}
