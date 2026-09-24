@@ -39,14 +39,24 @@ func validateResumeWorkingDir(saved, requested string) error {
 }
 
 func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation) error {
+	return a.reconnectRegisteredSession(ctx, s, workingDir, additionalDirs, servers, op, false)
+}
+
+func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation, replay bool) error {
 	saved, _ := s.workspaceSnapshot()
 	if err := validateResumeWorkingDir(saved, workingDir); err != nil {
 		return acp.NewInvalidParams(err.Error())
 	}
-	if err := a.reserveResume(ctx, s); err != nil {
+	if err := a.reserveReconnect(ctx, s, replay); err != nil {
 		return err
 	}
-	defer func() { s.turns <- struct{}{} }()
+	defer func() {
+		if replay {
+			s.finishLoading()
+		} else {
+			s.turns <- struct{}{}
+		}
+	}()
 
 	var next *clientMCPGeneration
 	if s.clientMCP != nil {
@@ -84,6 +94,9 @@ func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, working
 	if err := a.discardClientMCP(ctx, op, s, previous); err != nil {
 		return err
 	}
+	if replay {
+		return a.replayLoadedSession(ctx, s)
+	}
 	a.refreshCommands(ctx, s)
 	return nil
 }
@@ -108,6 +121,10 @@ func (a *Agent) discardClientMCP(ctx context.Context, op *agentOperation, s *Ses
 }
 
 func (a *Agent) reserveResume(ctx context.Context, s *Session) error {
+	return a.reserveReconnect(ctx, s, false)
+}
+
+func (a *Agent) reserveReconnect(ctx context.Context, s *Session, replay bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.stopped {
@@ -137,6 +154,7 @@ func (a *Agent) reserveResume(ctx context.Context, s *Session) error {
 	s.initTurns()
 	select {
 	case <-s.turns:
+		s.loading = replay
 	default:
 		// A canceled queued prompt can clear cancel while an earlier turn drains.
 		return busy

@@ -74,6 +74,7 @@ type Session struct {
 	cancel      context.CancelFunc
 	generation  uint64
 	closed      bool
+	loading     bool
 	failed      error
 	cleanupDone chan struct{}
 	cleanupErr  error
@@ -154,6 +155,11 @@ func (s *Session) startTurn(ctx context.Context) (context.Context, func(), error
 		s.mu.Unlock()
 		cancel()
 		return nil, nil, errSessionClosed
+	}
+	if s.loading {
+		s.mu.Unlock()
+		cancel()
+		return nil, nil, acp.NewInvalidRequest("session is loading; retry after load completes")
 	}
 	if s.failed != nil {
 		err := s.failed
@@ -302,7 +308,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 			Title:   &agentTitle,
 		},
 		AgentCapabilities: acp.AgentCapabilities{
-			LoadSession: false,
+			LoadSession: true,
 			SessionCapabilities: acp.SessionCapabilities{
 				AdditionalDirectories: &acp.SessionAdditionalDirectoriesCapabilities{},
 				Close:                 &acp.SessionCloseCapabilities{},
@@ -476,10 +482,13 @@ func (a *Agent) Logout(ctx context.Context, _ acp.LogoutRequest) (acp.LogoutResp
 	return acp.LogoutResponse{}, acp.NewMethodNotFound(acp.AgentMethodLogout)
 }
 
-// LoadSession implements [acp.AgentLoader] (optional, not supported).
-func (a *Agent) LoadSession(ctx context.Context, _ acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
-	slog.DebugContext(ctx, "ACP LoadSession called (not supported)")
-	return acp.LoadSessionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionLoad)
+// LoadSession implements [acp.AgentLoader].
+func (a *Agent) LoadSession(ctx context.Context, params acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
+	err := a.reconnectSession(ctx, acp.ResumeSessionRequest{
+		SessionId: params.SessionId, Cwd: params.Cwd,
+		AdditionalDirectories: params.AdditionalDirectories, McpServers: params.McpServers,
+	}, true)
+	return acp.LoadSessionResponse{}, err
 }
 
 // CloseSession implements [acp.Agent].
@@ -497,29 +506,33 @@ func (a *Agent) CloseSession(ctx context.Context, params acp.CloseSessionRequest
 }
 
 // ResumeSession implements [acp.Agent].
-func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (_ acp.ResumeSessionResponse, retErr error) {
+func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	return acp.ResumeSessionResponse{}, a.reconnectSession(ctx, params, false)
+}
+
+func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRequest, replay bool) (retErr error) {
 	sid := string(params.SessionId)
-	slog.DebugContext(ctx, "ACP ResumeSession called", "session_id", sid)
+	slog.DebugContext(ctx, "ACP session reconnect", "session_id", sid, "replay", replay)
 	if err := ctx.Err(); err != nil {
-		return acp.ResumeSessionResponse{}, err
+		return err
 	}
 
 	servers, err := validateClientMCPServers(params.McpServers)
 	if err != nil {
-		return acp.ResumeSessionResponse{}, err
+		return err
 	}
 	workingDir, err := resolveWorkingDir(params.Cwd)
 	if err != nil {
-		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
+		return acp.NewInvalidParams(err.Error())
 	}
 	additionalDirs, err := resolveAdditionalDirectories(params.AdditionalDirectories)
 	if err != nil {
-		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
+		return acp.NewInvalidParams(err.Error())
 	}
 
 	ctx, op, err := a.beginSessionConstruction(ctx, sid)
 	if err != nil {
-		return acp.ResumeSessionResponse{}, err
+		return err
 	}
 	defer a.finishOperation(op)
 
@@ -527,18 +540,18 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 	existing := a.sessions[sid]
 	a.mu.Unlock()
 	if existing != nil {
-		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op)
+		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay)
 	}
 
 	sess, err := a.sessionStore.GetSession(ctx, sid)
 	if err != nil {
 		if errors.Is(err, session.ErrNotFound) {
-			return acp.ResumeSessionResponse{}, sessionNotFound(sid)
+			return sessionNotFound(sid)
 		}
-		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to load session %s: %w", sid, err)
+		return fmt.Errorf("failed to load session %s: %w", sid, err)
 	}
 	if err := validateResumeWorkingDir(sess.WorkingDir, workingDir); err != nil {
-		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(err.Error())
+		return acp.NewInvalidParams(err.Error())
 	}
 
 	acpSess, _, err := a.newRuntime(ctx, sess.WorkingDir, servers)
@@ -551,29 +564,50 @@ func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionReque
 		}
 	}()
 	if err != nil {
-		return acp.ResumeSessionResponse{}, err
+		return err
 	}
 
 	acpSess.id = sid
 	acpSess.sess = sess
 	acpSess.workingDir = sess.WorkingDir
 	acpSess.additionalDirs = additionalDirs
+	var release func()
+	if replay {
+		acpSess.mu.Lock()
+		acpSess.initTurns()
+		<-acpSess.turns
+		acpSess.loading = true
+		acpSess.mu.Unlock()
+		release = acpSess.finishLoading
+		defer func() {
+			if release != nil {
+				release()
+			}
+		}()
+	}
 	existing, stored, err = a.registerSessionIfAbsent(ctx, acpSess, op.lifecycle)
 	if err != nil {
-		return acp.ResumeSessionResponse{}, err
+		return err
 	}
 	if !stored {
+		if release != nil {
+			release()
+			release = nil
+		}
 		cleanupErr := a.discardSession(ctx, op, acpSess)
 		acpSess = nil
 		if cleanupErr != nil {
-			return acp.ResumeSessionResponse{}, cleanupErr
+			return cleanupErr
 		}
-		return acp.ResumeSessionResponse{}, a.resumeRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op)
+		return a.reconnectRegisteredSession(ctx, existing, workingDir, additionalDirs, servers, op, replay)
 	}
 
 	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)
+	if replay {
+		return a.replayLoadedSession(ctx, acpSess)
+	}
 	a.refreshCommands(ctx, acpSess)
-	return acp.ResumeSessionResponse{}, nil
+	return nil
 }
 
 // SetSessionConfigOption implements [acp.Agent] (optional, not advertised in capabilities).
