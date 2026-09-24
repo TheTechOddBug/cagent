@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -491,24 +491,27 @@ func dispatchTypedSkill(t *testing.T, p *chatPage, content string) {
 func TestHandleSendMsg_ForkSkillRunsViaFork(t *testing.T) {
 	t.Parallel()
 
-	skillSet := skillstool.New([]skills.Skill{{
-		Name:          "services",
-		Description:   "List services",
-		Context:       "fork",
-		InlineContent: "# Services\nList repository services.",
-	}}, t.TempDir())
-	rt := &skillDispatchRuntime{skillset: skillSet}
-	sess := session.New()
-	p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
-	p.commandParser = skillCommandParser("services")
+	synctest.Test(t, func(t *testing.T) {
+		skillSet := skillstool.New([]skills.Skill{{
+			Name:          "services",
+			Description:   "List services",
+			Context:       "fork",
+			InlineContent: "# Services\nList repository services.",
+		}}, t.TempDir())
+		rt := &skillDispatchRuntime{skillset: skillSet}
+		sess := session.New()
+		p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
+		p.commandParser = skillCommandParser("services")
 
-	dispatchTypedSkill(t, p, "/services please")
+		dispatchTypedSkill(t, p, "/services please")
 
-	require.Eventually(t, func() bool { return rt.forkCallCount() == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "services", rt.lastForkArgs().Name)
-	assert.Equal(t, "please", rt.lastForkArgs().Task)
-	assert.Zero(t, rt.runStreamCallCount(), "fork skills must not use the inline RunStream path")
-	assert.Zero(t, sess.MessageCount(), "fork skill dispatch must not append an inline user message")
+		synctest.Wait()
+		require.Equal(t, 1, rt.forkCallCount())
+		assert.Equal(t, "services", rt.lastForkArgs().Name)
+		assert.Equal(t, "please", rt.lastForkArgs().Task)
+		assert.Zero(t, rt.runStreamCallCount(), "fork skills must not use the inline RunStream path")
+		assert.Zero(t, sess.MessageCount(), "fork skill dispatch must not append an inline user message")
+	})
 }
 
 // TestHandleSendMsg_InlineSkillRunsViaResolveInput proves an inline skill
@@ -517,24 +520,27 @@ func TestHandleSendMsg_ForkSkillRunsViaFork(t *testing.T) {
 func TestHandleSendMsg_InlineSkillRunsViaResolveInput(t *testing.T) {
 	t.Parallel()
 
-	skillSet := skillstool.New([]skills.Skill{{
-		Name:          "services",
-		Description:   "List services",
-		InlineContent: "# Services\nList repository services.",
-	}}, t.TempDir())
-	rt := &skillDispatchRuntime{skillset: skillSet}
-	sess := session.New()
-	p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
-	p.commandParser = skillCommandParser("services")
+	synctest.Test(t, func(t *testing.T) {
+		skillSet := skillstool.New([]skills.Skill{{
+			Name:          "services",
+			Description:   "List services",
+			InlineContent: "# Services\nList repository services.",
+		}}, t.TempDir())
+		rt := &skillDispatchRuntime{skillset: skillSet}
+		sess := session.New()
+		p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
+		p.commandParser = skillCommandParser("services")
 
-	dispatchTypedSkill(t, p, "/services please")
+		dispatchTypedSkill(t, p, "/services please")
 
-	require.Eventually(t, func() bool { return sess.MessageCount() == 1 }, time.Second, 10*time.Millisecond)
-	assert.Zero(t, rt.forkCallCount(), "inline skills must not use fork dispatch")
-	require.Equal(t, 1, rt.runStreamCallCount())
-	assert.Contains(t, rt.lastRunMessage(), `<skill name="services">`)
-	assert.Contains(t, rt.lastRunMessage(), "List repository services.")
-	assert.Contains(t, rt.lastRunMessage(), "User's request: please")
+		synctest.Wait()
+		require.Equal(t, 1, sess.MessageCount())
+		assert.Zero(t, rt.forkCallCount(), "inline skills must not use fork dispatch")
+		require.Equal(t, 1, rt.runStreamCallCount())
+		assert.Contains(t, rt.lastRunMessage(), `<skill name="services">`)
+		assert.Contains(t, rt.lastRunMessage(), "List repository services.")
+		assert.Contains(t, rt.lastRunMessage(), "User's request: please")
+	})
 }
 
 // TestReadOnly_RejectsBypassQueueCommands ensures resolved skill/agent
