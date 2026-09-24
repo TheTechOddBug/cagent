@@ -4600,41 +4600,44 @@ func TestElicitationHandler_NonInteractive(t *testing.T) {
 func TestElicitationHandler_Interactive_NoChannel(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
-	root := agent.New("root", "test", agent.WithModel(prov))
-	tm := team.New(team.WithAgents(root))
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
+		root := agent.New("root", "test", agent.WithModel(prov))
+		tm := team.New(team.WithAgents(root))
 
-	// Default runtime (interactive mode) with no events channel set on the bridge.
-	rt, err := NewLocalRuntime(t.Context(), tm)
-	require.NoError(t, err)
+		// Default runtime (interactive mode) with no events channel set on the bridge.
+		rt, err := NewLocalRuntime(t.Context(), tm)
+		require.NoError(t, err)
 
-	params := &mcp.ElicitParams{
-		Message: "Authorize OAuth?",
-	}
+		params := &mcp.ElicitParams{
+			Message: "Authorize OAuth?",
+		}
 
-	type handlerResult struct {
-		result tools.ElicitationResult
-		err    error
-	}
-	done := make(chan handlerResult, 1)
-	go func() {
-		result, err := rt.elicitationHandler(t.Context(), params)
-		done <- handlerResult{result: result, err: err}
-	}()
+		type handlerResult struct {
+			result tools.ElicitationResult
+			err    error
+		}
+		done := make(chan handlerResult, 1)
+		go func() {
+			result, err := rt.elicitationHandler(t.Context(), params)
+			done <- handlerResult{result: result, err: err}
+		}()
 
-	require.Eventually(t, func() bool { return rt.elicitationWaiters.count() == 1 }, time.Second, time.Millisecond,
-		"elicitationHandler must register a waiter even though the bridge has no channel")
+		synctest.Wait()
+		require.Equal(t, 1, rt.elicitationWaiters.count(),
+			"elicitationHandler must register a waiter even though the bridge has no channel")
 
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"ok": true}, ""))
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"ok": true}, ""))
 
-	select {
-	case got := <-done:
-		require.NoError(t, got.err)
-		assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
-		assert.Equal(t, map[string]any{"ok": true}, got.result.Content)
-	case <-time.After(2 * time.Second):
-		t.Fatal("elicitationHandler did not return after ResumeElicitation")
-	}
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
+			assert.Equal(t, map[string]any{"ok": true}, got.result.Content)
+		case <-time.After(2 * time.Second):
+			t.Fatal("elicitationHandler did not return after ResumeElicitation")
+		}
+	})
 }
 
 // TestRunAgentPersistsSubSessionToStore is the regression test for the
