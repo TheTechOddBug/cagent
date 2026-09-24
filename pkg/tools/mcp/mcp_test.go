@@ -645,28 +645,30 @@ func TestCallToolRecoversFromErrSessionMissing(t *testing.T) {
 func TestCallToolTimeoutFires(t *testing.T) {
 	t.Parallel()
 
-	mock := &mockMCPClient{
-		callToolFn: func(ctx context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
-	}
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockMCPClient{
+			callToolFn: func(ctx context.Context, _ *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		}
 
-	ts := newTestToolset("test-server", "test-server", mock)
-	ts.callTimeout = 50 * time.Millisecond
-	ts.markStartedForTesting()
+		ts := newTestToolset("test-server", "test-server", mock)
+		ts.callTimeout = 50 * time.Millisecond
+		ts.markStartedForTesting()
 
-	start := time.Now()
-	_, err := ts.callTool(t.Context(), tools.ToolCall{
-		Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
-	}, tools.NopRuntime{})
-	elapsed := time.Since(start)
+		start := time.Now()
+		_, err := ts.callTool(t.Context(), tools.ToolCall{
+			Function: tools.FunctionCall{Name: "test_tool", Arguments: `{}`},
+		}, tools.NopRuntime{})
+		elapsed := time.Since(start)
 
-	require.Error(t, err)
-	require.ErrorIs(t, err, tools.ErrCallTimeout, "expected ErrCallTimeout, got: %v", err)
-	assert.Contains(t, err.Error(), "timed out")
-	assert.Less(t, elapsed, 5*time.Second, "the call_timeout should have fired promptly")
-	assert.Equal(t, lifecycle.StateReady, ts.State().State, "a fired call_timeout must not disturb the toolset's lifecycle state")
+		require.Error(t, err)
+		require.ErrorIs(t, err, tools.ErrCallTimeout, "expected ErrCallTimeout, got: %v", err)
+		assert.Contains(t, err.Error(), "timed out")
+		assert.Less(t, elapsed, 5*time.Second, "the call_timeout should have fired promptly")
+		assert.Equal(t, lifecycle.StateReady, ts.State().State, "a fired call_timeout must not disturb the toolset's lifecycle state")
+	})
 }
 
 func TestCallToolNoTimeoutWhenCallTimeoutUnset(t *testing.T) {
