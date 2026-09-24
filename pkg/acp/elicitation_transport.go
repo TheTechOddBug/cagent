@@ -246,7 +246,13 @@ func (r *elicitationReader) Read(p []byte) (int, error) {
 				if err != nil {
 					return 0, err
 				}
-				line = encoded
+				if len(encoded) > maxElicitationBytes {
+					// Normalization can expand escapes; don't retain oversized envelope fields.
+					id := elicitationRequestID(*message.ID)
+					line = []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":{"action":"decline"}}`)
+				} else {
+					line = encoded
+				}
 			}
 		}
 		r.buffer = append(append([]byte(nil), line...), '\n')

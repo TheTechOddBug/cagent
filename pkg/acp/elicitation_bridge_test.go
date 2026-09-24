@@ -660,3 +660,82 @@ func TestElicitationWireRejectsEnvelopePrecisionBypasses(t *testing.T) {
 		})
 	}
 }
+
+func TestElicitationReaderBoundsNormalizedReplies(t *testing.T) {
+	t.Parallel()
+	const prefix = `{"jsonrpc":"2.0","id":1,"result":{"action":"accept","content":{"answer":"`
+	const suffix = `"}}}`
+	boundary := (maxElicitationBytes - len(prefix) - len(suffix)) / len(`\u003c`)
+	for _, tc := range []struct {
+		name   string
+		input  string
+		accept bool
+	}{
+		{name: "within encoded limit", input: prefix + strings.Repeat("<", boundary) + suffix, accept: true},
+		{name: "escaping exceeds encoded limit", input: prefix + strings.Repeat("<", boundary+1) + suffix},
+		{name: "oversized envelope metadata", input: `{"jsonrpc":"` + strings.Repeat("<", boundary) + `","id":1,"params":{"extra":"<"},"result":{"action":"accept","content":{"answer":"yes"}}}`},
+		{name: "oversized echoed id", input: `{"id":1e` + strings.Repeat("0", maxElicitationBytes) + `,"result":{"action":"accept","content":{"answer":"yes"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const following = `{"jsonrpc":"2.0","id":"next","method":"session/prompt","params":{"prompt":[]}}`
+			pending := &elicitationRequests{ids: map[string]string{"1": "form"}}
+			reader := &elicitationReader{scanner: bufio.NewScanner(strings.NewReader(tc.input + "\n" + following + "\n")), pending: pending}
+			reader.scanner.Buffer(make([]byte, 4096), 10<<20)
+			data, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+			require.Len(t, lines, 2)
+			assert.LessOrEqual(t, len(lines[0]), maxElicitationBytes)
+			if tc.accept {
+				assert.Contains(t, lines[0], `"action":"accept"`)
+			} else {
+				assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"action":"decline"}}`, lines[0])
+			}
+			assert.Equal(t, following, lines[1], "reject only the oversized reply, not the connection") //nolint:testifylint // Pin byte-for-byte passthrough, not JSON equivalence.
+			assert.Empty(t, pending.ids)
+		})
+	}
+}
+
+func TestElicitationOversizedNormalizedReplyDoesNotDisconnect(t *testing.T) {
+	t.Parallel()
+	a := &Agent{}
+	peerInput, send := io.Pipe()
+	receive, peerOutput := io.Pipe()
+	conn := a.NewConnection(peerOutput, peerInput)
+	conn.SetLogger(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = send.Close(); _ = receive.Close(); <-conn.Done() })
+	a.clientElicitation = acpsdk.ElicitationCapabilities{Form: &acpsdk.ElicitationFormCapabilities{}}
+	handler := a.elicitationHandler("session")
+	decoder := json.NewDecoder(receive)
+	for _, oversized := range []bool{true, false} {
+		outcomes := make(chan elicitationOutcome, 1)
+		go func() {
+			result, err := handler(t.Context(), formRequest())
+			outcomes <- elicitationOutcome{result: result, err: err}
+		}()
+		var request struct {
+			ID json.RawMessage `json:"id"`
+		}
+		require.NoError(t, decoder.Decode(&request))
+		answer := "yes"
+		if oversized {
+			answer = strings.Repeat("<", maxElicitationBytes/6)
+		}
+		// Send literal HTML characters; json.Marshal would escape them before the reader.
+		wire := `{"jsonrpc":"2.0","id":` + string(request.ID) + `,"result":{"action":"accept","content":{"answer":"` + answer + `"}}}` + "\n"
+		require.Less(t, len(wire), maxElicitationBytes)
+		_, err := io.WriteString(send, wire)
+		require.NoError(t, err)
+		outcome := <-outcomes
+		require.NoError(t, outcome.err)
+		if oversized {
+			assert.Equal(t, tools.ElicitationActionDecline, outcome.result.Action)
+			assert.Nil(t, outcome.result.Content)
+		} else {
+			assert.Equal(t, tools.ElicitationActionAccept, outcome.result.Action)
+			assert.Equal(t, map[string]any{"answer": "yes"}, outcome.result.Content)
+		}
+	}
+}
