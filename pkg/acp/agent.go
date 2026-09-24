@@ -64,6 +64,8 @@ type Session struct {
 	additionalDirs []string
 	usageAgent     string
 	contextLimit   int64
+	rootUsage      *runtime.Usage
+	usageCosts     map[string]float64
 
 	mu        sync.Mutex
 	commandMu sync.Mutex
@@ -355,6 +357,7 @@ func (a *Agent) newRuntime(ctx context.Context, workingDir string, servers []acp
 		return acpSess, nil, err
 	}
 	acpSess.rt = rt
+	rt.OnBackgroundEvent(acpSess.retainUsage)
 	generation, err := prepareClientMCP(ctx, servers, workingDir)
 	acpSess.clientMCP.swap(generation)
 	if err != nil {
@@ -677,6 +680,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 	defer func() {
 		cancel()
 		for event := range eventsChan {
+			acpSess.retainUsage(event)
 			toolCalls.retainResult(event)
 		}
 		cleanupCtx, stopCleanup := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -689,6 +693,10 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 	outcome := promptOutcome{sessionID: acpSess.sess.ID}
 
 	for event := range eventsChan {
+		var usage *runtime.Usage
+		if e, ok := event.(*runtime.TokenUsageEvent); ok {
+			usage = acpSess.recordUsage(e)
+		}
 		if ctx.Err() != nil {
 			toolCalls.retainResult(event)
 			return "", ctx.Err()
@@ -759,9 +767,8 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 			a.refreshCommands(ctx, acpSess)
 
 		case *runtime.TokenUsageEvent:
-			if e.Usage != nil {
-				acpSess.recordUsage(e)
-				if err := a.emitUsage(ctx, acpSess.id, e.Usage); err != nil {
+			if usage != nil {
+				if err := a.emitUsage(ctx, acpSess.id, usage); err != nil {
 					return "", err
 				}
 			}
