@@ -133,6 +133,16 @@ trimming. Review the suggested `jsonv2.MarshalWrite` migration with v1 defaults,
 explicit HTML escaping, unchanged evaluation order, and discarded partial output
 on error. Streaming encoders and indentation are excluded.
 
+`Lint/BenchmarkLoop` covers simple `ResetTimer`/`b.N` loops, including
+sub-benchmarks and test-only packages. Review measurement and compiler effects
+before adopting `b.Loop`; parallel, timer-sensitive, and escaping benchmark
+handles are excluded. These cops report suggestions, never automatic rewrites.
+The non-benchmark modernization cops inspect production packages; the UUID
+randomness guard additionally reads tests.
+
+Test output/artifact lifetimes and in-memory HTTP compatibility require review;
+there are no blanket rules for `t.Output`, `ArtifactDir`, or `NewTestServer`.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:

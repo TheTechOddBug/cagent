@@ -58,6 +58,7 @@ var programCops = []prog.Cop{
 	StdlibUUID,
 	URLClone,
 	JSONMarshalWrite,
+	BenchmarkLoop,
 	SplitTrimJoin,
 	FieldsSeq,
 	SessionStateAccessors,
