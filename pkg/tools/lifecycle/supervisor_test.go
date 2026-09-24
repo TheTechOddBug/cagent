@@ -1092,53 +1092,55 @@ func TestSupervisor_CrashLoopStopIsClean(t *testing.T) {
 func TestSupervisor_PendingCrashLoopErrorIsNonConsuming(t *testing.T) {
 	t.Parallel()
 
-	sess1, sess2, sess3, sess4 := newFakeSession(), newFakeSession(), newFakeSession(), newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-		scriptStep{session: sess3},
-		scriptStep{session: sess4},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		sess1, sess2, sess3, sess4 := newFakeSession(), newFakeSession(), newFakeSession(), newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+			scriptStep{session: sess3},
+			scriptStep{session: sess4},
+		)
 
-	failed := make(chan error, 1)
-	s := lifecycle.New("test", c, lifecycle.Policy{
-		Backoff:   fastBackoff,
-		CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
-		OnFailed: func(err error) {
-			select {
-			case failed <- err:
-			default:
-			}
-		},
+		failed := make(chan error, 1)
+		s := lifecycle.New("test", c, lifecycle.Policy{
+			Backoff:   fastBackoff,
+			CrashLoop: lifecycle.CrashLoop{Threshold: 3, Window: time.Minute},
+			OnFailed: func(err error) {
+				select {
+				case failed <- err:
+				default:
+				}
+			},
+		})
+
+		assert.NilError(t, s.Start(t.Context()))
+		sess1.fail(crashErr("boom"))
+		sess2.fail(crashErr("boom again"))
+		sess3.fail(crashErr("boom a third time"))
+
+		select {
+		case <-failed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("supervisor did not report a crash loop")
+		}
+
+		// Peeking repeatedly must not consume the report or trigger a connect.
+		for range 3 {
+			assert.Check(t, errors.Is(s.PendingCrashLoopError(), lifecycle.ErrCrashLooping))
+		}
+		assert.Check(t, is.Equal(c.Calls(), 3), "peeking must never itself connect")
+
+		// Start still reports it once, then reconnects for real on the next call.
+		err := s.Start(t.Context())
+		assert.Check(t, errors.Is(err, lifecycle.ErrCrashLooping))
+		assert.Check(t, s.PendingCrashLoopError() == nil, "Start must have consumed the report")
+		assert.Check(t, is.Equal(c.Calls(), 3))
+
+		assert.NilError(t, s.Start(t.Context()))
+		assert.Check(t, is.Equal(c.Calls(), 4))
+
+		assert.NilError(t, s.Stop(t.Context()))
 	})
-
-	assert.NilError(t, s.Start(t.Context()))
-	sess1.fail(crashErr("boom"))
-	sess2.fail(crashErr("boom again"))
-	sess3.fail(crashErr("boom a third time"))
-
-	select {
-	case <-failed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("supervisor did not report a crash loop")
-	}
-
-	// Peeking repeatedly must not consume the report or trigger a connect.
-	for range 3 {
-		assert.Check(t, errors.Is(s.PendingCrashLoopError(), lifecycle.ErrCrashLooping))
-	}
-	assert.Check(t, is.Equal(c.Calls(), 3), "peeking must never itself connect")
-
-	// Start still reports it once, then reconnects for real on the next call.
-	err := s.Start(t.Context())
-	assert.Check(t, errors.Is(err, lifecycle.ErrCrashLooping))
-	assert.Check(t, s.PendingCrashLoopError() == nil, "Start must have consumed the report")
-	assert.Check(t, is.Equal(c.Calls(), 3))
-
-	assert.NilError(t, s.Start(t.Context()))
-	assert.Check(t, is.Equal(c.Calls(), 4))
-
-	assert.NilError(t, s.Stop(t.Context()))
 }
 
 // TestSupervisor_CrashLoopWindowPrunesOldCrashes verifies that crashes
