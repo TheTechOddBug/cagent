@@ -22,6 +22,7 @@ import (
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 	"github.com/docker/docker-agent/pkg/tui/service"
+	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
 )
 
 type cycleThinkingRuntime struct {
@@ -179,9 +180,10 @@ func TestFirstMessageBangCommandRunsLocally(t *testing.T) {
 
 	m.sendFirstMessage(t.Context(), `!printf bang > "`+outputPath+`"`, "")
 
-	output, err := os.ReadFile(outputPath)
-	require.NoError(t, err)
-	assert.Equal(t, "bang", string(output))
+	require.Eventually(t, func() bool {
+		output, err := os.ReadFile(outputPath)
+		return err == nil && string(output) == "bang"
+	}, time.Second, 10*time.Millisecond)
 	assert.Zero(t, rt.runCalls)
 }
 
@@ -194,13 +196,36 @@ func TestSubmitBangCommandRunsImmediatelyWhileBusy(t *testing.T) {
 
 	m.submitEditor(t.Context(), `!printf bang > "`+outputPath+`"`)
 
-	output, err := os.ReadFile(outputPath)
-	require.NoError(t, err)
-	assert.Equal(t, "bang", string(output))
+	require.Eventually(t, func() bool {
+		output, err := os.ReadFile(outputPath)
+		return err == nil && string(output) == "bang"
+	}, time.Second, 10*time.Millisecond)
 	assert.Zero(t, rt.runCalls)
 	assert.Empty(t, rt.steered)
 	assert.Empty(t, m.queue)
 	assert.True(t, m.busy)
+}
+
+func TestBangCommandAppearsImmediatelyAndTracksOutput(t *testing.T) {
+	t.Parallel()
+	m := bareModel(80)
+	commandID := "bang-1"
+	command := "printf first; sleep 1; printf second"
+
+	m.handleEvent(t.Context(), runtime.ShellCommandStarted(commandID, command))
+	running := m.screen.Transcript.Tool(commandID)
+	require.NotNil(t, running)
+	require.NotNil(t, running.Message())
+	assert.Equal(t, tuitypes.ToolStatusRunning, running.Message().ToolStatus)
+	assert.Contains(t, running.Message().ToolCall.Function.Arguments, command)
+
+	m.handleEvent(t.Context(), runtime.ShellCommandOutput(commandID, "first"))
+	assert.Equal(t, "first", running.Message().Content)
+
+	m.handleEvent(t.Context(), runtime.ShellCommandFinished(commandID, command, "firstsecond", nil))
+	assert.Nil(t, m.screen.Transcript.Tool(commandID))
+	require.Equal(t, 1, m.screen.Transcript.BlockCount())
+	assert.Contains(t, strings.Join(m.screen.Transcript.BlockLines(0, 80), "\n"), "firstsecond")
 }
 
 func TestSubmitBangCommandHonorsReadOnlySession(t *testing.T) {

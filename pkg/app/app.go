@@ -1018,13 +1018,42 @@ func (a *App) RunBangCommand(ctx context.Context, command string) {
 		return
 	}
 
-	shell, argsPrefix := shellpath.DetectShell()
-	out, err := exec.CommandContext(ctx, shell, append(argsPrefix, command)...).CombinedOutput()
-	output := "$ " + command + "\n" + string(out)
-	if err != nil && len(out) == 0 {
-		output = "$ " + command + "\nError: " + err.Error()
+	commandID := uuid.NewV4().String()
+	a.sendEvent(ctx, runtime.ShellCommandStarted(commandID, command))
+
+	go func() {
+		shell, argsPrefix := shellpath.DetectShell()
+		writer := &commandOutputWriter{onWrite: func(output string) {
+			a.sendEvent(ctx, runtime.ShellCommandOutput(commandID, output))
+		}}
+		cmd := exec.CommandContext(ctx, shell, append(argsPrefix, command)...)
+		cmd.Stdout = writer
+		cmd.Stderr = writer
+		err := cmd.Run()
+		a.sendEvent(ctx, runtime.ShellCommandFinished(commandID, command, writer.String(), err))
+	}()
+}
+
+type commandOutputWriter struct {
+	mu      sync.Mutex
+	output  strings.Builder
+	onWrite func(string)
+}
+
+func (w *commandOutputWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	_, _ = w.output.Write(p)
+	w.mu.Unlock()
+	if w.onWrite != nil {
+		w.onWrite(string(p))
 	}
-	a.sendEvent(ctx, runtime.ShellOutput(output))
+	return len(p), nil
+}
+
+func (w *commandOutputWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.output.String()
 }
 
 // InjectUserMessage feeds content into the app exactly as if the user had

@@ -147,7 +147,7 @@ func Run(ctx context.Context, cfg Config) error {
 			m.r.SetSize(sz[0], sz[1])
 			m.render()
 		case <-animationTicker.C:
-			if m.busy {
+			if m.busy || m.screen.Transcript.ToolCount() > 0 {
 				m.spinnerFrame++
 				m.render()
 			}

@@ -7,6 +7,7 @@ import (
 	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
+	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
 	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
 )
@@ -93,8 +94,32 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 	case *runtime.WarningEvent:
 		m.addNotice("⚠ ", e.Message, ui.StWarning())
 	case *runtime.ShellOutputEvent:
-		output := e.Output
-		m.screen.Transcript.AddBlock(func(w int) []string { return ui.RenderToolOutput(output, w) })
+		if e.CommandID == "" {
+			output := e.Output
+			m.screen.Transcript.AddBlock(func(w int) []string { return ui.RenderToolOutput(output, w) })
+			break
+		}
+
+		toolDef := tools.Tool{Name: builtinshell.ToolNameShell}
+		if e.Command != "" && m.screen.Transcript.Tool(e.CommandID) == nil {
+			m.screen.Transcript.UpsertTool("", shellCommandCall(e.CommandID, e.Command), toolDef, tuitypes.ToolStatusRunning)
+		}
+		if !e.Done {
+			if tv := m.screen.Transcript.Tool(e.CommandID); tv != nil && tv.Message() != nil {
+				tv.Message().AppendToolOutput(e.Output)
+			}
+			break
+		}
+
+		response := e.Output
+		if e.Error != "" && response == "" {
+			response = "Error: " + e.Error
+		}
+		m.screen.Transcript.FinishTool(e.CommandID, ui.ToolResult{
+			Response:       response,
+			Result:         &tools.ToolCallResult{Output: response, IsError: e.Error != ""},
+			ToolDefinition: toolDef,
+		}, m.sessionState)
 	case *runtime.AgentSwitchingEvent:
 		if e.Switching && e.ToAgent != "" {
 			m.addNotice("→ ", "Switching to "+e.ToAgent, ui.StMuted())
