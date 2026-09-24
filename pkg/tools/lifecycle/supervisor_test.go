@@ -838,29 +838,31 @@ func TestSupervisor_StopWaitsForWatcher(t *testing.T) {
 func TestSupervisor_StopConcurrent(t *testing.T) {
 	t.Parallel()
 
-	sess := newFakeSession()
-	c := newScriptedConnector(scriptStep{session: sess})
-	s := lifecycle.New("test", c, lifecycle.Policy{})
+	synctest.Test(t, func(t *testing.T) {
+		sess := newFakeSession()
+		c := newScriptedConnector(scriptStep{session: sess})
+		s := lifecycle.New("test", c, lifecycle.Policy{})
 
-	assert.NilError(t, s.Start(t.Context()))
-	sess.waitParked(t)
+		assert.NilError(t, s.Start(t.Context()))
+		sess.waitParked(t)
 
-	const n = 4
-	errs := make(chan error, n)
-	var wg sync.WaitGroup
-	for range n {
-		wg.Go(func() {
-			errs <- s.Stop(t.Context())
-		})
-	}
-	wg.Wait()
-	close(errs)
+		const n = 4
+		errs := make(chan error, n)
+		var wg sync.WaitGroup
+		for range n {
+			wg.Go(func() {
+				errs <- s.Stop(t.Context())
+			})
+		}
+		wg.Wait()
+		close(errs)
 
-	for err := range errs {
-		assert.NilError(t, err)
-	}
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
-	assert.Check(t, sess.waitDone.Load(), "a Stop returned before watcher's Wait() completed")
+		for err := range errs {
+			assert.NilError(t, err)
+		}
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateStopped))
+		assert.Check(t, sess.waitDone.Load(), "a Stop returned before watcher's Wait() completed")
+	})
 }
 
 // crashErr wraps err (typically a plain "boom"-style message) in
