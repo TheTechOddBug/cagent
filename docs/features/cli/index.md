@@ -110,7 +110,7 @@ $ docker agent run --agent-picker=myorg/coder,myorg/researcher
 > [!TIP]
 > **Background animations in tmux**
 >
-> Add `set -g focus-events on` to your tmux configuration to pause TUI animations in unfocused panes and detached sessions. Agent execution and streamed responses continue; animations resume when the pane regains focus. The Kanban board enables this on its private tmux server automatically.
+> Docker Agent pauses animations and defers redraws only when tmux reports the pane hidden: in a detached session, a window no client is viewing, or behind a zoomed sibling. Agent execution and streamed responses continue, and visible unfocused split panes keep updating. No tmux configuration is required; visibility is checked about once per second. Enabling `set -g focus-events on` also lets a focus event refresh a newly visible pane immediately. Rendering stays enabled when control-mode clients (such as iTerm2 integration) are attached, since they may display otherwise hidden panes.
 
 > [!TIP]
 > **Isolate a run in a git worktree**
