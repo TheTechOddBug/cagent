@@ -526,8 +526,12 @@ func localSkillFilter(cfg *latestcfg.Config) (map[string]bool, bool) {
 // live under workspace by construction and are read on demand through the
 // live mount.
 func stagePromptFiles(kitDir string, cfg *latestcfg.Config, hostCwd, hostHome, workspace string) ([]Entry, []Redaction, error) {
-	target := filepath.Join(kitDir, promptfiles.KitSubdir)
-	if err := os.MkdirAll(target, 0o750); err != nil {
+	root, err := os.OpenRoot(kitDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening kit directory: %w", err)
+	}
+	defer root.Close()
+	if err := root.MkdirAll(promptfiles.KitSubdir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating kit prompt-files dir: %w", err)
 	}
 
@@ -539,6 +543,9 @@ func stagePromptFiles(kitDir string, cfg *latestcfg.Config, hostCwd, hostHome, w
 	)
 	for _, agent := range cfg.Agents {
 		for _, name := range agent.AddPromptFiles {
+			if !filepath.IsLocal(name) {
+				return nil, nil, fmt.Errorf("prompt file %q must be a local relative path for kit staging", name)
+			}
 			if seen[name] {
 				continue
 			}
@@ -724,6 +731,19 @@ func copyTree(kitRoot, src, dst string) ([]Redaction, error) {
 // sandbox anyway and there's no reason to expose it to other users
 // on the host.
 func copyFile(kitRoot, src, dst string) (*Redaction, error) {
+	rel, err := filepath.Rel(kitRoot, dst)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("destination %q escapes kit directory", dst)
+	}
+	root, err := os.OpenRoot(kitRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return nil, err
@@ -732,7 +752,7 @@ func copyFile(kitRoot, src, dst string) (*Redaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+	if err := root.MkdirAll(filepath.Dir(rel), 0o750); err != nil {
 		return nil, err
 	}
 
@@ -743,10 +763,6 @@ func copyFile(kitRoot, src, dst string) (*Redaction, error) {
 		scrubbed := portcullis.Redact(original)
 		if scrubbed != original {
 			out = []byte(scrubbed)
-			rel, relErr := filepath.Rel(kitRoot, dst)
-			if relErr != nil {
-				rel = dst // best effort; should never happen for staged files
-			}
 			redaction = &Redaction{Source: src, Target: rel}
 		}
 	}
@@ -755,7 +771,7 @@ func copyFile(kitRoot, src, dst string) (*Redaction, error) {
 	if mode == 0 {
 		mode = 0o600
 	}
-	if err := os.WriteFile(dst, out, mode); err != nil {
+	if err := root.WriteFile(rel, out, mode); err != nil {
 		return nil, err
 	}
 	return redaction, nil
