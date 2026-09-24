@@ -417,21 +417,23 @@ func TestSupervisor_RestartNeverGoesToFailed(t *testing.T) {
 func TestSupervisor_RestartAndWait(t *testing.T) {
 	t.Parallel()
 
-	sess1 := newFakeSession()
-	sess2 := newFakeSession()
-	c := newScriptedConnector(
-		scriptStep{session: sess1},
-		scriptStep{session: sess2},
-	)
-	s := lifecycle.New("test", c, lifecycle.Policy{Backoff: fastBackoff})
+	synctest.Test(t, func(t *testing.T) {
+		sess1 := newFakeSession()
+		sess2 := newFakeSession()
+		c := newScriptedConnector(
+			scriptStep{session: sess1},
+			scriptStep{session: sess2},
+		)
+		s := lifecycle.New("test", c, lifecycle.Policy{Backoff: fastBackoff})
 
-	assert.NilError(t, s.Start(t.Context()))
+		assert.NilError(t, s.Start(t.Context()))
 
-	err := s.RestartAndWait(t.Context(), 2*time.Second)
-	assert.NilError(t, err)
-	assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
+		err := s.RestartAndWait(t.Context(), 2*time.Second)
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(s.State().State, lifecycle.StateReady))
 
-	assert.NilError(t, s.Stop(t.Context()))
+		assert.NilError(t, s.Stop(t.Context()))
+	})
 }
 
 func TestSupervisor_StopIdempotent(t *testing.T) {
