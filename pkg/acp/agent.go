@@ -49,6 +49,7 @@ type Agent struct {
 	stopErr      error
 	cleanupErr   error
 	owned        map[*Session]struct{}
+	deletion     *sessionDeletion
 }
 
 var _ acp.Agent = (*Agent)(nil)
@@ -312,6 +313,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 			SessionCapabilities: acp.SessionCapabilities{
 				AdditionalDirectories: &acp.SessionAdditionalDirectoriesCapabilities{},
 				Close:                 &acp.SessionCloseCapabilities{},
+				Delete:                &acp.SessionDeleteCapabilities{},
 				List:                  &acp.SessionListCapabilities{},
 				Resume:                &acp.SessionResumeCapabilities{},
 			},
@@ -426,6 +428,9 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 	if err != nil {
 		return acp.NewSessionResponse{}, err
 	}
+	a.mu.Lock()
+	op.lifecycle.newRoot = true
+	a.mu.Unlock()
 	defer a.finishOperation(op)
 	acpSess, defaultAgent, err := a.newRuntime(ctx, workingDir, servers)
 	stored := false

@@ -99,6 +99,8 @@ type Store interface {
 	GetSessionByOrigin(ctx context.Context, id, origin string) (*Session, error)
 	GetSessions(ctx context.Context) ([]*Session, error)
 	GetSessionSummaries(ctx context.Context) ([]Summary, error)
+	// DeleteSession removes the session subtree and its stored media, not workspace files.
+	// Callers must stop writers before deleting their sessions.
 	DeleteSession(ctx context.Context, id string) error
 	UpdateSession(ctx context.Context, session *Session) error // Updates metadata only (not messages/items)
 	SetSessionStarred(ctx context.Context, id string, starred bool) error
@@ -232,17 +234,54 @@ func (s *InMemorySessionStore) GetSessionSummaries(_ context.Context) ([]Summary
 	return summaries, nil
 }
 
-func (s *InMemorySessionStore) DeleteSession(_ context.Context, id string) error {
+func (s *InMemorySessionStore) DeleteSession(ctx context.Context, id string) error {
 	if id == "" {
 		return ErrEmptyID
 	}
-	_, exists := s.sessions.Load(id)
-	if !exists {
+	if _, exists := s.sessions.Load(id); !exists {
 		return ErrNotFound
 	}
-	s.sessions.Delete(id)
-	s.deleteGeneratedFiles(id)
-	s.deleteGeneratedBlobs(id)
+	children := make(map[string][]string)
+	var sessions []*Session
+	s.sessions.Range(func(_ string, sess *Session) bool {
+		sessions = append(sessions, sess)
+		return true
+	})
+	visited := make(map[*Session]bool)
+	for len(sessions) > 0 {
+		sess := sessions[len(sessions)-1]
+		sessions = sessions[:len(sessions)-1]
+		if visited[sess] {
+			continue
+		}
+		visited[sess] = true
+		sess.mu.RLock()
+		children[sess.ParentID] = append(children[sess.ParentID], sess.ID)
+		for _, item := range sess.Messages {
+			if item.SubSession != nil {
+				children[sess.ID] = append(children[sess.ID], item.SubSession.ID)
+				sessions = append(sessions, item.SubSession)
+			}
+		}
+		sess.mu.RUnlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	pending := []string{id}
+	seen := make(map[string]struct{})
+	for len(pending) > 0 {
+		id := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if _, visited := seen[id]; visited {
+			continue
+		}
+		seen[id] = struct{}{}
+		pending = append(pending, children[id]...)
+		s.sessions.Delete(id)
+		s.deleteGeneratedFiles(id)
+		s.deleteGeneratedBlobs(id)
+	}
 	return nil
 }
 
@@ -371,7 +410,9 @@ func (s *InMemorySessionStore) AddSubSession(_ context.Context, parentSessionID 
 	if !exists {
 		return ErrNotFound
 	}
+	subSession.mu.Lock()
 	subSession.ParentID = parentSessionID
+	subSession.mu.Unlock()
 	subSession.syncEvaluationCosts()
 	s.sessions.Store(subSession.ID, subSession)
 	parent.AddSubSession(subSession)
@@ -1028,14 +1069,20 @@ func (s *SQLiteSessionStore) DeleteSession(ctx context.Context, id string) error
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Prune descendants' non-FK media before cascading away their ancestry.
+	const subtree = `WITH RECURSIVE subtree(id) AS (
+		SELECT id FROM sessions WHERE id = ?
+		UNION
+		SELECT sessions.id FROM sessions JOIN subtree ON sessions.parent_id = subtree.id
+	) `
+	if _, err := tx.ExecContext(ctx, subtree+"DELETE FROM generated_media_blobs WHERE session_id IN (SELECT id FROM subtree)", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, subtree+"DELETE FROM generated_media_manifest WHERE session_id IN (SELECT id FROM subtree)", id); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE id = ?", id)
 	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM generated_media_blobs WHERE session_id = ?", id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM generated_media_manifest WHERE session_id = ?", id); err != nil {
 		return err
 	}
 
