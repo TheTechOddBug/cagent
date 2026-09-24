@@ -1514,74 +1514,76 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 func TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	release := make(chan struct{})
-	releaseWedged := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(releaseWedged)
+		release := make(chan struct{})
+		releaseWedged := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseWedged)
 
-	inFlight := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		inFlight := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(inFlight, fast),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(inFlight, fast),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-		// Long enough that a regression to joining the in-flight attempt
-		// trips the prompt-return guard below instead of passing slowly.
-		WithToolStartTimeout(30*time.Second),
-	)
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+			// Long enough that a regression to joining the in-flight attempt
+			// trips the prompt-return guard below instead of passing slowly.
+			WithToolStartTimeout(30*time.Second),
+		)
+		require.NoError(t, err)
 
-	// Wedge the toolset's Start before startup runs, as an earlier abandoned
-	// bounded attempt would: it keeps holding the single-flight lock.
-	startable, ok := root.ToolSets()[0].(*tools.StartableToolSet)
-	require.True(t, ok)
-	wedgedDone := make(chan error, 1)
-	go func() { wedgedDone <- startable.Start(t.Context()) }()
-	<-inFlight.entered
+		// Wedge the toolset's Start before startup runs, as an earlier abandoned
+		// bounded attempt would: it keeps holding the single-flight lock.
+		startable, ok := root.ToolSets()[0].(*tools.StartableToolSet)
+		require.True(t, ok)
+		wedgedDone := make(chan error, 1)
+		go func() { wedgedDone <- startable.Start(t.Context()) }()
+		<-inFlight.entered
 
-	events := make(chan Event, 32)
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-		close(done)
-	}()
+		events := make(chan Event, 32)
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EmitStartupInfo did not return promptly: an in-flight toolset start was joined instead of skipped")
-	}
-
-	var toolsetInfos []*ToolsetInfoEvent
-	var warnings []*WarningEvent
-	for e := range events {
-		switch ev := e.(type) {
-		case *ToolsetInfoEvent:
-			toolsetInfos = append(toolsetInfos, ev)
-		case *WarningEvent:
-			warnings = append(warnings, ev)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("EmitStartupInfo did not return promptly: an in-flight toolset start was joined instead of skipped")
 		}
-	}
 
-	require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
-	last := toolsetInfos[len(toolsetInfos)-1]
-	assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
-	assert.Equal(t, 1, last.AvailableTools,
-		"the in-flight toolset is skipped; the fast toolset's single tool is still counted")
-	assert.Empty(t, warnings, "a skipped in-flight start must not surface a warning")
-	assert.EqualValues(t, 1, inFlight.starts.Load(), "the skip must not run a second underlying Start")
+		var toolsetInfos []*ToolsetInfoEvent
+		var warnings []*WarningEvent
+		for e := range events {
+			switch ev := e.(type) {
+			case *ToolsetInfoEvent:
+				toolsetInfos = append(toolsetInfos, ev)
+			case *WarningEvent:
+				warnings = append(warnings, ev)
+			}
+		}
 
-	// Unblock the wedged attempt so its goroutine exits before the test ends.
-	releaseWedged()
-	require.NoError(t, <-wedgedDone)
+		require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
+		last := toolsetInfos[len(toolsetInfos)-1]
+		assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
+		assert.Equal(t, 1, last.AvailableTools,
+			"the in-flight toolset is skipped; the fast toolset's single tool is still counted")
+		assert.Empty(t, warnings, "a skipped in-flight start must not surface a warning")
+		assert.EqualValues(t, 1, inFlight.starts.Load(), "the skip must not run a second underlying Start")
+
+		// Unblock the wedged attempt so its goroutine exits before the test ends.
+		releaseWedged()
+		require.NoError(t, <-wedgedDone)
+	})
 }
 
 // TestEmitStartupInfo_ReturnsOnCancelWhileStartIsWedged is the regression
