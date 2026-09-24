@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -36,41 +37,43 @@ func (o slowChoiceObserver) OnEvent(_ context.Context, _ *session.Session, event
 func TestRunStream_StreamStoppedDeliveredUnderSlowConsumer(t *testing.T) {
 	t.Parallel()
 
-	builder := newStreamBuilder()
-	const deltas = 300
-	for range deltas {
-		builder.AddContent("abc")
-	}
-	builder.AddStopWithUsage(10, 20)
-
-	prov := &mockProvider{id: "test/mock-model", stream: builder.Build()}
-	root := agent.New("root", "test agent", agent.WithModel(prov))
-	tm := team.New(team.WithAgents(root))
-
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithSessionCompaction(false),
-		WithModelStore(mockModelStore{}),
-		WithEventObserver(slowChoiceObserver{delay: time.Millisecond}),
-	)
-	require.NoError(t, err)
-
-	sess := session.New(session.WithUserMessage("hi"))
-	sess.Title = "Unit Test"
-
-	var events []Event
-	for ev := range rt.RunStream(t.Context(), sess) {
-		events = append(events, ev)
-	}
-
-	var stoppedCount, stoppedIdx int
-	for i, ev := range events {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
-			stoppedCount++
-			stoppedIdx = i
+	synctest.Test(t, func(t *testing.T) {
+		builder := newStreamBuilder()
+		const deltas = 300
+		for range deltas {
+			builder.AddContent("abc")
 		}
-	}
-	require.Equal(t, 1, stoppedCount, "StreamStopped should be delivered exactly once even under a slow consumer")
-	assert.Equal(t, len(events)-1, stoppedIdx, "StreamStopped must be the last event before the channel closes")
+		builder.AddStopWithUsage(10, 20)
+
+		prov := &mockProvider{id: "test/mock-model", stream: builder.Build()}
+		root := agent.New("root", "test agent", agent.WithModel(prov))
+		tm := team.New(team.WithAgents(root))
+
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithSessionCompaction(false),
+			WithModelStore(mockModelStore{}),
+			WithEventObserver(slowChoiceObserver{delay: time.Millisecond}),
+		)
+		require.NoError(t, err)
+
+		sess := session.New(session.WithUserMessage("hi"))
+		sess.Title = "Unit Test"
+
+		var events []Event
+		for ev := range rt.RunStream(t.Context(), sess) {
+			events = append(events, ev)
+		}
+
+		var stoppedCount, stoppedIdx int
+		for i, ev := range events {
+			if _, ok := ev.(*StreamStoppedEvent); ok {
+				stoppedCount++
+				stoppedIdx = i
+			}
+		}
+		require.Equal(t, 1, stoppedCount, "StreamStopped should be delivered exactly once even under a slow consumer")
+		assert.Equal(t, len(events)-1, stoppedIdx, "StreamStopped must be the last event before the channel closes")
+	})
 }
 
 // TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveConsumer
