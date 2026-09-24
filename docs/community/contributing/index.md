@@ -115,6 +115,10 @@ inputs, and `FieldsFunc` callbacks are intentionally excluded.
 helpers. Preserve explicit numeric conversions; slice/map and dereference helpers
 are not replacements for `new`.
 
+`Lint/ReflectFields` covers paired `reflect.Value.Field(i)` and
+`Value.Type().Field(i)` loops that the upstream iterator analyzer misses. It
+excludes receiver mutation/escape, unrelated index uses, and unsafe callbacks.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
