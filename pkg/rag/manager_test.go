@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -147,72 +148,78 @@ func (s *blockingStrategy) Close() error { return nil }
 
 func TestInitializeReturnsOnContextCancellationWithBlockedStrategy(t *testing.T) {
 	t.Parallel()
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	blocked := newBlockingStrategy(release)
 
-	cfg := Config{
-		StrategyConfigs: []strategy.Config{{Name: "blocked", Strategy: blocked}},
-	}
-	m, err := New(t.Context(), "test", cfg, nil)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		blocked := newBlockingStrategy(release)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+		cfg := Config{
+			StrategyConfigs: []strategy.Config{{Name: "blocked", Strategy: blocked}},
+		}
+		m, err := New(t.Context(), "test", cfg, nil)
+		require.NoError(t, err)
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- m.Initialize(ctx) }()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	<-blocked.started
-	cancel()
+		errCh := make(chan error, 1)
+		go func() { errCh <- m.Initialize(ctx) }()
 
-	select {
-	case err := <-errCh:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Initialize did not return after context cancellation")
-	}
+		<-blocked.started
+		cancel()
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Initialize did not return after context cancellation")
+		}
+	})
 }
 
 func TestQueryReturnsOnContextCancellationWithBlockedStrategy(t *testing.T) {
 	t.Parallel()
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	first := newBlockingStrategy(release)
-	second := newBlockingStrategy(release)
 
-	// Two strategies so Query takes the multi-strategy fan-in path.
-	cfg := Config{
-		StrategyConfigs: []strategy.Config{
-			{Name: "first", Strategy: first, Limit: 5},
-			{Name: "second", Strategy: second, Limit: 5},
-		},
-	}
-	m, err := New(t.Context(), "test", cfg, nil)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		first := newBlockingStrategy(release)
+		second := newBlockingStrategy(release)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+		// Two strategies so Query takes the multi-strategy fan-in path.
+		cfg := Config{
+			StrategyConfigs: []strategy.Config{
+				{Name: "first", Strategy: first, Limit: 5},
+				{Name: "second", Strategy: second, Limit: 5},
+			},
+		}
+		m, err := New(t.Context(), "test", cfg, nil)
+		require.NoError(t, err)
 
-	type queryResult struct {
-		results []database.SearchResult
-		err     error
-	}
-	resCh := make(chan queryResult, 1)
-	go func() {
-		results, _, err := m.Query(ctx, "some query")
-		resCh <- queryResult{results: results, err: err}
-	}()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	<-first.started
-	<-second.started
-	cancel()
+		type queryResult struct {
+			results []database.SearchResult
+			err     error
+		}
+		resCh := make(chan queryResult, 1)
+		go func() {
+			results, _, err := m.Query(ctx, "some query")
+			resCh <- queryResult{results: results, err: err}
+		}()
 
-	select {
-	case res := <-resCh:
-		require.ErrorIs(t, res.err, context.Canceled)
-		assert.Nil(t, res.results)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Query did not return after context cancellation")
-	}
+		<-first.started
+		<-second.started
+		cancel()
+
+		select {
+		case res := <-resCh:
+			require.ErrorIs(t, res.err, context.Canceled)
+			assert.Nil(t, res.results)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Query did not return after context cancellation")
+		}
+	})
 }

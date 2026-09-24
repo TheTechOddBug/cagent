@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -78,29 +79,32 @@ func TestAppBackgroundWorkSnapshotsSessionBeforeReplace(t *testing.T) {
 		}},
 	} {
 		t.Run(entryPoint.name, func(t *testing.T) {
-			oldSession := session.New()
-			rt := &backgroundSessionCaptureRuntime{
-				started: make(chan *session.Session, 4),
-				release: make(chan struct{}),
-			}
-			app := &App{
-				runtime: rt,
-				session: oldSession,
-				events:  make(chan tea.Msg, 16),
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			entryPoint.run(app, ctx, cancel)
+			synctest.Test(t, func(t *testing.T) {
+				oldSession := session.New()
+				rt := &backgroundSessionCaptureRuntime{
+					started: make(chan *session.Session, 4),
+					release: make(chan struct{}),
+				}
+				app := &App{
+					runtime: rt,
+					session: oldSession,
+					events:  make(chan tea.Msg, 16),
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				entryPoint.run(app, ctx, cancel)
 
-			// Replace the session right away, before the background goroutine
-			// has necessarily started running; ReplaceSession re-emits startup
-			// info for the new session, so two sessions reach the runtime.
-			newSession := session.New()
-			app.ReplaceSession(t.Context(), newSession)
-			first, second := <-rt.started, <-rt.started
-			close(rt.release)
+				// Replace the session right away, before the background goroutine
+				// has necessarily started running; ReplaceSession re-emits startup
+				// info for the new session, so two sessions reach the runtime.
+				newSession := session.New()
+				app.ReplaceSession(t.Context(), newSession)
+				first, second := <-rt.started, <-rt.started
+				close(rt.release)
 
-			assert.ElementsMatch(t, []*session.Session{oldSession, newSession}, []*session.Session{first, second},
-				"background work must run against the session current when it was spawned")
+				assert.ElementsMatch(t, []*session.Session{oldSession, newSession}, []*session.Session{first, second},
+					"background work must run against the session current when it was spawned")
+			})
 		})
 	}
 }
@@ -118,30 +122,33 @@ func TestAppRunKeepsWorkScopedToOriginalSession(t *testing.T) {
 		}},
 	} {
 		t.Run(entryPoint.name, func(t *testing.T) {
-			oldSession := session.New()
-			rt := &sessionCaptureRuntime{
-				started: make(chan *session.Session, 1),
-				release: make(chan struct{}),
-			}
-			app := &App{
-				runtime: rt,
-				session: oldSession,
-				events:  make(chan tea.Msg, 4),
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			entryPoint.run(app, ctx, cancel)
+			synctest.Test(t, func(t *testing.T) {
+				oldSession := session.New()
+				rt := &sessionCaptureRuntime{
+					started: make(chan *session.Session, 1),
+					release: make(chan struct{}),
+				}
+				app := &App{
+					runtime: rt,
+					session: oldSession,
+					events:  make(chan tea.Msg, 4),
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				entryPoint.run(app, ctx, cancel)
 
-			require.Same(t, oldSession, <-rt.started)
-			newSession := session.New()
-			app.ReplaceSession(t.Context(), newSession)
-			close(rt.release)
+				require.Same(t, oldSession, <-rt.started)
+				newSession := session.New()
+				app.ReplaceSession(t.Context(), newSession)
+				close(rt.release)
 
-			event := <-app.events
-			stop, ok := event.(*runtime.StreamStoppedEvent)
-			require.True(t, ok)
-			assert.Equal(t, oldSession.ID, stop.SessionID)
-			assert.Equal(t, 1, oldSession.MessageCount())
-			assert.Zero(t, newSession.MessageCount())
+				event := <-app.events
+				stop, ok := event.(*runtime.StreamStoppedEvent)
+				require.True(t, ok)
+				assert.Equal(t, oldSession.ID, stop.SessionID)
+				assert.Equal(t, 1, oldSession.MessageCount())
+				assert.Zero(t, newSession.MessageCount())
+			})
 		})
 	}
 }
@@ -174,33 +181,36 @@ func TestAppRunDropsCanceledWorkWaitingForStreamGuard(t *testing.T) {
 		}},
 	} {
 		t.Run(entryPoint.name, func(t *testing.T) {
-			oldSession := session.New()
-			guard := &signalingLocker{
-				locked:   make(chan struct{}),
-				release:  make(chan struct{}),
-				unlocked: make(chan struct{}),
-			}
-			rt := &sessionCaptureRuntime{
-				started: make(chan *session.Session, 1),
-				release: make(chan struct{}),
-			}
-			app := &App{
-				ctx:         func() context.Context { return t.Context() },
-				runtime:     rt,
-				session:     oldSession,
-				events:      make(chan tea.Msg, 4),
-				streamGuard: guard,
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			entryPoint.run(app, ctx, cancel)
-			<-guard.locked
-			app.NewSession()
-			close(guard.release)
-			<-guard.unlocked
+			synctest.Test(t, func(t *testing.T) {
+				oldSession := session.New()
+				guard := &signalingLocker{
+					locked:   make(chan struct{}),
+					release:  make(chan struct{}),
+					unlocked: make(chan struct{}),
+				}
+				rt := &sessionCaptureRuntime{
+					started: make(chan *session.Session, 1),
+					release: make(chan struct{}),
+				}
+				app := &App{
+					ctx:         func() context.Context { return t.Context() },
+					runtime:     rt,
+					session:     oldSession,
+					events:      make(chan tea.Msg, 4),
+					streamGuard: guard,
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				entryPoint.run(app, ctx, cancel)
+				<-guard.locked
+				app.NewSession()
+				close(guard.release)
+				<-guard.unlocked
 
-			assert.Zero(t, oldSession.MessageCount())
-			assert.Zero(t, app.Session().MessageCount())
-			assert.Empty(t, rt.started)
+				assert.Zero(t, oldSession.MessageCount())
+				assert.Zero(t, app.Session().MessageCount())
+				assert.Empty(t, rt.started)
+			})
 		})
 	}
 }
@@ -239,32 +249,34 @@ func (s *singleTitleStream) Recv() (chat.MessageStreamResponse, error) {
 func (*singleTitleStream) Close() {}
 
 func TestGenerateTitleKeepsOriginalSession(t *testing.T) {
-	provider := &blockingTitleProvider{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-	oldSession := session.New()
-	app := &App{
-		runtime:  &mockRuntime{},
-		session:  oldSession,
-		events:   make(chan tea.Msg, 1),
-		titleGen: sessiontitle.New(provider),
-	}
+	synctest.Test(t, func(t *testing.T) {
+		provider := &blockingTitleProvider{
+			started: make(chan struct{}),
+			release: make(chan struct{}),
+		}
+		oldSession := session.New()
+		app := &App{
+			runtime:  &mockRuntime{},
+			session:  oldSession,
+			events:   make(chan tea.Msg, 1),
+			titleGen: sessiontitle.New(provider),
+		}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		app.generateTitle(t.Context(), oldSession, []string{"hello"})
-	}()
-	<-provider.started
-	newSession := session.New()
-	app.ReplaceSession(t.Context(), newSession)
-	close(provider.release)
-	<-done
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			app.generateTitle(t.Context(), oldSession, []string{"hello"})
+		}()
+		<-provider.started
+		newSession := session.New()
+		app.ReplaceSession(t.Context(), newSession)
+		close(provider.release)
+		<-done
 
-	assert.Equal(t, "Original title", oldSession.TitleSnapshot())
-	assert.Empty(t, newSession.TitleSnapshot())
-	titleEvent, ok := (<-app.events).(*runtime.SessionTitleEvent)
-	require.True(t, ok)
-	assert.Equal(t, oldSession.ID, titleEvent.SessionID)
+		assert.Equal(t, "Original title", oldSession.TitleSnapshot())
+		assert.Empty(t, newSession.TitleSnapshot())
+		titleEvent, ok := (<-app.events).(*runtime.SessionTitleEvent)
+		require.True(t, ok)
+		assert.Equal(t, oldSession.ID, titleEvent.SessionID)
+	})
 }

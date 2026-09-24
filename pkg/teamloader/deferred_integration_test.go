@@ -3,10 +3,10 @@ package teamloader
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -87,87 +87,88 @@ func callTool(t *testing.T, ts []tools.Tool, name string, args any) string {
 func TestDeferredToolsSurviveSlowSourceStart(t *testing.T) {
 	t.Parallel()
 
-	slow := &slowSourceToolSet{starting: make(chan struct{}), release: make(chan struct{})}
-	registry := NewToolsetRegistry(map[string]ToolsetCreator{
-		"slow": func(context.Context, latest.Toolset, string, *config.RuntimeConfig, string) (tools.ToolSet, error) {
-			return slow, nil
-		},
-	})
-	a := &latest.AgentConfig{
-		Instruction: "test",
-		Toolsets: []latest.Toolset{{
-			Type:  "slow",
-			Defer: latest.DeferConfig{DeferAll: true},
-			Toon:  "remote_.*",
-		}},
-	}
-	runConfig := config.RuntimeConfig{EnvProviderForTests: &noEnvProvider{}}
-	toolSets, warnings, err := getToolsForAgent(t.Context(), a, ".", &runConfig, "test-config", &loadOptions{toolsetRegistry: registry, toon: toon.Wrap, newDeferred: func() DeferredToolSet { return deferred.New() }}, js.NewJsExpander(runConfig.EnvProvider()))
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-	require.Len(t, toolSets, 2, "source (with all tools hidden) + deferred aggregator")
-	_, isDeferred := toolSets[1].(*deferred.ToolSet)
-	require.True(t, isDeferred)
-
-	ag := agent.New("root", "test", agent.WithToolSets(toolSets...))
-
-	// Like the runtime's startup probe: kick off the source's start in the
-	// background so that it is in flight when the first message arrives.
-	sourceStartable, ok := ag.ToolSets()[0].(*tools.StartableToolSet)
-	require.True(t, ok)
-	go func() {
-		_, _ = sourceStartable.TryStartWithTimeout(t.Context(), time.Minute)
-	}()
-	select {
-	case <-slow.starting:
-	case <-time.After(5 * time.Second):
-		t.Fatal("source start never began")
-	}
-
-	// Turn 1: the source's Start is in flight (blocked); the turn must skip
-	// it rather than wait, must not warn, and must still offer search_tool/add_tool.
-	turn1 := make(chan []tools.Tool, 1)
-	go func() {
-		got, err := ag.Tools(t.Context())
-		assert.NoError(t, err)
-		turn1 <- got
-	}()
-	var got []tools.Tool
-	select {
-	case got = <-turn1:
-	case <-time.After(10 * time.Second):
-		t.Fatal("turn 1 blocked on the slow source start")
-	}
-	assert.ElementsMatch(t, []string{deferred.ToolNameSearchTool, deferred.ToolNameAddTool}, namesOf(got))
-	assert.Empty(t, ag.DrainWarnings(), "deferred toolset must not fail to start while its source is starting")
-
-	// While the source is still starting, its tools are simply not discoverable yet.
-	out := callTool(t, got, deferred.ToolNameSearchTool, deferred.SearchToolArgs{Query: "echo"})
-	assert.Contains(t, out, "No deferred tools found")
-
-	// Source finishes starting; the abandoned Start goroutine completes.
-	close(slow.release)
-	require.Eventually(t, slow.started.Load, 5*time.Second, 10*time.Millisecond)
-
-	// Turn 2: the source is now discoverable and activatable.
-	require.Eventually(t, func() bool {
-		got, err := ag.Tools(t.Context())
+	synctest.Test(t, func(t *testing.T) {
+		slow := &slowSourceToolSet{starting: make(chan struct{}), release: make(chan struct{})}
+		registry := NewToolsetRegistry(map[string]ToolsetCreator{
+			"slow": func(context.Context, latest.Toolset, string, *config.RuntimeConfig, string) (tools.ToolSet, error) {
+				return slow, nil
+			},
+		})
+		a := &latest.AgentConfig{
+			Instruction: "test",
+			Toolsets: []latest.Toolset{{
+				Type:  "slow",
+				Defer: latest.DeferConfig{DeferAll: true},
+				Toon:  "remote_.*",
+			}},
+		}
+		runConfig := config.RuntimeConfig{EnvProviderForTests: &noEnvProvider{}}
+		toolSets, warnings, err := getToolsForAgent(t.Context(), a, ".", &runConfig, "test-config", &loadOptions{toolsetRegistry: registry, toon: toon.Wrap, newDeferred: func() DeferredToolSet { return deferred.New() }}, js.NewJsExpander(runConfig.EnvProvider()))
 		require.NoError(t, err)
-		return strings.Contains(callTool(t, got, deferred.ToolNameSearchTool, deferred.SearchToolArgs{Query: "echo"}), "remote_echo")
-	}, 5*time.Second, 20*time.Millisecond)
+		require.Empty(t, warnings)
+		require.Len(t, toolSets, 2, "source (with all tools hidden) + deferred aggregator")
+		_, isDeferred := toolSets[1].(*deferred.ToolSet)
+		require.True(t, isDeferred)
 
-	got, err = ag.Tools(t.Context())
-	require.NoError(t, err)
-	out = callTool(t, got, deferred.ToolNameAddTool, deferred.AddToolArgs{Name: "remote_echo"})
-	assert.Contains(t, out, "has been activated")
+		ag := agent.New("root", "test", agent.WithToolSets(toolSets...))
 
-	// Turn 3: the activated tool is listed, and runs through the source's
-	// wrappers (TOON was configured for it).
-	got, err = ag.Tools(t.Context())
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{deferred.ToolNameSearchTool, deferred.ToolNameAddTool, "remote_echo"}, namesOf(got))
-	assert.Equal(t, "echo: hi", callTool(t, got, "remote_echo", nil))
-	assert.Empty(t, ag.DrainWarnings())
+		// Like the runtime's startup probe: kick off the source's start in the
+		// background so that it is in flight when the first message arrives.
+		sourceStartable, ok := ag.ToolSets()[0].(*tools.StartableToolSet)
+		require.True(t, ok)
+		go func() {
+			_, _ = sourceStartable.TryStartWithTimeout(t.Context(), time.Minute)
+		}()
+		select {
+		case <-slow.starting:
+		case <-time.After(5 * time.Second):
+			t.Fatal("source start never began")
+		}
+
+		// Turn 1: the source's Start is in flight (blocked); the turn must skip
+		// it rather than wait, must not warn, and must still offer search_tool/add_tool.
+		turn1 := make(chan []tools.Tool, 1)
+		go func() {
+			got, err := ag.Tools(t.Context())
+			assert.NoError(t, err)
+			turn1 <- got
+		}()
+		var got []tools.Tool
+		select {
+		case got = <-turn1:
+		case <-time.After(10 * time.Second):
+			t.Fatal("turn 1 blocked on the slow source start")
+		}
+		assert.ElementsMatch(t, []string{deferred.ToolNameSearchTool, deferred.ToolNameAddTool}, namesOf(got))
+		assert.Empty(t, ag.DrainWarnings(), "deferred toolset must not fail to start while its source is starting")
+
+		// While the source is still starting, its tools are simply not discoverable yet.
+		out := callTool(t, got, deferred.ToolNameSearchTool, deferred.SearchToolArgs{Query: "echo"})
+		assert.Contains(t, out, "No deferred tools found")
+
+		// Source finishes starting; the abandoned Start goroutine completes.
+		close(slow.release)
+		synctest.Wait()
+		require.True(t, slow.started.Load())
+
+		// Turn 2: the source is now discoverable and activatable.
+		got, err = ag.Tools(t.Context())
+		require.NoError(t, err)
+		require.Contains(t, callTool(t, got, deferred.ToolNameSearchTool, deferred.SearchToolArgs{Query: "echo"}), "remote_echo")
+
+		got, err = ag.Tools(t.Context())
+		require.NoError(t, err)
+		out = callTool(t, got, deferred.ToolNameAddTool, deferred.AddToolArgs{Name: "remote_echo"})
+		assert.Contains(t, out, "has been activated")
+
+		// Turn 3: the activated tool is listed, and runs through the source's
+		// wrappers (TOON was configured for it).
+		got, err = ag.Tools(t.Context())
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{deferred.ToolNameSearchTool, deferred.ToolNameAddTool, "remote_echo"}, namesOf(got))
+		assert.Equal(t, "echo: hi", callTool(t, got, "remote_echo", nil))
+		assert.Empty(t, ag.DrainWarnings())
+	})
 }
 
 // The catalog is built from the same wrapped source as search_tool/add_tool,

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gotest.tools/v3/assert"
@@ -614,42 +615,44 @@ func TestErrorEventReturnedNotPrinted(t *testing.T) {
 func TestNonOAuthElicitationDeclinedAndStreamDrained(t *testing.T) {
 	t.Parallel()
 
-	drained := make(chan struct{})
-	rt := &mockRuntime{
-		runStreamFn: func(context.Context, *session.Session) <-chan runtime.Event {
-			ch := make(chan runtime.Event) // unbuffered: every send needs a live consumer
-			go func() {
-				defer close(ch)
-				defer close(drained)
-				ch <- &runtime.ElicitationRequestEvent{Type: "elicitation_request", Message: "Choose a deployment region"}
-				ch <- runtime.Warning("The deployment choice was declined", "test")
-				ch <- runtime.AgentChoice("test", "sess", "Continuing without deployment.")
-			}()
-			return ch
-		},
-	}
+	synctest.Test(t, func(t *testing.T) {
+		drained := make(chan struct{})
+		rt := &mockRuntime{
+			runStreamFn: func(context.Context, *session.Session) <-chan runtime.Event {
+				ch := make(chan runtime.Event) // unbuffered: every send needs a live consumer
+				go func() {
+					defer close(ch)
+					defer close(drained)
+					ch <- &runtime.ElicitationRequestEvent{Type: "elicitation_request", Message: "Choose a deployment region"}
+					ch <- runtime.Warning("The deployment choice was declined", "test")
+					ch <- runtime.AgentChoice("test", "sess", "Continuing without deployment.")
+				}()
+				return ch
+			},
+		}
 
-	var buf bytes.Buffer
-	out := NewPrinter(&buf)
-	sess := session.New()
+		var buf bytes.Buffer
+		out := NewPrinter(&buf)
+		sess := session.New()
 
-	err := Run(t.Context(), out, Config{}, rt, sess, []string{"hello"})
-	assert.NilError(t, err)
+		err := Run(t.Context(), out, Config{}, rt, sess, []string{"hello"})
+		assert.NilError(t, err)
 
-	select {
-	case <-drained:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the CLI stopped draining the stream after declining the elicitation")
-	}
+		select {
+		case <-drained:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the CLI stopped draining the stream after declining the elicitation")
+		}
 
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	assert.Equal(t, rt.elicitationDeclines, 1)
-	assert.Equal(t, rt.elicitationLastAction, tools.ElicitationAction("decline"))
-	assert.Check(t, strings.Contains(buf.String(), "deployment choice was declined"),
-		"the warning must be surfaced: %q", buf.String())
-	assert.Check(t, strings.Contains(buf.String(), "Continuing without deployment."),
-		"the assistant response must still be printed: %q", buf.String())
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		assert.Equal(t, rt.elicitationDeclines, 1)
+		assert.Equal(t, rt.elicitationLastAction, tools.ElicitationAction("decline"))
+		assert.Check(t, strings.Contains(buf.String(), "deployment choice was declined"),
+			"the warning must be surfaced: %q", buf.String())
+		assert.Check(t, strings.Contains(buf.String(), "Continuing without deployment."),
+			"the assistant response must still be printed: %q", buf.String())
+	})
 }
 
 func (m *mockRuntime) ReadSkillContent(context.Context, *session.Session, string) (string, error) {

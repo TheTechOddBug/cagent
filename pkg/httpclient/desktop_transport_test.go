@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -112,7 +113,9 @@ func TestDesktopAwareTransportProxySafe(t *testing.T) {
 			if tt.resolver != nil {
 				transport.resolver = tt.resolver
 			}
-			assert.Equal(t, tt.want, transport.proxySafe(t.Context(), tt.host))
+			synctest.Test(t, func(t *testing.T) {
+				assert.Equal(t, tt.want, transport.proxySafe(t.Context(), tt.host))
+			})
 		})
 	}
 }

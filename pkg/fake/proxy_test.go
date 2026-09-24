@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -262,41 +263,44 @@ func TestIsStreamResponse(t *testing.T) {
 
 func TestStreamCopy_ContextCancellation(t *testing.T) {
 	t.Parallel()
-	// Create a slow reader that blocks until closed
-	slowBody := newSlowReader()
 
-	// Create a mock HTTP response with the slow reader
-	resp := &http.Response{
-		Body: slowBody,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		// Create a slow reader that blocks until closed
+		slowBody := newSlowReader()
 
-	// Create an echo context with a request that has a cancelable context
-	e := echo.New()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
-	rec := &readerFromRecorder{httptest.NewRecorder()}
-	ctx, cancel := context.WithCancel(t.Context())
-	req = req.WithContext(ctx)
-	c := e.NewContext(req, rec)
+		// Create a mock HTTP response with the slow reader
+		resp := &http.Response{
+			Body: slowBody,
+		}
 
-	// Start StreamCopy in a goroutine
-	done := make(chan error, 1)
-	go func() {
-		done <- StreamCopy(c, resp)
-	}()
+		// Create an echo context with a request that has a cancelable context
+		e := echo.New()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		rec := &readerFromRecorder{httptest.NewRecorder()}
+		ctx, cancel := context.WithCancel(t.Context())
+		req = req.WithContext(ctx)
+		c := e.NewContext(req, rec)
 
-	// Write some data to ensure StreamCopy is actively reading before we cancel
-	slowBody.data <- []byte("initial")
+		// Start StreamCopy in a goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- StreamCopy(c, resp)
+		}()
 
-	// Cancel the context - this should cause StreamCopy to return immediately
-	cancel()
+		// Write some data to ensure StreamCopy is actively reading before we cancel
+		slowBody.data <- []byte("initial")
 
-	// StreamCopy should return within a reasonable time
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("StreamCopy did not return after context cancellation")
-	}
+		// Cancel the context - this should cause StreamCopy to return immediately
+		cancel()
+
+		// StreamCopy should return within a reasonable time
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("StreamCopy did not return after context cancellation")
+		}
+	})
 }
 
 func TestStreamCopy_NormalCompletion(t *testing.T) {
@@ -323,33 +327,36 @@ func TestStreamCopy_NormalCompletion(t *testing.T) {
 
 func TestSimulatedStreamCopy_SSEEvents(t *testing.T) {
 	t.Parallel()
-	// Create a response with SSE-formatted data
-	sseData := "data: {\"chunk\": 1}\n\ndata: {\"chunk\": 2}\n\ndata: [DONE]\n\n"
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewReader([]byte(sseData))),
-	}
 
-	// Create an echo context
-	e := echo.New()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+	synctest.Test(t, func(t *testing.T) {
+		// Create a response with SSE-formatted data
+		sseData := "data: {\"chunk\": 1}\n\ndata: {\"chunk\": 2}\n\ndata: [DONE]\n\n"
+		resp := &http.Response{
+			Body: io.NopCloser(bytes.NewReader([]byte(sseData))),
+		}
 
-	// Use a short delay for testing
-	chunkDelay := 10 * time.Millisecond
+		// Create an echo context
+		e := echo.New()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
 
-	start := time.Now()
-	err := SimulatedStreamCopy(c, resp, chunkDelay)
-	elapsed := time.Since(start)
-	require.NoError(t, err)
+		// Use a short delay for testing
+		chunkDelay := 10 * time.Millisecond
 
-	// Verify the data was written (with newlines from scanner)
-	assert.Contains(t, rec.Body.String(), "data: {\"chunk\": 1}")
-	assert.Contains(t, rec.Body.String(), "data: {\"chunk\": 2}")
-	assert.Contains(t, rec.Body.String(), "data: [DONE]")
+		start := time.Now()
+		err := SimulatedStreamCopy(c, resp, chunkDelay)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
 
-	// Verify delays were applied (3 data lines = at least 3 * 10ms = 30ms)
-	assert.GreaterOrEqual(t, elapsed, 3*chunkDelay, "should have delays between data chunks")
+		// Verify the data was written (with newlines from scanner)
+		assert.Contains(t, rec.Body.String(), "data: {\"chunk\": 1}")
+		assert.Contains(t, rec.Body.String(), "data: {\"chunk\": 2}")
+		assert.Contains(t, rec.Body.String(), "data: [DONE]")
+
+		// Verify delays were applied (3 data lines = at least 3 * 10ms = 30ms)
+		assert.GreaterOrEqual(t, elapsed, 3*chunkDelay, "should have delays between data chunks")
+	})
 }
 
 // notifyWriter wraps an http.ResponseWriter and signals on first Write.
@@ -377,61 +384,64 @@ func (w *notifyWriter) Flush() {
 
 func TestSimulatedStreamCopy_ContextCancellation(t *testing.T) {
 	t.Parallel()
-	// Create a reader that provides some data then blocks
-	// to allow context cancellation to be tested
-	sseData := "data: first\n"
-	reader, writer := io.Pipe()
 
-	// Write first chunk then leave pipe open (simulating slow stream)
-	go func() {
-		_, _ = writer.Write([]byte(sseData))
-		// Don't close - leave it blocking
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		// Create a reader that provides some data then blocks
+		// to allow context cancellation to be tested
+		sseData := "data: first\n"
+		reader, writer := io.Pipe()
 
-	resp := &http.Response{
-		Body: reader,
-	}
+		// Write first chunk then leave pipe open (simulating slow stream)
+		go func() {
+			_, _ = writer.Write([]byte(sseData))
+			// Don't close - leave it blocking
+		}()
 
-	e := echo.New()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
-	rec := httptest.NewRecorder()
-	ctx, cancel := context.WithCancel(t.Context())
-	req = req.WithContext(ctx)
+		resp := &http.Response{
+			Body: reader,
+		}
 
-	// Wrap the recorder so we get notified when the first chunk is written,
-	// without racing on rec.Body.
-	firstWrite := make(chan struct{})
-	nw := &notifyWriter{ResponseWriter: rec, notify: firstWrite}
-	c := e.NewContext(req, nw)
+		e := echo.New()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		rec := httptest.NewRecorder()
+		ctx, cancel := context.WithCancel(t.Context())
+		req = req.WithContext(ctx)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- SimulatedStreamCopy(c, resp, 10*time.Millisecond)
-	}()
+		// Wrap the recorder so we get notified when the first chunk is written,
+		// without racing on rec.Body.
+		firstWrite := make(chan struct{})
+		nw := &notifyWriter{ResponseWriter: rec, notify: firstWrite}
+		c := e.NewContext(req, nw)
 
-	// Wait until the first chunk has been written to the recorder.
-	select {
-	case <-firstWrite:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for first chunk to be written")
-	}
+		done := make(chan error, 1)
+		go func() {
+			done <- SimulatedStreamCopy(c, resp, 10*time.Millisecond)
+		}()
 
-	// Cancel the context and close the body (simulating client disconnect)
-	cancel()
-	_ = reader.Close()
-	_ = writer.Close()
+		// Wait until the first chunk has been written to the recorder.
+		select {
+		case <-firstWrite:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for first chunk to be written")
+		}
 
-	// Should return promptly
-	select {
-	case err := <-done:
-		// May return an error due to pipe closed, that's ok
-		_ = err
-	case <-time.After(2 * time.Second):
-		t.Fatal("SimulatedStreamCopy did not return after context cancellation")
-	}
+		// Cancel the context and close the body (simulating client disconnect)
+		cancel()
+		_ = reader.Close()
+		_ = writer.Close()
 
-	// Verify first chunk was written (safe to read after goroutine finished)
-	assert.Contains(t, rec.Body.String(), "data: first")
+		// Should return promptly
+		select {
+		case err := <-done:
+			// May return an error due to pipe closed, that's ok
+			_ = err
+		case <-time.After(2 * time.Second):
+			t.Fatal("SimulatedStreamCopy did not return after context cancellation")
+		}
+
+		// Verify first chunk was written (safe to read after goroutine finished)
+		assert.Contains(t, rec.Body.String(), "data: first")
+	})
 }
 
 func TestDefaultMatcherNormalizesPromptFilePaths(t *testing.T) {

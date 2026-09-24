@@ -162,33 +162,36 @@ func TestCloseCachesCleanupFailures(t *testing.T) {
 	for _, failure := range []string{"runtime", "toolset"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
-			store := session.NewInMemorySessionStore()
-			sess := session.New()
-			require.NoError(t, store.AddSession(t.Context(), sess))
-			a := NewAgent(nil, nil, store)
-			a.team = team.New()
-			boom := errors.New("cleanup boom")
-			rt := &barrierRuntime{started: make(chan struct{}), release: make(chan struct{})}
-			ts := &barrierToolset{started: make(chan struct{}), release: make(chan struct{})}
-			close(rt.release)
-			close(ts.release)
-			if failure == "runtime" {
-				rt.err = boom
-			} else {
-				ts.err = boom
-			}
-			s := &Session{id: sess.ID, sess: sess, rt: rt, team: barrierTeam(t, ts).Team}
-			_, _, err := registerTestSession(t.Context(), a, s)
-			require.NoError(t, err)
-			for range 2 {
-				require.ErrorIs(t, <-closeSessionAsync(a, t.Context(), s.id), boom)
-			}
-			_, err = a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id)})
-			require.ErrorIs(t, err, boom)
-			require.ErrorIs(t, a.Stop(t.Context()), boom)
-			require.ErrorIs(t, a.Stop(t.Context()), boom)
-			assert.Equal(t, int32(1), rt.calls.Load())
-			assert.Equal(t, int32(1), ts.calls.Load())
+
+			synctest.Test(t, func(t *testing.T) {
+				store := session.NewInMemorySessionStore()
+				sess := session.New()
+				require.NoError(t, store.AddSession(t.Context(), sess))
+				a := NewAgent(nil, nil, store)
+				a.team = team.New()
+				boom := errors.New("cleanup boom")
+				rt := &barrierRuntime{started: make(chan struct{}), release: make(chan struct{})}
+				ts := &barrierToolset{started: make(chan struct{}), release: make(chan struct{})}
+				close(rt.release)
+				close(ts.release)
+				if failure == "runtime" {
+					rt.err = boom
+				} else {
+					ts.err = boom
+				}
+				s := &Session{id: sess.ID, sess: sess, rt: rt, team: barrierTeam(t, ts).Team}
+				_, _, err := registerTestSession(t.Context(), a, s)
+				require.NoError(t, err)
+				for range 2 {
+					require.ErrorIs(t, <-closeSessionAsync(a, t.Context(), s.id), boom)
+				}
+				_, err = a.ResumeSession(t.Context(), acpsdk.ResumeSessionRequest{SessionId: acpsdk.SessionId(s.id)})
+				require.ErrorIs(t, err, boom)
+				require.ErrorIs(t, a.Stop(t.Context()), boom)
+				require.ErrorIs(t, a.Stop(t.Context()), boom)
+				assert.Equal(t, int32(1), rt.calls.Load())
+				assert.Equal(t, int32(1), ts.calls.Load())
+			})
 		})
 	}
 }
@@ -487,22 +490,27 @@ func TestStopDrainsStoreUsersBeforeOwnerClosesStore(t *testing.T) {
 
 func TestCloseResponseWaitsOnWire(t *testing.T) {
 	t.Parallel()
-	a, s := newResumeFixture(t, "")
-	rt := &barrierRuntime{started: make(chan struct{}), release: make(chan struct{})}
-	s.rt = rt
-	input, send := io.Pipe()
-	out := &captureWriter{}
-	conn := acpsdk.NewAgentSideConnection(a, out, input)
-	t.Cleanup(func() { _ = send.Close(); <-conn.Done() })
-	data, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/close", "params": map[string]any{"sessionId": s.id}})
-	require.NoError(t, err)
-	_, err = send.Write(append(data, '\n'))
-	require.NoError(t, err)
-	<-rt.started
-	assert.Empty(t, out.lines(), "wire success cannot precede runtime cleanup")
-	close(rt.release)
-	require.Eventually(t, func() bool { return len(out.lines()) == 1 }, 5*time.Second, time.Millisecond)
-	assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{}}`, out.lines()[0])
+
+	synctest.Test(t, func(t *testing.T) {
+		a, s := newResumeFixture(t, "")
+		rt := &barrierRuntime{started: make(chan struct{}), release: make(chan struct{})}
+		s.rt = rt
+		input, send := io.Pipe()
+		out := &captureWriter{}
+		conn := acpsdk.NewAgentSideConnection(a, out, input)
+		t.Cleanup(func() { _ = send.Close(); <-conn.Done() })
+		data, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/close", "params": map[string]any{"sessionId": s.id}})
+		require.NoError(t, err)
+		_, err = send.Write(append(data, '\n'))
+		require.NoError(t, err)
+		<-rt.started
+		synctest.Wait()
+		assert.Empty(t, out.lines(), "wire success cannot precede runtime cleanup")
+		close(rt.release)
+		synctest.Wait()
+		require.Len(t, out.lines(), 1)
+		assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{}}`, out.lines()[0])
+	})
 }
 
 type startingToolset struct {

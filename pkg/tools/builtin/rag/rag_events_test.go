@@ -3,6 +3,7 @@ package rag
 import (
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -69,31 +70,33 @@ func newEventedRAGToolSet(t *testing.T) (*ToolSet, chan<- ragtypes.Event) {
 func TestSubscribeEvents_FanOut(t *testing.T) {
 	t.Parallel()
 
-	ts, events := newEventedRAGToolSet(t)
+	synctest.Test(t, func(t *testing.T) {
+		ts, events := newEventedRAGToolSet(t)
 
-	before := newEventRecorder()
-	unsubBefore := ts.SubscribeEvents(before.callback)
-	legacy := newEventRecorder()
-	ts.SetEventCallback(legacy.callback)
+		before := newEventRecorder()
+		unsubBefore := ts.SubscribeEvents(before.callback)
+		legacy := newEventRecorder()
+		ts.SetEventCallback(legacy.callback)
 
-	require.NoError(t, ts.Start(t.Context()))
+		require.NoError(t, ts.Start(t.Context()))
 
-	after := newEventRecorder()
-	ts.SubscribeEvents(after.callback)
+		after := newEventRecorder()
+		ts.SubscribeEvents(after.callback)
 
-	events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "one"}
-	for _, r := range []*eventRecorder{before, legacy, after} {
-		r.wait(t)
-	}
+		events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "one"}
+		for _, r := range []*eventRecorder{before, legacy, after} {
+			r.wait(t)
+		}
 
-	unsubBefore()
-	events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingComplete, Message: "two"}
-	legacy.wait(t)
-	after.wait(t)
+		unsubBefore()
+		events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingComplete, Message: "two"}
+		legacy.wait(t)
+		after.wait(t)
 
-	assert.Equal(t, []string{"one"}, before.messages())
-	assert.Equal(t, []string{"one", "two"}, legacy.messages())
-	assert.Equal(t, []string{"one", "two"}, after.messages())
+		assert.Equal(t, []string{"one"}, before.messages())
+		assert.Equal(t, []string{"one", "two"}, legacy.messages())
+		assert.Equal(t, []string{"one", "two"}, after.messages())
+	})
 }
 
 // TestSetEventCallback_ReplacesPrevious keeps the legacy single-slot
@@ -101,22 +104,24 @@ func TestSubscribeEvents_FanOut(t *testing.T) {
 func TestSetEventCallback_ReplacesPrevious(t *testing.T) {
 	t.Parallel()
 
-	ts, events := newEventedRAGToolSet(t)
-	first := newEventRecorder()
-	second := newEventRecorder()
-	ts.SetEventCallback(first.callback)
-	ts.SetEventCallback(second.callback)
-	require.NoError(t, ts.Start(t.Context()))
+	synctest.Test(t, func(t *testing.T) {
+		ts, events := newEventedRAGToolSet(t)
+		first := newEventRecorder()
+		second := newEventRecorder()
+		ts.SetEventCallback(first.callback)
+		ts.SetEventCallback(second.callback)
+		require.NoError(t, ts.Start(t.Context()))
 
-	events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "one"}
-	second.wait(t)
+		events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "one"}
+		second.wait(t)
 
-	ts.SetEventCallback(nil)
-	watcher := newEventRecorder()
-	ts.SubscribeEvents(watcher.callback)
-	events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "two"}
-	watcher.wait(t)
+		ts.SetEventCallback(nil)
+		watcher := newEventRecorder()
+		ts.SubscribeEvents(watcher.callback)
+		events <- ragtypes.Event{Type: ragtypes.EventTypeIndexingStarted, Message: "two"}
+		watcher.wait(t)
 
-	assert.Empty(t, first.messages())
-	assert.Equal(t, []string{"one"}, second.messages())
+		assert.Empty(t, first.messages())
+		assert.Equal(t, []string{"one"}, second.messages())
+	})
 }

@@ -245,56 +245,59 @@ func TestNonTransformEventsRemainConcurrent(t *testing.T) {
 	for _, event := range []EventType{EventSessionStart, EventPermissionRequest, EventBeforeCompaction, EventPreToolUsePreYolo, EventToolGuard} {
 		t.Run(string(event), func(t *testing.T) {
 			t.Parallel()
-			started := make(chan struct{}, 2)
-			release := make(chan struct{})
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			go func() {
-				defer close(release)
-				for range 2 {
-					select {
-					case <-started:
-					case <-ctx.Done():
-						return
+			workingDir := t.TempDir()
+			synctest.Test(t, func(t *testing.T) {
+				started := make(chan struct{}, 2)
+				release := make(chan struct{})
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				go func() {
+					defer close(release)
+					for range 2 {
+						select {
+						case <-started:
+						case <-ctx.Done():
+							return
+						}
 					}
+				}()
+				registry := NewRegistry()
+				require.NoError(t, registry.RegisterBuiltin("wait", func(ctx context.Context, in *Input, args []string) (*Output, error) {
+					started <- struct{}{}
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+					assert.Equal(t, "original", in.ToolInput["cmd"])
+					return &Output{HookSpecificOutput: &HookSpecificOutput{
+						UpdatedInput: map[string]any{"cmd": args[0]}, Summary: args[0], AdditionalContext: args[0],
+					}}, nil
+				}))
+				hookList := []Hook{
+					{Type: HookTypeBuiltin, Command: "wait", Args: []string{"first"}},
+					{Type: HookTypeBuiltin, Command: "wait", Args: []string{"second"}},
 				}
-			}()
-			registry := NewRegistry()
-			require.NoError(t, registry.RegisterBuiltin("wait", func(ctx context.Context, in *Input, args []string) (*Output, error) {
-				started <- struct{}{}
-				select {
-				case <-release:
-				case <-ctx.Done():
-					return nil, ctx.Err()
+				preempt := true
+				exec := NewExecutorWithRegistry(&Config{
+					SessionStart: hookList, BeforeCompaction: hookList,
+					PermissionRequest: []MatcherConfig{{Hooks: hookList}},
+					ToolGuard:         []MatcherConfig{{Hooks: hookList}},
+					PreToolUse:        []MatcherConfig{{PreemptYolo: &preempt, Hooks: hookList}},
+				}, workingDir, nil, registry)
+				result, err := exec.Dispatch(ctx, event, &Input{ToolInput: map[string]any{"cmd": "original"}})
+				require.NoError(t, err)
+				require.NoError(t, ctx.Err(), "both hooks must start before either finishes")
+				if EventContract(event).Context {
+					assert.Equal(t, "first\nsecond", result.AdditionalContext)
+				} else {
+					assert.Empty(t, result.AdditionalContext)
 				}
-				assert.Equal(t, "original", in.ToolInput["cmd"])
-				return &Output{HookSpecificOutput: &HookSpecificOutput{
-					UpdatedInput: map[string]any{"cmd": args[0]}, Summary: args[0], AdditionalContext: args[0],
-				}}, nil
-			}))
-			hookList := []Hook{
-				{Type: HookTypeBuiltin, Command: "wait", Args: []string{"first"}},
-				{Type: HookTypeBuiltin, Command: "wait", Args: []string{"second"}},
-			}
-			preempt := true
-			exec := NewExecutorWithRegistry(&Config{
-				SessionStart: hookList, BeforeCompaction: hookList,
-				PermissionRequest: []MatcherConfig{{Hooks: hookList}},
-				ToolGuard:         []MatcherConfig{{Hooks: hookList}},
-				PreToolUse:        []MatcherConfig{{PreemptYolo: &preempt, Hooks: hookList}},
-			}, t.TempDir(), nil, registry)
-			result, err := exec.Dispatch(ctx, event, &Input{ToolInput: map[string]any{"cmd": "original"}})
-			require.NoError(t, err)
-			require.NoError(t, ctx.Err(), "both hooks must start before either finishes")
-			if EventContract(event).Context {
-				assert.Equal(t, "first\nsecond", result.AdditionalContext)
-			} else {
-				assert.Empty(t, result.AdditionalContext)
-			}
-			assert.Nil(t, result.ModifiedInput)
-			if event == EventBeforeCompaction {
-				assert.Equal(t, "first", result.Summary)
-			}
+				assert.Nil(t, result.ModifiedInput)
+				if event == EventBeforeCompaction {
+					assert.Equal(t, "first", result.Summary)
+				}
+			})
 		})
 	}
 }

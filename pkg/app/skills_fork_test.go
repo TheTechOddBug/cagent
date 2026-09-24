@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,56 +108,60 @@ func TestApp_SlashSkill_ForkContext_DispatchesToRunSkillFork(t *testing.T) {
 		"Please commit the staged changes.\n"
 
 	skill := writeSkill(t, "commit", true /* fork */, skillBody)
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	ctx := t.Context()
-	// Pre-populate so the slash command is invoked mid-conversation.
-	sess := session.New(session.WithUserMessage("hi there"))
-	require.Equal(t, 1, sess.MessageCount())
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+		}
 
-	a := New(t.Context(), rt, sess)
+		ctx := t.Context()
+		// Pre-populate so the slash command is invoked mid-conversation.
+		sess := session.New(session.WithUserMessage("hi there"))
+		require.Equal(t, 1, sess.MessageCount())
 
-	// Detection.
-	skillName, task, ok := a.SkillCommandFork(ctx, "/commit please commit")
-	require.True(t, ok, "fork-mode skill slash command must be detected")
-	assert.Equal(t, "commit", skillName)
-	assert.Equal(t, "please commit", task)
+		a := New(t.Context(), rt, sess)
 
-	// ResolveInput must NOT inline a fork-mode skill: that would cause
-	// chat.processMessage to add it to the parent before fork dispatch runs.
-	resolved := a.ResolveInput(ctx, "/commit please commit")
-	assert.NotContains(t, resolved, "HELLO_FROM_SKILL")
-	assert.NotContains(t, resolved, "<skill name=")
-	assert.Equal(t, "/commit please commit", resolved, "raw input passes through; chat will take a different branch")
+		// Detection.
+		skillName, task, ok := a.SkillCommandFork(ctx, "/commit please commit")
+		require.True(t, ok, "fork-mode skill slash command must be detected")
+		assert.Equal(t, "commit", skillName)
+		assert.Equal(t, "please commit", task)
 
-	// Dispatch.
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	a.RunSkillFork(runCtx, cancel, skillName, task, nil)
+		// ResolveInput must NOT inline a fork-mode skill: that would cause
+		// chat.processMessage to add it to the parent before fork dispatch runs.
+		resolved := a.ResolveInput(ctx, "/commit please commit")
+		assert.NotContains(t, resolved, "HELLO_FROM_SKILL")
+		assert.NotContains(t, resolved, "<skill name=")
+		assert.Equal(t, "/commit please commit", resolved, "raw input passes through; chat will take a different branch")
 
-	require.Eventually(t, func() bool { return rt.stopCall.Load() }, time.Second, 10*time.Millisecond,
-		"RunSkillFork goroutine should drain its event channel and finish")
+		// Dispatch.
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		a.RunSkillFork(runCtx, cancel, skillName, task, nil)
 
-	calls := rt.recordedCalls()
-	require.Len(t, calls, 1)
-	assert.Equal(t, "commit", calls[0].Name)
-	assert.Equal(t, "please commit", calls[0].Task)
+		synctest.Wait()
+		require.True(t, rt.stopCall.Load(),
+			"RunSkillFork goroutine should drain its event channel and finish")
 
-	// Parent session must be unchanged.
-	require.Equal(t, 1, sess.MessageCount(), "parent session must not gain a user message from a fork-mode slash command")
-	for _, item := range sess.GetAllMessages() {
-		content := item.Message.Content
-		assert.NotContains(t, content, "/commit")
-		assert.NotContains(t, content, "HELLO_FROM_SKILL")
-		assert.NotContains(t, content, "<skill name=")
-	}
+		calls := rt.recordedCalls()
+		require.Len(t, calls, 1)
+		assert.Equal(t, "commit", calls[0].Name)
+		assert.Equal(t, "please commit", calls[0].Task)
 
-	assert.Same(t, sess, a.Session(), "App.Session() must still point at the parent")
+		// Parent session must be unchanged.
+		require.Equal(t, 1, sess.MessageCount(), "parent session must not gain a user message from a fork-mode slash command")
+		for _, item := range sess.GetAllMessages() {
+			content := item.Message.Content
+			assert.NotContains(t, content, "/commit")
+			assert.NotContains(t, content, "HELLO_FROM_SKILL")
+			assert.NotContains(t, content, "<skill name=")
+		}
+
+		assert.Same(t, sess, a.Session(), "App.Session() must still point at the parent")
+	})
 }
 
 // TestApp_SlashSkill_InlineContext_StillInlines covers the
@@ -207,54 +211,54 @@ func TestApp_SlashSkill_NonFork_E2E(t *testing.T) {
 		"Please review the staged changes.\n"
 
 	skill := writeSkill(t, "review", false /* not fork */, skillBody)
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	ctx := t.Context()
-	// Pre-populate so the slash command is invoked mid-conversation.
-	sess := session.New(session.WithUserMessage("hi there"))
-	require.Equal(t, 1, sess.MessageCount())
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+		}
 
-	a := New(t.Context(), rt, sess)
+		ctx := t.Context()
+		// Pre-populate so the slash command is invoked mid-conversation.
+		sess := session.New(session.WithUserMessage("hi there"))
+		require.Equal(t, 1, sess.MessageCount())
 
-	// Same dispatch as chat.processMessage.
-	input := "/review carefully"
-	_, _, ok := a.SkillCommandFork(ctx, input)
-	require.False(t, ok)
+		a := New(t.Context(), rt, sess)
 
-	resolved := a.ResolveInput(ctx, input)
-	require.Contains(t, resolved, `<skill name="review">`)
-	require.Contains(t, resolved, "User's request: carefully")
-	// A slash command is resolved synchronously inside the UI loop, so an
-	// embedded command cannot be approved and is reported as skipped.
-	require.Contains(t, resolved, "[error executing `echo HELLO_FROM_SKILL`")
-	require.Contains(t, resolved, "Please review the staged changes.")
+		// Same dispatch as chat.processMessage.
+		input := "/review carefully"
+		_, _, ok := a.SkillCommandFork(ctx, input)
+		require.False(t, ok)
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	a.Run(runCtx, cancel, resolved, nil)
+		resolved := a.ResolveInput(ctx, input)
+		require.Contains(t, resolved, `<skill name="review">`)
+		require.Contains(t, resolved, "User's request: carefully")
+		// A slash command is resolved synchronously inside the UI loop, so an
+		// embedded command cannot be approved and is reported as skipped.
+		require.Contains(t, resolved, "[error executing `echo HELLO_FROM_SKILL`")
+		require.Contains(t, resolved, "Please review the staged changes.")
 
-	// App.Run is async; MessageCount holds session.mu so the race detector
-	// sees a synchronised read against AddMessage.
-	require.Eventually(t, func() bool {
-		return sess.MessageCount() == 2
-	}, time.Second, 10*time.Millisecond, "App.Run must append the resolved skill content")
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		a.Run(runCtx, cancel, resolved, nil)
 
-	messages := sess.GetAllMessages()
-	require.Len(t, messages, 2)
-	last := messages[len(messages)-1]
-	assert.Equal(t, chat.MessageRoleUser, last.Message.Role)
-	assert.Contains(t, last.Message.Content, `<skill name="review">`)
-	assert.Contains(t, last.Message.Content, "Please review the staged changes.")
-	assert.Contains(t, last.Message.Content, "[error executing `echo HELLO_FROM_SKILL`")
-	assert.Contains(t, last.Message.Content, "User's request: carefully")
+		synctest.Wait()
+		require.Equal(t, 2, sess.MessageCount(), "App.Run must append the resolved skill content")
 
-	assert.Empty(t, rt.recordedCalls(), "Runtime.RunSkillFork must not be called for non-fork skills")
-	assert.False(t, rt.stopCall.Load())
+		messages := sess.GetAllMessages()
+		require.Len(t, messages, 2)
+		last := messages[len(messages)-1]
+		assert.Equal(t, chat.MessageRoleUser, last.Message.Role)
+		assert.Contains(t, last.Message.Content, `<skill name="review">`)
+		assert.Contains(t, last.Message.Content, "Please review the staged changes.")
+		assert.Contains(t, last.Message.Content, "[error executing `echo HELLO_FROM_SKILL`")
+		assert.Contains(t, last.Message.Content, "User's request: carefully")
+
+		assert.Empty(t, rt.recordedCalls(), "Runtime.RunSkillFork must not be called for non-fork skills")
+		assert.False(t, rt.stopCall.Load())
+	})
 }
 
 // TestApp_RunSkillFork_SynthesizesStreamStoppedWhenMissing is part of the
@@ -268,31 +272,35 @@ func TestApp_RunSkillFork_SynthesizesStreamStoppedWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	skill := writeSkill(t, "commit", true /* fork */, "# Commit\nPlease commit.\n")
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-		skipStop:    true,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	sess := session.New()
-	a := New(t.Context(), rt, sess)
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+			skipStop:    true,
+		}
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
+		sess := session.New()
+		a := New(t.Context(), rt, sess)
 
-	require.Eventually(t, func() bool { return rt.stopCall.Load() }, time.Second, 10*time.Millisecond,
-		"RunSkillFork goroutine should finish even without an explicit stop event")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
 
-	collected := collectUntilQuiet(t, a.events)
-	stops := streamStoppedEvents(collected)
-	require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
-	assert.Equal(t, "normal", stops[0].Reason)
-	assert.Equal(t, sess.ID, stops[0].SessionID,
-		"with no sub-session id ever observed, the fallback must use the parent session's own id")
-	assert.Equal(t, "mock", stops[0].AgentName, "must fall back to Runtime.CurrentAgentName since no event carried one")
+		synctest.Wait()
+		require.True(t, rt.stopCall.Load(),
+			"RunSkillFork goroutine should finish even without an explicit stop event")
+
+		collected := collectUntilQuiet(t, a.events)
+		stops := streamStoppedEvents(collected)
+		require.Len(t, stops, 1, "exactly one StreamStoppedEvent must be synthesized")
+		assert.Equal(t, "normal", stops[0].Reason)
+		assert.Equal(t, sess.ID, stops[0].SessionID,
+			"with no sub-session id ever observed, the fallback must use the parent session's own id")
+		assert.Equal(t, "mock", stops[0].AgentName, "must fall back to Runtime.CurrentAgentName since no event carried one")
+	})
 }
 
 // TestApp_RunSkillFork_DoesNotDuplicateRealStreamStopped pins the flip
@@ -302,25 +310,29 @@ func TestApp_RunSkillFork_DoesNotDuplicateRealStreamStopped(t *testing.T) {
 	t.Parallel()
 
 	skill := writeSkill(t, "commit", true /* fork */, "# Commit\nPlease commit.\n")
-	st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	rt := &skillFakeRuntime{
-		mockRuntime: &mockRuntime{},
-		skillset:    st,
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := skillstool.New([]skills.Skill{skill}, filepath.Dir(skill.FilePath))
 
-	a := New(t.Context(), rt, session.New())
+		rt := &skillFakeRuntime{
+			mockRuntime: &mockRuntime{},
+			skillset:    st,
+		}
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
+		a := New(t.Context(), rt, session.New())
 
-	require.Eventually(t, func() bool { return rt.stopCall.Load() }, time.Second, 10*time.Millisecond,
-		"RunSkillFork goroutine should finish")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		a.RunSkillFork(ctx, cancel, "commit", "please commit", nil)
 
-	collected := collectUntilQuiet(t, a.events)
-	stops := streamStoppedEvents(collected)
-	require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+		synctest.Wait()
+		require.True(t, rt.stopCall.Load(),
+			"RunSkillFork goroutine should finish")
+
+		collected := collectUntilQuiet(t, a.events)
+		stops := streamStoppedEvents(collected)
+		require.Len(t, stops, 1, "the real StreamStoppedEvent must not be duplicated")
+	})
 }
 
 func (f *skillFakeRuntime) ReadSkillContent(ctx context.Context, sess *session.Session, name string) (string, error) {

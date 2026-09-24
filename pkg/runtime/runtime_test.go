@@ -1279,48 +1279,50 @@ func (s *oauthAwareToolSet) SetUnmanagedOAuthRedirectURI(string) {}
 func TestEmitStartupInfo_DoesNotBlockOnInteractiveOAuth(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	oauthTS := &oauthAwareToolSet{}
+		oauthTS := &oauthAwareToolSet{}
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(oauthTS),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(oauthTS),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
+		require.NoError(t, err)
 
-	events := make(chan Event, 20)
+		events := make(chan Event, 20)
 
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("EmitStartupInfo blocked: it must complete promptly even for toolsets that need OAuth")
-	}
-	close(events)
-	for range events {
-	}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("EmitStartupInfo blocked: it must complete promptly even for toolsets that need OAuth")
+		}
+		close(events)
+		for range events {
+		}
 
-	oauthTS.mu.Lock()
-	defer oauthTS.mu.Unlock()
+		oauthTS.mu.Lock()
+		defer oauthTS.mu.Unlock()
 
-	require.True(t, oauthTS.started, "toolset should still be started during EmitStartupInfo (just not interactively)")
+		require.True(t, oauthTS.started, "toolset should still be started during EmitStartupInfo (just not interactively)")
 
-	// During startup, no interactive plumbing should be wired up. OAuth and
-	// elicitation are deferred to the first RunStream call where the user
-	// is actively interacting with the agent.
-	require.Nil(t, oauthTS.startHandlerCaptured,
-		"elicitation handler must NOT be set during startup; OAuth is deferred until the user sends a message")
-	require.False(t, oauthTS.startManagedWasSet,
-		"managed-OAuth flag must NOT be set during startup")
+		// During startup, no interactive plumbing should be wired up. OAuth and
+		// elicitation are deferred to the first RunStream call where the user
+		// is actively interacting with the agent.
+		require.Nil(t, oauthTS.startHandlerCaptured,
+			"elicitation handler must NOT be set during startup; OAuth is deferred until the user sends a message")
+		require.False(t, oauthTS.startManagedWasSet,
+			"managed-OAuth flag must NOT be set during startup")
+	})
 }
 
 // TestEmitStartupInfo_SurfacesToolsetStartFailureAsWarning verifies that
@@ -1380,55 +1382,57 @@ func TestEmitStartupInfo_SurfacesToolsetStartFailureAsWarning(t *testing.T) {
 func TestEmitStartupInfo_SkipsToolsetWhoseListingHangs(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	// release is closed on cleanup so the orphaned listing goroutine (whose
-	// Tools() ignores context cancellation) exits instead of leaking.
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
+		// release is closed on cleanup so the orphaned listing goroutine (whose
+		// Tools() ignores context cancellation) exits instead of leaking.
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
 
-	hanging := &blockingToolSet{release: release}
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		hanging := &blockingToolSet{release: release}
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(hanging, fast),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(hanging, fast),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-		WithToolListTimeout(50*time.Millisecond),
-	)
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+			WithToolListTimeout(50*time.Millisecond),
+		)
+		require.NoError(t, err)
 
-	events := make(chan Event, 32)
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-		close(done)
-	}()
+		events := make(chan Event, 32)
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EmitStartupInfo did not return: a hung toolset blocked startup tool loading")
-	}
-
-	var toolsetInfos []*ToolsetInfoEvent
-	for e := range events {
-		if ti, ok := e.(*ToolsetInfoEvent); ok {
-			toolsetInfos = append(toolsetInfos, ti)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("EmitStartupInfo did not return: a hung toolset blocked startup tool loading")
 		}
-	}
 
-	require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
-	last := toolsetInfos[len(toolsetInfos)-1]
-	assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
-	assert.Equal(t, 1, last.AvailableTools,
-		"the hung toolset is skipped; the fast toolset's single tool is still counted")
+		var toolsetInfos []*ToolsetInfoEvent
+		for e := range events {
+			if ti, ok := e.(*ToolsetInfoEvent); ok {
+				toolsetInfos = append(toolsetInfos, ti)
+			}
+		}
+
+		require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
+		last := toolsetInfos[len(toolsetInfos)-1]
+		assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
+		assert.Equal(t, 1, last.AvailableTools,
+			"the hung toolset is skipped; the fast toolset's single tool is still counted")
+	})
 }
 
 // TestEmitStartupInfo_SkipsToolsetWhoseStartHangs is the companion of the
@@ -1440,62 +1444,64 @@ func TestEmitStartupInfo_SkipsToolsetWhoseListingHangs(t *testing.T) {
 func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	// release is closed on cleanup so the orphaned start goroutine (whose
-	// Start() ignores context cancellation) exits instead of leaking.
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
+		// release is closed on cleanup so the orphaned start goroutine (whose
+		// Start() ignores context cancellation) exits instead of leaking.
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
 
-	hanging := &blockingStartToolSet{release: release}
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		hanging := &blockingStartToolSet{release: release}
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(hanging, fast),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(hanging, fast),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-		WithToolStartTimeout(50*time.Millisecond),
-	)
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+			WithToolStartTimeout(50*time.Millisecond),
+		)
+		require.NoError(t, err)
 
-	events := make(chan Event, 32)
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-		close(done)
-	}()
+		events := make(chan Event, 32)
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EmitStartupInfo did not return: a toolset with a hung Start blocked startup tool loading")
-	}
-
-	var toolsetInfos []*ToolsetInfoEvent
-	var warning *WarningEvent
-	for e := range events {
-		switch ev := e.(type) {
-		case *ToolsetInfoEvent:
-			toolsetInfos = append(toolsetInfos, ev)
-		case *WarningEvent:
-			warning = ev
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("EmitStartupInfo did not return: a toolset with a hung Start blocked startup tool loading")
 		}
-	}
 
-	require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
-	last := toolsetInfos[len(toolsetInfos)-1]
-	assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar spinner stops")
-	assert.Equal(t, 1, last.AvailableTools,
-		"the hung toolset is skipped; the fast toolset's single tool is still counted")
+		var toolsetInfos []*ToolsetInfoEvent
+		var warning *WarningEvent
+		for e := range events {
+			switch ev := e.(type) {
+			case *ToolsetInfoEvent:
+				toolsetInfos = append(toolsetInfos, ev)
+			case *WarningEvent:
+				warning = ev
+			}
+		}
 
-	require.NotNil(t, warning, "a start timeout must surface a user-visible warning")
-	assert.Contains(t, warning.Message, "taking too long to start")
+		require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
+		last := toolsetInfos[len(toolsetInfos)-1]
+		assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar spinner stops")
+		assert.Equal(t, 1, last.AvailableTools,
+			"the hung toolset is skipped; the fast toolset's single tool is still counted")
+
+		require.NotNil(t, warning, "a start timeout must surface a user-visible warning")
+		assert.Contains(t, warning.Message, "taking too long to start")
+	})
 }
 
 // TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight pins the
@@ -1508,74 +1514,76 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 func TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	release := make(chan struct{})
-	releaseWedged := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(releaseWedged)
+		release := make(chan struct{})
+		releaseWedged := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseWedged)
 
-	inFlight := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		inFlight := &inFlightStartToolSet{entered: make(chan struct{}), release: release}
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(inFlight, fast),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(inFlight, fast),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-		// Long enough that a regression to joining the in-flight attempt
-		// trips the prompt-return guard below instead of passing slowly.
-		WithToolStartTimeout(30*time.Second),
-	)
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+			// Long enough that a regression to joining the in-flight attempt
+			// trips the prompt-return guard below instead of passing slowly.
+			WithToolStartTimeout(30*time.Second),
+		)
+		require.NoError(t, err)
 
-	// Wedge the toolset's Start before startup runs, as an earlier abandoned
-	// bounded attempt would: it keeps holding the single-flight lock.
-	startable, ok := root.ToolSets()[0].(*tools.StartableToolSet)
-	require.True(t, ok)
-	wedgedDone := make(chan error, 1)
-	go func() { wedgedDone <- startable.Start(t.Context()) }()
-	<-inFlight.entered
+		// Wedge the toolset's Start before startup runs, as an earlier abandoned
+		// bounded attempt would: it keeps holding the single-flight lock.
+		startable, ok := root.ToolSets()[0].(*tools.StartableToolSet)
+		require.True(t, ok)
+		wedgedDone := make(chan error, 1)
+		go func() { wedgedDone <- startable.Start(t.Context()) }()
+		<-inFlight.entered
 
-	events := make(chan Event, 32)
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-		close(done)
-	}()
+		events := make(chan Event, 32)
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EmitStartupInfo did not return promptly: an in-flight toolset start was joined instead of skipped")
-	}
-
-	var toolsetInfos []*ToolsetInfoEvent
-	var warnings []*WarningEvent
-	for e := range events {
-		switch ev := e.(type) {
-		case *ToolsetInfoEvent:
-			toolsetInfos = append(toolsetInfos, ev)
-		case *WarningEvent:
-			warnings = append(warnings, ev)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("EmitStartupInfo did not return promptly: an in-flight toolset start was joined instead of skipped")
 		}
-	}
 
-	require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
-	last := toolsetInfos[len(toolsetInfos)-1]
-	assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
-	assert.Equal(t, 1, last.AvailableTools,
-		"the in-flight toolset is skipped; the fast toolset's single tool is still counted")
-	assert.Empty(t, warnings, "a skipped in-flight start must not surface a warning")
-	assert.EqualValues(t, 1, inFlight.starts.Load(), "the skip must not run a second underlying Start")
+		var toolsetInfos []*ToolsetInfoEvent
+		var warnings []*WarningEvent
+		for e := range events {
+			switch ev := e.(type) {
+			case *ToolsetInfoEvent:
+				toolsetInfos = append(toolsetInfos, ev)
+			case *WarningEvent:
+				warnings = append(warnings, ev)
+			}
+		}
 
-	// Unblock the wedged attempt so its goroutine exits before the test ends.
-	releaseWedged()
-	require.NoError(t, <-wedgedDone)
+		require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
+		last := toolsetInfos[len(toolsetInfos)-1]
+		assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar resolves")
+		assert.Equal(t, 1, last.AvailableTools,
+			"the in-flight toolset is skipped; the fast toolset's single tool is still counted")
+		assert.Empty(t, warnings, "a skipped in-flight start must not surface a warning")
+		assert.EqualValues(t, 1, inFlight.starts.Load(), "the skip must not run a second underlying Start")
+
+		// Unblock the wedged attempt so its goroutine exits before the test ends.
+		releaseWedged()
+		require.NoError(t, <-wedgedDone)
+	})
 }
 
 // TestEmitStartupInfo_ReturnsOnCancelWhileStartIsWedged is the regression
@@ -1656,58 +1664,60 @@ func TestEmitStartupInfo_ReturnsOnCancelWhileStartIsWedged(t *testing.T) {
 func TestEmitStartupInfo_EmitsProgressWhileSlowToolsetStarts(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	release := make(chan struct{})
-	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
+		release := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		})
+
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		slow := &blockingStartToolSet{release: release}
+
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(fast, slow),
+		)
+		tm := team.New(team.WithAgents(root))
+
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+		)
+		require.NoError(t, err)
+
+		events := make(chan Event, 32)
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+		}()
+
+		// The fast toolset's count must arrive while the slow start is still
+		// blocked (release is not closed yet).
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case e := <-events:
+				ti, ok := e.(*ToolsetInfoEvent)
+				if !ok {
+					continue
+				}
+				if ti.AvailableTools == 1 && ti.Loading {
+					close(release)
+					for range events { // drain so EmitStartupInfo finishes
+					}
+					return
+				}
+			case <-timeout:
+				t.Fatal("no progress event for the fast toolset arrived while the slow toolset was starting")
+			}
 		}
 	})
-
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
-	slow := &blockingStartToolSet{release: release}
-
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(fast, slow),
-	)
-	tm := team.New(team.WithAgents(root))
-
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-	)
-	require.NoError(t, err)
-
-	events := make(chan Event, 32)
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-	}()
-
-	// The fast toolset's count must arrive while the slow start is still
-	// blocked (release is not closed yet).
-	timeout := time.After(5 * time.Second)
-	for {
-		select {
-		case e := <-events:
-			ti, ok := e.(*ToolsetInfoEvent)
-			if !ok {
-				continue
-			}
-			if ti.AvailableTools == 1 && ti.Loading {
-				close(release)
-				for range events { // drain so EmitStartupInfo finishes
-				}
-				return
-			}
-		case <-timeout:
-			t.Fatal("no progress event for the fast toolset arrived while the slow toolset was starting")
-		}
-	}
 }
 
 // TestEmitStartupInfo_AuthRequiredIsSilent verifies that when a toolset's
@@ -4590,41 +4600,44 @@ func TestElicitationHandler_NonInteractive(t *testing.T) {
 func TestElicitationHandler_Interactive_NoChannel(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
-	root := agent.New("root", "test", agent.WithModel(prov))
-	tm := team.New(team.WithAgents(root))
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
+		root := agent.New("root", "test", agent.WithModel(prov))
+		tm := team.New(team.WithAgents(root))
 
-	// Default runtime (interactive mode) with no events channel set on the bridge.
-	rt, err := NewLocalRuntime(t.Context(), tm)
-	require.NoError(t, err)
+		// Default runtime (interactive mode) with no events channel set on the bridge.
+		rt, err := NewLocalRuntime(t.Context(), tm)
+		require.NoError(t, err)
 
-	params := &mcp.ElicitParams{
-		Message: "Authorize OAuth?",
-	}
+		params := &mcp.ElicitParams{
+			Message: "Authorize OAuth?",
+		}
 
-	type handlerResult struct {
-		result tools.ElicitationResult
-		err    error
-	}
-	done := make(chan handlerResult, 1)
-	go func() {
-		result, err := rt.elicitationHandler(t.Context(), params)
-		done <- handlerResult{result: result, err: err}
-	}()
+		type handlerResult struct {
+			result tools.ElicitationResult
+			err    error
+		}
+		done := make(chan handlerResult, 1)
+		go func() {
+			result, err := rt.elicitationHandler(t.Context(), params)
+			done <- handlerResult{result: result, err: err}
+		}()
 
-	require.Eventually(t, func() bool { return rt.elicitationWaiters.count() == 1 }, time.Second, time.Millisecond,
-		"elicitationHandler must register a waiter even though the bridge has no channel")
+		synctest.Wait()
+		require.Equal(t, 1, rt.elicitationWaiters.count(),
+			"elicitationHandler must register a waiter even though the bridge has no channel")
 
-	require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"ok": true}, ""))
+		require.NoError(t, rt.ResumeElicitation(t.Context(), tools.ElicitationActionAccept, map[string]any{"ok": true}, ""))
 
-	select {
-	case got := <-done:
-		require.NoError(t, got.err)
-		assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
-		assert.Equal(t, map[string]any{"ok": true}, got.result.Content)
-	case <-time.After(2 * time.Second):
-		t.Fatal("elicitationHandler did not return after ResumeElicitation")
-	}
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			assert.Equal(t, tools.ElicitationActionAccept, got.result.Action)
+			assert.Equal(t, map[string]any{"ok": true}, got.result.Content)
+		case <-time.After(2 * time.Second):
+			t.Fatal("elicitationHandler did not return after ResumeElicitation")
+		}
+	})
 }
 
 // TestRunAgentPersistsSubSessionToStore is the regression test for the

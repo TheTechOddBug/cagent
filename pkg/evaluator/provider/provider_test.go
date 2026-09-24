@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -174,9 +175,11 @@ func TestEvaluateTimeoutIncludesKeyLookup(t *testing.T) {
 		return "", false
 	}))
 	require.NoError(t, err)
-	result, err := client.Evaluate(t.Context(), "state")
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Nil(t, result)
+	synctest.Test(t, func(t *testing.T) {
+		result, err := client.Evaluate(t.Context(), "state")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Nil(t, result)
+	})
 }
 
 type invalidState struct{}

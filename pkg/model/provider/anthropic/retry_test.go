@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -61,44 +62,46 @@ func testRetryClose[T any](t *testing.T, wrap func(*ssestream.Stream[T], func() 
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			decoder := newRetryTestDecoder()
-			replacement := ssestream.NewStream[T](decoder, nil)
-			t.Cleanup(func() { _ = replacement.Close() })
-			retrying := make(chan struct{})
-			release := make(chan struct{})
-			var releaseOnce sync.Once
-			unblock := func() { releaseOnce.Do(func() { close(release) }) }
-			t.Cleanup(unblock)
-			stream := wrap(ssestream.NewStream[T](nil, retryContextError(t)), func() *ssestream.Stream[T] {
-				close(retrying)
-				<-release
-				return replacement
+			synctest.Test(t, func(t *testing.T) {
+				decoder := newRetryTestDecoder()
+				replacement := ssestream.NewStream[T](decoder, nil)
+				t.Cleanup(func() { _ = replacement.Close() })
+				retrying := make(chan struct{})
+				release := make(chan struct{})
+				var releaseOnce sync.Once
+				unblock := func() { releaseOnce.Do(func() { close(release) }) }
+				t.Cleanup(unblock)
+				stream := wrap(ssestream.NewStream[T](nil, retryContextError(t)), func() *ssestream.Stream[T] {
+					close(retrying)
+					<-release
+					return replacement
+				})
+				t.Cleanup(stream.Close)
+				result := make(chan error, 1)
+				go func() { _, err := stream.Recv(); result <- err }()
+				<-retrying
+				if duringRetry {
+					stream.Close()
+					unblock()
+				} else {
+					unblock()
+					<-decoder.entered
+					stream.Close()
+				}
+				select {
+				case err := <-result:
+					require.ErrorIs(t, err, io.EOF)
+				case <-time.After(5 * time.Second):
+					t.Fatal("Close did not stop the retried stream")
+				}
+				select {
+				case <-decoder.closed:
+				default:
+					t.Fatal("replacement stream was not closed")
+				}
+				stream.Close()
+				assert.EqualValues(t, 1, decoder.closes.Load(), "repeated Close must not close the decoder again")
 			})
-			t.Cleanup(stream.Close)
-			result := make(chan error, 1)
-			go func() { _, err := stream.Recv(); result <- err }()
-			<-retrying
-			if duringRetry {
-				stream.Close()
-				unblock()
-			} else {
-				unblock()
-				<-decoder.entered
-				stream.Close()
-			}
-			select {
-			case err := <-result:
-				require.ErrorIs(t, err, io.EOF)
-			case <-time.After(5 * time.Second):
-				t.Fatal("Close did not stop the retried stream")
-			}
-			select {
-			case <-decoder.closed:
-			default:
-				t.Fatal("replacement stream was not closed")
-			}
-			stream.Close()
-			assert.EqualValues(t, 1, decoder.closes.Load(), "repeated Close must not close the decoder again")
 		})
 	}
 }

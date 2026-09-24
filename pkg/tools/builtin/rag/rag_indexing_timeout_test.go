@@ -194,22 +194,24 @@ func (s *closeCountingStrategy) Close() error {
 func TestRAGIndexingTimeout_StopAfterDetachedStartClosesOnce(t *testing.T) {
 	t.Parallel()
 
-	strategyMock := &closeCountingStrategy{}
-	toolset := newTestRAGToolSet(t, strategyMock, WithIndexingTimeout(0))
+	synctest.Test(t, func(t *testing.T) {
+		strategyMock := &closeCountingStrategy{}
+		toolset := newTestRAGToolSet(t, strategyMock, WithIndexingTimeout(0))
 
-	require.NoError(t, toolset.Start(t.Context()))
+		require.NoError(t, toolset.Start(t.Context()))
 
-	done := make(chan struct{})
-	go func() {
-		_ = toolset.Stop(t.Context())
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			_ = toolset.Stop(t.Context())
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Stop deadlocked after a detached Start completed")
-	}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Stop deadlocked after a detached Start completed")
+		}
 
-	assert.Equal(t, int32(1), strategyMock.closes.Load())
+		assert.Equal(t, int32(1), strategyMock.closes.Load())
+	})
 }
