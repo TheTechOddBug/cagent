@@ -605,36 +605,38 @@ func TestCompactLiveSession_DuplicateSessionIDsCompactOnlyTargetEntry(t *testing
 func TestCompactLiveSession_CancelledStreamEmitsSingleSkippedEvent(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		// The one and only turn, blocked until the context is cancelled.
-		{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: started, release: make(chan struct{})},
-	}}
-	rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		prov := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			// The one and only turn, blocked until the context is cancelled.
+			{stream: newStreamBuilder().AddStopWithUsage(1, 1).Build(), started: started, release: make(chan struct{})},
+		}}
+		rt := newLiveSessionsRuntime(t, prov, mockModelStoreWithLimit{limit: 100_000})
 
-	ctx, cancel := context.WithCancel(t.Context())
-	child := newWorkerSession("child-1")
-	stream := rt.RunStream(ctx, child)
-	waitClosed(t, started, "child turn")
+		ctx, cancel := context.WithCancel(t.Context())
+		child := newWorkerSession("child-1")
+		stream := rt.RunStream(ctx, child)
+		waitClosed(t, started, "child turn")
 
-	requestEvents := make(chan Event, 64)
-	require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
+		requestEvents := make(chan Event, 64)
+		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
-	cancel()
-	drainStream(t, stream)
-	close(requestEvents)
+		cancel()
+		drainStream(t, stream)
+		close(requestEvents)
 
-	var kinds []string
-	for ev := range requestEvents {
-		if e, ok := ev.(*SessionCompactionEvent); ok {
-			assert.Equal(t, "child-1", e.SessionID)
-			assert.Equal(t, "worker", e.AgentName)
-			kinds = append(kinds, e.Status+":"+e.Outcome)
+		var kinds []string
+		for ev := range requestEvents {
+			if e, ok := ev.(*SessionCompactionEvent); ok {
+				assert.Equal(t, "child-1", e.SessionID)
+				assert.Equal(t, "worker", e.AgentName)
+				kinds = append(kinds, e.Status+":"+e.Outcome)
+			}
 		}
-	}
-	assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, kinds,
-		"a cancelled target must consume the request and emit exactly one terminal skipped event")
-	assert.Empty(t, child.LastSummary(), "no compaction must run against a cancelled stream")
+		assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, kinds,
+			"a cancelled target must consume the request and emit exactly one terminal skipped event")
+		assert.Empty(t, child.LastSummary(), "no compaction must run against a cancelled stream")
+	})
 }
 
 // TestCompactLiveSession_HookVetoSynthesizesSkipped verifies that when a
