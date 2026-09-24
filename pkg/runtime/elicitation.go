@@ -516,7 +516,7 @@ func (r *LocalRuntime) requestElicitation(ctx context.Context, spec elicitationS
 	// --exec CLI path, which never registers OnElicitationRequest), nobody at
 	// all can answer this request. Decline immediately with a model-readable
 	// note instead of parking a goroutine forever (#3584).
-	if !tools.InteractivePromptsAllowed(ctx) && !r.hasElicitationSink() {
+	if !tools.InteractivePromptsAllowed(ctx) && !r.hasElicitationSink() && r.directElicitation == nil {
 		slog.WarnContext(ctx, "Declining elicitation: background session has no UI to answer it", "message", spec.message)
 		r.elicitationDeclines.record(sessionID, backgroundElicitationDeclinedNote(spec.message))
 		return tools.ElicitationResult{
@@ -529,6 +529,13 @@ func (r *LocalRuntime) requestElicitation(ctx context.Context, spec elicitationS
 	// run loop seeded into ctx (empty for elicitations outside a run, e.g.
 	// startup OAuth probes).
 	r.executeOnUserInputHooks(ctx, r.CurrentAgent(), genai.ConversationIDFromContext(ctx), "elicitation")
+
+	if r.directElicitation != nil {
+		return r.directElicitation(ctx, &mcp.ElicitParams{
+			Message: spec.message, Mode: spec.mode, RequestedSchema: spec.schema,
+			URL: spec.url, ElicitationID: spec.serverElicitationID, Meta: spec.meta,
+		})
+	}
 
 	// The registry key (and the ElicitationID surfaced to clients for
 	// ResumeElicitation routing) is always a freshly generated, internal

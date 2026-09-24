@@ -7,6 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 func TestElicitationError_Error(t *testing.T) {
@@ -376,4 +378,29 @@ func newElicitationTestRuntime(t *testing.T) *LocalRuntime {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 	return rt
+}
+
+func TestDirectElicitationHandlerBypassesEventsAndHonorsHeadless(t *testing.T) {
+	t.Parallel()
+	for _, headless := range []bool{false, true} {
+		calls := 0
+		rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/model", stream: &mockStream{}})))),
+			WithNonInteractive(headless), WithElicitationHandler(func(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
+				calls++
+				assert.Equal(t, "ask", req.Message)
+				return tools.ElicitationResult{Action: tools.ElicitationActionAccept, Content: map[string]any{"answer": "yes"}}, nil
+			}))
+		require.NoError(t, err)
+		rt.OnElicitationRequest(func(Event) { t.Error("direct handler must not also emit a request") })
+		result, err := rt.elicitationHandler(tools.WithoutInteractivePrompts(t.Context()), &mcp.ElicitParams{Message: "ask"})
+		require.NoError(t, err)
+		if headless {
+			assert.Equal(t, 0, calls)
+			assert.Equal(t, tools.ElicitationActionDecline, result.Action)
+		} else {
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, tools.ElicitationActionAccept, result.Action)
+		}
+		require.NoError(t, rt.Close())
+	}
 }

@@ -176,6 +176,10 @@ For anything beyond that, call `chat.Runtime()` to access the underlying `runtim
 > elicitations) — both are required interface methods, matching the existing
 > no-op-able pattern already used by `OnToolsChanged`/`OnBackgroundEvent`.
 
+### Direct runtime elicitation handler
+
+`runtime.WithElicitationHandler(tools.ElicitationHandler)` installs a synchronous request-context-aware handler on a local runtime. With this option, requests are handled directly rather than also emitting elicitation events or awaiting `ResumeElicitation`. The handler must honor cancellation and validate the response before returning it. Background requests retain their own operation lifetime. `WithNonInteractive(true)` still takes precedence and declines requests without invoking the handler. Runtimes without this option keep the existing event/waiter behavior.
+
 ## RAG Toolset (opt-out)
 
 The RAG toolset (`type: rag`) is included in `NewDefaultToolsetRegistry()` (from `pkg/teamloader/toolsets`) and `loaderdefaults.Opts()` (from `pkg/teamloader/defaults`, using the conventional import alias `loaderdefaults`).

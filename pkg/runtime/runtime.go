@@ -254,6 +254,7 @@ type LocalRuntime struct {
 	managedOAuth              bool
 	unmanagedOAuthRedirectURI string
 	nonInteractive            bool
+	directElicitation         tools.ElicitationHandler
 	startupInfoEmitted        atomic.Bool        // Track if startup info has been emitted to avoid unnecessary duplication
 	elicitation               elicitationBridge  // Owns the per-stream events channel for outbound elicitation requests
 	elicitationWaiters        elicitationWaiters // Routes elicitation responses to the request awaiting them, keyed by ID (#3584)
@@ -461,6 +462,12 @@ func WithUnmanagedOAuthRedirectURI(uri string) Opt {
 	return func(r *LocalRuntime) {
 		r.unmanagedOAuthRedirectURI = uri
 	}
+}
+
+// WithElicitationHandler handles requests synchronously instead of emitting elicitation events.
+// Non-interactive runtimes still decline; the handler must honor the request context.
+func WithElicitationHandler(handler tools.ElicitationHandler) Opt {
+	return func(r *LocalRuntime) { r.directElicitation = handler }
 }
 
 // WithNonInteractive marks the runtime as headless (e.g., MCP serve mode).

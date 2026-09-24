@@ -57,7 +57,14 @@ func TestACPStdioServer(t *testing.T) {
 		})
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "inspect", Description: "reports subprocess state", Annotations: &mcp.ToolAnnotations{Title: "inspect", ReadOnlyHint: true}},
-		func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			if os.Getenv("ACP_ELICIT") == "1" {
+				if len(req.Params.InputResponses) == 0 {
+					return &mcp.CallToolResult{InputRequests: mcp.InputRequestMap{"question": formRequest()}, RequestState: "elicitation-test"}, nil, nil
+				}
+				result, _ := json.Marshal(req.Params.InputResponses["question"])
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(result)}}}, nil, nil
+			}
 			wd, _ := os.Getwd()
 			value := map[string]any{"cwd": wd, "args": os.Args, "value": os.Getenv("ACP_VALUE"), "inherited": os.Getenv("ACP_INHERITED"), "pid": os.Getpid()}
 			data, _ := json.Marshal(value)
