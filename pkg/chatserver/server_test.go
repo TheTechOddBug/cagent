@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -555,24 +556,27 @@ func TestSSEStream_SendError(t *testing.T) {
 
 func TestRequestTimeoutMiddleware_AppliesDeadline(t *testing.T) {
 	t.Parallel()
-	e := echo.New()
-	e.Use(requestTimeoutMiddleware(5 * time.Millisecond))
 
-	var gotErr error
-	e.GET("/sleep", func(c echo.Context) error {
-		select {
-		case <-c.Request().Context().Done():
-			gotErr = c.Request().Context().Err()
-			return c.String(http.StatusOK, "ok")
-		case <-time.After(time.Second):
-			return c.String(http.StatusOK, "too slow")
-		}
+	synctest.Test(t, func(t *testing.T) {
+		e := echo.New()
+		e.Use(requestTimeoutMiddleware(5 * time.Millisecond))
+
+		var gotErr error
+		e.GET("/sleep", func(c echo.Context) error {
+			select {
+			case <-c.Request().Context().Done():
+				gotErr = c.Request().Context().Err()
+				return c.String(http.StatusOK, "ok")
+			case <-time.After(time.Second):
+				return c.String(http.StatusOK, "too slow")
+			}
+		})
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sleep", http.NoBody)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		require.Error(t, gotErr)
+		assert.ErrorIs(t, gotErr, context.DeadlineExceeded)
 	})
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sleep", http.NoBody)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	require.Error(t, gotErr)
-	assert.ErrorIs(t, gotErr, context.DeadlineExceeded)
 }
