@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -217,39 +218,41 @@ func TestLocalRuntime_FinalizeEventChannelEmitsStreamStoppedOnce(t *testing.T) {
 func TestLocalRuntime_FinalizeEventChannelDropsStreamStoppedAfterBoundedTimeout(t *testing.T) {
 	t.Parallel()
 
-	rt := newElicitationTestRuntime(t)
-	const timeout = 50 * time.Millisecond
-	rt.streamStoppedDeliveryTimeout = timeout
-	sess := session.New()
-	events := make(chan Event, 1)
-	parent := make(chan Event, 1)
-	events <- Error("buffer already full")
-	rt.elicitation.swap(events)
+	synctest.Test(t, func(t *testing.T) {
+		rt := newElicitationTestRuntime(t)
+		const timeout = 50 * time.Millisecond
+		rt.streamStoppedDeliveryTimeout = timeout
+		sess := session.New()
+		events := make(chan Event, 1)
+		parent := make(chan Event, 1)
+		events <- Error("buffer already full")
+		rt.elicitation.swap(events)
 
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
-		close(done)
-	}()
+		done := make(chan struct{})
+		start := time.Now()
+		go func() {
+			rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(timeout + 2*time.Second):
-		t.Fatal("finalizeEventChannel deadlocked with a full buffer and no consumer")
-	}
-	elapsed := time.Since(start)
-
-	assert.GreaterOrEqual(t, elapsed, timeout, "the send should wait out the full deadline before giving up")
-	assert.Less(t, elapsed, timeout+2*time.Second, "finalizeEventChannel should return shortly after the deadline, not hang")
-
-	var stopped int
-	for ev := range events {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
-			stopped++
+		select {
+		case <-done:
+		case <-time.After(timeout + 2*time.Second):
+			t.Fatal("finalizeEventChannel deadlocked with a full buffer and no consumer")
 		}
-	}
-	assert.Zero(t, stopped, "StreamStopped should be dropped instead of blocking forever when the buffer is full and abandoned")
+		elapsed := time.Since(start)
+
+		assert.GreaterOrEqual(t, elapsed, timeout, "the send should wait out the full deadline before giving up")
+		assert.Less(t, elapsed, timeout+2*time.Second, "finalizeEventChannel should return shortly after the deadline, not hang")
+
+		var stopped int
+		for ev := range events {
+			if _, ok := ev.(*StreamStoppedEvent); ok {
+				stopped++
+			}
+		}
+		assert.Zero(t, stopped, "StreamStopped should be dropped instead of blocking forever when the buffer is full and abandoned")
+	})
 }
 
 // TestLocalRuntime_FinalizeEventChannelStreamStoppedIsLastBeforeClose pins the
