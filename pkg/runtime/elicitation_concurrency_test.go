@@ -6,6 +6,7 @@ import (
 	"maps"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -293,19 +294,21 @@ func (a *atomicBool) get() bool {
 func TestElicitationBridge_SendBlocksUntilCtxDone(t *testing.T) {
 	t.Parallel()
 
-	var b elicitationBridge
-	ch := make(chan Event) // unbuffered, nobody ever reads it
-	b.swap(ch)
+	synctest.Test(t, func(t *testing.T) {
+		var b elicitationBridge
+		ch := make(chan Event) // unbuffered, nobody ever reads it
+		b.swap(ch)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
 
-	start := time.Now()
-	err := b.send(ctx, Warning("hello", "agent"))
-	elapsed := time.Since(start)
+		start := time.Now()
+		err := b.send(ctx, Warning("hello", "agent"))
+		elapsed := time.Since(start)
 
-	require.ErrorIs(t, err, context.DeadlineExceeded, "send on a full/abandoned channel must release via ctx, not block forever")
-	assert.Less(t, elapsed, 2*time.Second, "send must not block substantially past the ctx deadline")
+		require.ErrorIs(t, err, context.DeadlineExceeded, "send on a full/abandoned channel must release via ctx, not block forever")
+		assert.Less(t, elapsed, 2*time.Second, "send must not block substantially past the ctx deadline")
+	})
 }
 
 // TestElicitationBridge_SendNeverBlocksReliableSink is the end-to-end version
