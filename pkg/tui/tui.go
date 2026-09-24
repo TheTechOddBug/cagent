@@ -169,9 +169,14 @@ type appModel struct {
 
 	// Exact root view cache. Unchanged accepted ticks return this complete value,
 	// preserving metadata and function fields as well as content.
-	viewCache      tea.View
-	viewCacheValid bool
-	hasPointer     bool
+	viewCache            tea.View
+	viewCacheValid       bool
+	viewCacheInitialized bool
+	hasPointer           bool
+
+	paneHidden           bool
+	tmuxVisibilityProbe  func(context.Context) bool
+	visibilityGeneration uint64
 
 	// Window state
 	wWidth, wHeight int
@@ -717,7 +722,7 @@ func (m *appModel) contextShutdownCmd() tea.Cmd {
 
 // Init initializes the model.
 func (m *appModel) Init() tea.Cmd {
-	return tea.Batch(m.init(), m.tourStartupCmd(), m.autoThemeInitCmd(), m.refreshPlanSidebarCmd())
+	return tea.Batch(m.init(), m.tourStartupCmd(), m.autoThemeInitCmd(), m.refreshPlanSidebarCmd(), m.initTmuxVisibilityCmd())
 }
 
 // autoThemeInitCmd enables DEC mode 2031 (terminal color-scheme reports) so
@@ -736,6 +741,10 @@ func (m *appModel) autoThemeInitCmd() tea.Cmd {
 // theme enabled it, so the terminal stops sending color-scheme reports
 // after exit.
 func (m *appModel) quitCmd() tea.Cmd {
+	// Bubble Tea leaves the final frame in scrollback in lean mode.
+	m.paneHidden, m.viewCacheValid = false, false
+	m.tmuxVisibilityProbe = nil
+	m.visibilityGeneration++
 	if !m.lightDarkModeSet {
 		return tea.Quit
 	}
@@ -833,6 +842,15 @@ func tabVisualGeneration(tabBar *tabbar.TabBar) uint64 {
 }
 
 func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Unchanged visibility polls must not invalidate an idle frame.
+	switch msg := msg.(type) {
+	case tmuxVisibilityPollMsg:
+		cmd := m.checkTmuxVisibilityCmd()
+		return m, cmd
+	case tmuxVisibilityMsg:
+		cmd := m.handleTmuxVisibility(msg)
+		return m, cmd
+	}
 	beforeVisual := m.activeTab.chatPage.VisualGeneration()
 	beforeSidebarVisual := sidebarVisualGeneration(m.activeTab.chatPage)
 	beforeTabVisual := tabVisualGeneration(m.tabBar)
@@ -995,6 +1013,8 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.imageWriter.Invalidate()
 		}
 		m.wWidth, m.wHeight = msg.Width, msg.Height
+		// Old geometry can push stale lean-mode lines into scrollback.
+		m.viewCacheInitialized = false
 		cmd := m.handleWindowResize(msg.Width, msg.Height)
 		return m, cmd
 
@@ -1003,14 +1023,17 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.FocusMsg:
+		// Focus proves visibility and supersedes any in-flight tmux snapshot.
+		m.visibilityGeneration++
+		resume := m.setPaneHidden(false)
 		// Filter spurious FocusMsg: RestoreTerminal re-enables focus
 		// reporting which delivers a FocusMsg even when we never blurred.
 		if m.focused {
-			return m, nil
+			return m, resume
 		}
 		m.focused = true
 
-		cmds := []tea.Cmd{}
+		cmds := []tea.Cmd{resume}
 		if styles.AutoThemeEnabled() {
 			// Terminals without mode 2031 can still flip their appearance
 			// while we're in the background; re-query on focus so the auto
@@ -2920,9 +2943,20 @@ func (m *appModel) View() tea.View {
 	if m.viewCacheValid {
 		return m.viewCache
 	}
+	if m.paneHidden && m.viewCacheInitialized && m.err == nil {
+		// Keep completion signals live without composing the hidden transcript.
+		view := m.viewCache
+		view.WindowTitle = m.windowTitle()
+		view.ProgressBar = nil
+		if m.activeTab.chatPage.IsWorking() {
+			view.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
+		}
+		return view
+	}
 	view := m.composeView()
 	m.viewCache = view
 	m.viewCacheValid = true
+	m.viewCacheInitialized = true
 	return view
 }
 
