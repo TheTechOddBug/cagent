@@ -1123,56 +1123,58 @@ func toolNames(ts []tools.Tool) []string {
 func TestAgentToolsSkipsStartAlreadyInFlight(t *testing.T) {
 	t.Parallel()
 
-	hung := &hungStartToolSet{
-		stubToolSet: stubToolSet{tools: []tools.Tool{{Name: "hung_tool", Parameters: map[string]any{}}}},
-		entered:     make(chan struct{}),
-		release:     make(chan struct{}),
-	}
-	ready := newStubToolSet(nil, []tools.Tool{{Name: "ready_tool", Parameters: map[string]any{}}}, nil)
-	a := New("root", "test",
-		WithToolSets(hung, ready),
-		WithTools(tools.Tool{Name: "static_tool", Parameters: map[string]any{}}))
+	synctest.Test(t, func(t *testing.T) {
+		hung := &hungStartToolSet{
+			stubToolSet: stubToolSet{tools: []tools.Tool{{Name: "hung_tool", Parameters: map[string]any{}}}},
+			entered:     make(chan struct{}),
+			release:     make(chan struct{}),
+		}
+		ready := newStubToolSet(nil, []tools.Tool{{Name: "ready_tool", Parameters: map[string]any{}}}, nil)
+		a := New("root", "test",
+			WithToolSets(hung, ready),
+			WithTools(tools.Tool{Name: "static_tool", Parameters: map[string]any{}}))
 
-	// Always unblock the wedged Start so no goroutine outlives the test.
-	releaseHung := sync.OnceFunc(func() { close(hung.release) })
-	t.Cleanup(releaseHung)
+		// Always unblock the wedged Start so no goroutine outlives the test.
+		releaseHung := sync.OnceFunc(func() { close(hung.release) })
+		t.Cleanup(releaseHung)
 
-	// Simulate the startup probe: Start is initiated and hangs, holding the
-	// single-flight lock past the probe's deadline.
-	probeDone := make(chan error, 1)
-	go func() { probeDone <- a.toolsets[0].Start(t.Context()) }()
-	<-hung.entered
+		// Simulate the startup probe: Start is initiated and hangs, holding the
+		// single-flight lock past the probe's deadline.
+		probeDone := make(chan error, 1)
+		go func() { probeDone <- a.toolsets[0].Start(t.Context()) }()
+		<-hung.entered
 
-	type toolsResult struct {
-		tools []tools.Tool
-		err   error
-	}
-	turnDone := make(chan toolsResult, 1)
-	go func() {
+		type toolsResult struct {
+			tools []tools.Tool
+			err   error
+		}
+		turnDone := make(chan toolsResult, 1)
+		go func() {
+			got, err := a.Tools(t.Context())
+			turnDone <- toolsResult{tools: got, err: err}
+		}()
+
+		select {
+		case res := <-turnDone:
+			require.NoError(t, res.err)
+			assert.ElementsMatch(t, []string{"ready_tool", "static_tool"}, toolNames(res.tools))
+		case <-time.After(5 * time.Second):
+			t.Fatal("Agent.Tools blocked behind an in-flight toolset Start")
+		}
+
+		assert.Empty(t, a.DrainWarnings(), "a start already in flight must not surface a warning")
+		assert.EqualValues(t, 1, hung.calls.Load(), "the turn must not run a second underlying Start")
+
+		// Once the wedged start completes, the next turn picks the toolset up
+		// without another underlying Start.
+		releaseHung()
+		require.NoError(t, <-probeDone)
+
 		got, err := a.Tools(t.Context())
-		turnDone <- toolsResult{tools: got, err: err}
-	}()
-
-	select {
-	case res := <-turnDone:
-		require.NoError(t, res.err)
-		assert.ElementsMatch(t, []string{"ready_tool", "static_tool"}, toolNames(res.tools))
-	case <-time.After(5 * time.Second):
-		t.Fatal("Agent.Tools blocked behind an in-flight toolset Start")
-	}
-
-	assert.Empty(t, a.DrainWarnings(), "a start already in flight must not surface a warning")
-	assert.EqualValues(t, 1, hung.calls.Load(), "the turn must not run a second underlying Start")
-
-	// Once the wedged start completes, the next turn picks the toolset up
-	// without another underlying Start.
-	releaseHung()
-	require.NoError(t, <-probeDone)
-
-	got, err := a.Tools(t.Context())
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"hung_tool", "ready_tool", "static_tool"}, toolNames(got))
-	assert.EqualValues(t, 1, hung.calls.Load())
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"hung_tool", "ready_tool", "static_tool"}, toolNames(got))
+		assert.EqualValues(t, 1, hung.calls.Load())
+	})
 }
 
 // TestAgentToolsBoundsTurnInitiatedStart verifies the other half of #4001:
