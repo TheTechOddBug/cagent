@@ -98,6 +98,7 @@ func TestTmuxVisibilityHelper(t *testing.T) {
 func TestTmuxVisibilityLifecycle(t *testing.T) {
 	for _, focusEvents := range []string{"off", "on"} {
 		t.Run("focus-events="+focusEvents, func(t *testing.T) {
+			t.Parallel()
 			testTmuxVisibilityLifecycle(t, focusEvents)
 		})
 	}
