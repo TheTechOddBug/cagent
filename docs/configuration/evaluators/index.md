@@ -37,6 +37,7 @@ evaluators:
 | `choices` | For `choice`: map of 2–255 outcome keys to descriptions. |
 | `levels` | For `score`: 2–10 descriptions ordered from lowest to highest. |
 | `base_url` | Optional API base URL. TypeSafe defaults to `https://api.typesafe.ai`; `/v1/systemone` is appended. |
+| `endpoint` | Optional exact HTTP(S) request URL. Overrides `base_url`, including a named provider's default; no path is appended. Credentials, query strings, and fragments are not allowed. |
 | `token_key` | Environment variable containing the API key; defaults to `TYPESAFE_API_KEY`. |
 | `timeout` | Request timeout as a duration such as `3s`; defaults to `10s`. |
 | `cost` | Optional USD prices per million tokens: `input` and `output`. Overrides automatic pricing; `cost: {}` explicitly declares free evaluations. |
@@ -67,6 +68,44 @@ providers. Credentials come from the normal environment provider, including
 configured secret sources. The models gateway does not supply evaluator credentials.
 
 In HCL, use `evaluator "name" { ... }` for a top-level named evaluator.
+
+## Compatible endpoints: Laya on Baseten
+
+[Laya](https://huggingface.co/convaiinnovations/laya) can use the `typesafe`
+evaluator backend because it returns Jev-compatible assessments. For a Baseten
+predict deployment, set `endpoint` on the evaluator so `/v1/systemone` is not
+appended. Replace the example URL with your deployment's endpoint:
+
+```yaml
+evaluators:
+  tool_risk:
+    provider: typesafe
+    model: english
+    endpoint: https://model-YOUR_MODEL_ID.api.baseten.co/development/predict
+    token_key: BASETEN_API_KEY
+    type: choice
+    instructions: Classify the operation in tool_name and tool_input.
+    choices:
+      read_only: Clearly read-only, with no credential access or external data transfer.
+      risky: Changes data, executes code, accesses credentials, or transfers data externally.
+      unknown: Insufficient information to establish the operation's effects.
+    timeout: 30s
+```
+
+The client sends `Authorization: Bearer`, which Baseten accepts; no username is
+needed. Laya Router deployments accept checkpoint names such as `english`, not
+necessarily the Hugging Face repository ID `convaiinnovations/laya`. Confirm the
+accepted names and payload format with your deployment: custom Baseten handlers
+can expose a different API. A standard `laya-serve` server at `/v1/systemone` can
+instead use `base_url` without an endpoint override.
+
+Existing tool-guard policies and accounting work unchanged. Baseten deployments
+do not inherit TypeSafe pricing; cost stays unknown unless explicit pricing and
+valid usage are available. Set an appropriate timeout for cold starts. The English
+checkpoint has a small default input budget, and probabilities and guard thresholds
+need validation on your own data; protocol compatibility is not equivalent safety.
+
+See the [Laya tool-guard example](https://github.com/docker/docker-agent/blob/main/examples/evaluators-laya.yaml).
 
 ## Result types
 

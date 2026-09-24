@@ -233,6 +233,7 @@ remote MCP endpoints.
 |------|---------------|
 | [`permissions.yaml`](permissions.yaml) | Top-level `permissions` block with `allow`/`deny` patterns for tool calls. |
 | [`evaluators.yaml`](evaluators.yaml) | TypeSafe Jev assessments with a separate, fail-closed tool-guard policy. |
+| [`evaluators-laya.yaml`](evaluators-laya.yaml) | Laya on Baseten using an exact evaluator endpoint and the same tool-guard policy. |
 | [`llm_judge.yaml`](llm_judge.yaml) | Layered defense: deterministic permissions + an LLM-as-judge `pre_tool_use` hook + user prompts. |
 | [`redact_secrets.yaml`](redact_secrets.yaml) | Single-flag (`redact_secrets: true`) scrubbing of detected secrets in args, chat content, and tool output. |
 | [`redact_secrets_hooks.yaml`](redact_secrets_hooks.yaml) | The same scrubbing wired manually as three hooks. |

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/tools/builtin/filesystem"
+	"github.com/docker/docker-agent/pkg/tools/builtin/shell"
 )
 
 const evaluatorTeamYAML = `
@@ -298,4 +302,54 @@ agents:
     model: openai/gpt-4o
 `)), rc, withTestProviderRegistry()...)
 	require.ErrorContains(t, err, "invalid matcher")
+}
+
+func TestLoadLayaEvaluatorExample(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/development/predict", r.RequestURI)
+		assert.Equal(t, "Bearer test-baseten-key", r.Header.Get("Authorization"))
+		var payload struct {
+			Model     string         `json:"model"`
+			State     map[string]any `json:"state"`
+			Questions map[string]any `json:"questions"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload)) {
+			return
+		}
+		assert.Equal(t, "english", payload.Model)
+		assert.Equal(t, "shell", payload.State["tool_name"])
+		assert.Contains(t, payload.Questions, "evaluation")
+		_, err := io.WriteString(w, `{"model":"laya-rl-agent","answers":{"evaluation":{"type":"choice","choice":"read_only","probabilities":{"read_only":0.98,"risky":0.01,"unknown":0.01}}},"usage":{"input_tokens":45,"output_tokens":0},"routing":{"model":"english"}}`)
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	data, err := os.ReadFile("../../examples/evaluators-laya.yaml")
+	require.NoError(t, err)
+	manifest := strings.ReplaceAll(string(data), "https://model-YOUR_MODEL_ID.api.baseten.co", server.URL)
+	rc := &config.RuntimeConfig{
+		EnvProviderForTests: environment.NewMapEnvProvider(map[string]string{
+			"OPENAI_API_KEY": "fake-chat-key", "BASETEN_API_KEY": "test-baseten-key",
+		}),
+	}
+	registry := NewToolsetRegistry(map[string]ToolsetCreator{"shell": shell.Creator, "filesystem": filesystem.Creator})
+	loaded, err := LoadWithConfig(t.Context(), config.NewBytesSource("laya.yaml", []byte(manifest)), rc,
+		withTestProviderRegistry(WithStrict(config.FeatureHooks, config.FeatureEvaluators), WithToolsetRegistry(registry))...)
+	require.NoError(t, err)
+	assert.Zero(t, requests.Load())
+	client, ok := loaded.Team.Evaluator("tool_risk")
+	require.True(t, ok)
+	result, err := client.Evaluate(t.Context(), map[string]any{
+		"tool_name": "shell", "tool_input": map[string]any{"cmd": "git status"}, "tool_category": "shell",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "read_only", result.Choice)
+	assert.Equal(t, "laya-rl-agent", result.Model)
+	assert.Nil(t, result.Cost)
+	assert.EqualValues(t, 1, requests.Load())
 }
