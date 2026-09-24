@@ -206,33 +206,35 @@ func TestElicitationWaiter_ResolveWinsWhenFirst(t *testing.T) {
 func TestElicitationWaiters_ConcurrentRegisterResolveDeregister(t *testing.T) {
 	t.Parallel()
 
-	var w elicitationWaiters
-	const n = 200
+	synctest.Test(t, func(t *testing.T) {
+		var w elicitationWaiters
+		const n = 200
 
-	var wg sync.WaitGroup
-	for i := range n {
-		wg.Go(func() {
-			id := fmt.Sprintf("req-%d", i)
-			wt := w.register(id)
-			defer w.abandon(id, wt)
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Go(func() {
+				id := fmt.Sprintf("req-%d", i)
+				wt := w.register(id)
+				defer w.abandon(id, wt)
 
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				ok := w.resolve(id, ElicitationResult{Action: tools.ElicitationActionAccept, Content: map[string]any{"i": i}})
-				assert.True(t, ok)
-			}()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					ok := w.resolve(id, ElicitationResult{Action: tools.ElicitationActionAccept, Content: map[string]any{"i": i}})
+					assert.True(t, ok)
+				}()
 
-			select {
-			case result := <-wt.ch:
-				assert.Equal(t, map[string]any{"i": i}, result.Content, "response must route back to its own request")
-			case <-time.After(2 * time.Second):
-				t.Errorf("waiter %s never received its response", id)
-			}
-			<-done
-		})
-	}
-	wg.Wait()
+				select {
+				case result := <-wt.ch:
+					assert.Equal(t, map[string]any{"i": i}, result.Content, "response must route back to its own request")
+				case <-time.After(2 * time.Second):
+					t.Errorf("waiter %s never received its response", id)
+				}
+				<-done
+			})
+		}
+		wg.Wait()
+	})
 }
 
 // TestElicitationWaiters_ConcurrentResolveCancelRace hammers a single waiter
