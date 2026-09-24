@@ -2003,183 +2003,181 @@ func parseBackgroundTaskID(t *testing.T, dispatchOutput string) string {
 //
 // Synchronisation is deterministic: subagent_stop hook channels gate the
 // worker's final turn and the test's own progress, and task completion is
-// awaited by polling the real registered list_background_agents handler
-// under a bounded deadline. No arbitrary sleeps.
+// checked through the real registered list_background_agents handler
+// after the bubble quiesces. No arbitrary sleeps.
 func TestRunStream_NestedBackgroundAgents_EndToEnd(t *testing.T) {
 	t.Parallel()
 
-	// helperDrained closes when worker's subagent_stop hook fires (the
-	// nested helper sub-session fully drained); it gates worker's final
-	// turn. workerDrained closes when root's subagent_stop hook fires (the
-	// worker sub-session fully drained); it gates the test's progress.
-	helperDrained := make(chan struct{})
-	workerDrained := make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		// helperDrained closes when worker's subagent_stop hook fires (the
+		// nested helper sub-session fully drained); it gates worker's final
+		// turn. workerDrained closes when root's subagent_stop hook fires (the
+		// worker sub-session fully drained); it gates the test's progress.
+		helperDrained := make(chan struct{})
+		workerDrained := make(chan struct{})
 
-	rootProv := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{
-		newStreamBuilder().
-			AddToolCallName("call_run_worker", agenttool.ToolNameRunBackgroundAgent).
-			AddToolCallArguments("call_run_worker", `{"agent":"worker","task":"do the background work"}`).
-			AddToolCallStopWithUsage(10, 5).
-			Build(),
-		newStreamBuilder().AddContent("dispatched worker").AddStopWithUsage(10, 5).Build(),
-	}}
-	// The release gate makes worker's final turn wait until the nested
-	// helper task has drained — a deterministic stand-in for the "poll
-	// until done" turns a real model would issue.
-	workerProv := &stepProvider{id: "test/mock-model", steps: []providerStep{
-		{stream: newStreamBuilder().
-			AddToolCallName("call_run_helper", agenttool.ToolNameRunBackgroundAgent).
-			AddToolCallArguments("call_run_helper", `{"agent":"helper","task":"do the nested work"}`).
-			AddToolCallStopWithUsage(10, 5).
-			Build()},
-		{release: helperDrained, stream: newStreamBuilder().AddContent("worker done").AddStopWithUsage(10, 5).Build()},
-	}}
-	helperProv := &mockProvider{
-		id:     "test/mock-model",
-		stream: newStreamBuilder().AddContent("nested helper done").AddStopWithUsage(10, 5).Build(),
-	}
-
-	helper := agent.New("helper", "Helper agent", agent.WithModel(helperProv))
-	// helper is reachable only from worker: the nested dispatch can only
-	// succeed when HandleRun validates the target against the pinned
-	// caller (worker), not the shared current agent (root) — #3886.
-	worker := agent.New("worker", "Worker agent",
-		agent.WithModel(workerProv),
-		agent.WithSubAgents(helper),
-		agent.WithToolSets(agenttool.New()),
-		agent.WithHooks(&hooks.Config{
-			SubagentStop: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: "test_signal_worker_subagent_stop"}},
-		}),
-	)
-	root := agent.New("root", "Root agent",
-		agent.WithModel(rootProv),
-		agent.WithSubAgents(worker),
-		agent.WithToolSets(agenttool.New()),
-		agent.WithHooks(&hooks.Config{
-			SubagentStop: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: "test_signal_root_subagent_stop"}},
-		}),
-	)
-
-	tm := team.New(team.WithAgents(root, worker, helper))
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithSessionCompaction(false),
-		WithModelStore(mockModelStore{}),
-	)
-	require.NoError(t, err)
-	// StopAll cancels and waits for detached task goroutines, so they
-	// cannot leak past the test even on a failure path.
-	t.Cleanup(func() { _ = rt.Close() })
-
-	rbRoot := &recordingBuiltin{}
-	rbWorker := &recordingBuiltin{}
-	var rootOnce, workerOnce sync.Once
-	require.NoError(t, rt.hooksRegistry.RegisterBuiltin("test_signal_root_subagent_stop",
-		func(ctx context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
-			out, err := rbRoot.hook(ctx, in, args)
-			rootOnce.Do(func() { close(workerDrained) })
-			return out, err
-		}))
-	require.NoError(t, rt.hooksRegistry.RegisterBuiltin("test_signal_worker_subagent_stop",
-		func(ctx context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
-			out, err := rbWorker.hook(ctx, in, args)
-			workerOnce.Do(func() { close(helperDrained) })
-			return out, err
-		}))
-	rt.buildHooksExecutors()
-
-	sess := session.New(session.WithUserMessage("dispatch the worker"), session.WithToolsApproved(true))
-
-	// Turn 1: root's model dispatches the worker. HandleRun must return a
-	// task ID immediately while the worker runs detached.
-	_, err = rt.Run(t.Context(), sess)
-	require.NoError(t, err)
-
-	dispatchOut := toolResultContent(t, sess, "call_run_worker")
-	require.Contains(t, dispatchOut, "Background agent task started with ID: ",
-		"run_background_agent must return a task ID immediately (async dispatch)")
-	taskID := parseBackgroundTaskID(t, dispatchOut)
-
-	// The whole nested chain runs on detached goroutines that never touch
-	// the runtime's shared current agent.
-	waitClosed(t, workerDrained, "worker background task to drain")
-	assert.Equal(t, "root", rt.CurrentAgent().Name(),
-		"shared current agent must remain root while background tasks run")
-
-	// The subagent_stop hooks fire just before HandleRun's goroutines mark
-	// their tasks completed, so await both terminal statuses through the
-	// real registered list handler (bounded, no fixed sleep budget).
-	listHandler := rt.toolMap[agenttool.ToolNameListBackgroundAgents]
-	require.NotNil(t, listHandler, "list_background_agents must be registered on the runtime tool map")
-	listCall := tools.ToolCall{
-		ID:       "call_list_poll",
-		Type:     "function",
-		Function: tools.FunctionCall{Name: agenttool.ToolNameListBackgroundAgents},
-	}
-	var listOut string
-	require.Eventually(t, func() bool {
-		res, err := listHandler(t.Context(), sess, listCall, NewChannelSink(make(chan Event, 4)), tools.NopRuntime{})
-		if err != nil {
-			return false
+		rootProv := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{
+			newStreamBuilder().
+				AddToolCallName("call_run_worker", agenttool.ToolNameRunBackgroundAgent).
+				AddToolCallArguments("call_run_worker", `{"agent":"worker","task":"do the background work"}`).
+				AddToolCallStopWithUsage(10, 5).
+				Build(),
+			newStreamBuilder().AddContent("dispatched worker").AddStopWithUsage(10, 5).Build(),
+		}}
+		// The release gate makes worker's final turn wait until the nested
+		// helper task has drained — a deterministic stand-in for the "poll
+		// until done" turns a real model would issue.
+		workerProv := &stepProvider{id: "test/mock-model", steps: []providerStep{
+			{stream: newStreamBuilder().
+				AddToolCallName("call_run_helper", agenttool.ToolNameRunBackgroundAgent).
+				AddToolCallArguments("call_run_helper", `{"agent":"helper","task":"do the nested work"}`).
+				AddToolCallStopWithUsage(10, 5).
+				Build()},
+			{release: helperDrained, stream: newStreamBuilder().AddContent("worker done").AddStopWithUsage(10, 5).Build()},
+		}}
+		helperProv := &mockProvider{
+			id:     "test/mock-model",
+			stream: newStreamBuilder().AddContent("nested helper done").AddStopWithUsage(10, 5).Build(),
 		}
-		listOut = res.Output
-		return strings.Count(listOut, "Status:  completed") == 2
-	}, 20*time.Second, time.Millisecond,
-		"both background tasks must reach completed status via the real list handler")
-	// Both the root-dispatched worker task and the worker-dispatched helper
-	// task live in the same real handler.
-	assert.Contains(t, listOut, "Agent:   worker")
-	assert.Contains(t, listOut, "Agent:   helper")
-	assert.Contains(t, listOut, taskID)
 
-	// Turn 2: root's model inspects the finished task through the real
-	// view handler; the task ID is dynamic, parsed from turn 1's result.
-	rootProv.enqueue(
-		newStreamBuilder().
-			AddToolCallName("call_view_worker", agenttool.ToolNameViewBackgroundAgent).
-			AddToolCallArguments("call_view_worker", fmt.Sprintf(`{"task_id":%q}`, taskID)).
-			AddToolCallStopWithUsage(10, 5).
-			Build(),
-		newStreamBuilder().AddContent("background check complete").AddStopWithUsage(10, 5).Build(),
-	)
-	sess.AddMessage(session.UserMessage("check on the background task"))
-	_, err = rt.Run(t.Context(), sess)
-	require.NoError(t, err)
+		helper := agent.New("helper", "Helper agent", agent.WithModel(helperProv))
+		// helper is reachable only from worker: the nested dispatch can only
+		// succeed when HandleRun validates the target against the pinned
+		// caller (worker), not the shared current agent (root) — #3886.
+		worker := agent.New("worker", "Worker agent",
+			agent.WithModel(workerProv),
+			agent.WithSubAgents(helper),
+			agent.WithToolSets(agenttool.New()),
+			agent.WithHooks(&hooks.Config{
+				SubagentStop: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: "test_signal_worker_subagent_stop"}},
+			}),
+		)
+		root := agent.New("root", "Root agent",
+			agent.WithModel(rootProv),
+			agent.WithSubAgents(worker),
+			agent.WithToolSets(agenttool.New()),
+			agent.WithHooks(&hooks.Config{
+				SubagentStop: []hooks.Hook{{Type: hooks.HookTypeBuiltin, Command: "test_signal_root_subagent_stop"}},
+			}),
+		)
 
-	viewOut := toolResultContent(t, sess, "call_view_worker")
-	assert.Contains(t, viewOut, taskID)
-	assert.Contains(t, viewOut, "Status:  completed", "the worker task must be completed")
-	assert.Contains(t, viewOut, "worker done", "the worker's final output must be visible through view_background_agent")
+		tm := team.New(team.WithAgents(root, worker, helper))
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithSessionCompaction(false),
+			WithModelStore(mockModelStore{}),
+		)
+		require.NoError(t, err)
+		// StopAll cancels and waits for detached task goroutines, so they
+		// cannot leak past the test even on a failure path.
+		t.Cleanup(func() { _ = rt.Close() })
 
-	// Session structure: root → worker (pinned child) → helper (pinned
-	// grandchild), with delegation lineage recorded per edge.
-	child := firstSubSession(sess)
-	require.NotNil(t, child, "root session must carry the worker sub-session")
-	assert.Equal(t, "worker", child.AgentName, "background child session must be pinned to worker")
-	assert.Equal(t, []string{"root"}, child.DelegationLineage)
-	assert.Equal(t, "worker done", child.GetLastAssistantMessageContent())
+		rbRoot := &recordingBuiltin{}
+		rbWorker := &recordingBuiltin{}
+		var rootOnce, workerOnce sync.Once
+		require.NoError(t, rt.hooksRegistry.RegisterBuiltin("test_signal_root_subagent_stop",
+			func(ctx context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
+				out, err := rbRoot.hook(ctx, in, args)
+				rootOnce.Do(func() { close(workerDrained) })
+				return out, err
+			}))
+		require.NoError(t, rt.hooksRegistry.RegisterBuiltin("test_signal_worker_subagent_stop",
+			func(ctx context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
+				out, err := rbWorker.hook(ctx, in, args)
+				workerOnce.Do(func() { close(helperDrained) })
+				return out, err
+			}))
+		rt.buildHooksExecutors()
 
-	grandchild := firstSubSession(child)
-	require.NotNil(t, grandchild, "worker session must carry the nested helper sub-session")
-	assert.Equal(t, "helper", grandchild.AgentName, "nested background grandchild must be pinned to helper")
-	assert.Equal(t, []string{"root", "worker"}, grandchild.DelegationLineage)
-	assert.Equal(t, "nested helper done", grandchild.GetLastAssistantMessageContent())
+		sess := session.New(session.WithUserMessage("dispatch the worker"), session.WithToolsApproved(true))
 
-	// Hook attribution: the nested helper completion belongs to worker (the
-	// pinned caller), the worker completion to root.
-	workerStops := rbWorker.snapshot()
-	require.Len(t, workerStops, 1, "worker's subagent_stop hook must fire exactly once")
-	assert.Equal(t, "helper", workerStops[0].AgentName)
-	assert.Equal(t, child.ID, workerStops[0].ParentSessionID)
-	assert.Equal(t, grandchild.ID, workerStops[0].SessionID)
-	assert.Equal(t, "nested helper done", workerStops[0].StopResponse)
+		// Turn 1: root's model dispatches the worker. HandleRun must return a
+		// task ID immediately while the worker runs detached.
+		_, err = rt.Run(t.Context(), sess)
+		require.NoError(t, err)
 
-	rootStops := rbRoot.snapshot()
-	require.Len(t, rootStops, 1, "root's subagent_stop hook must fire exactly once")
-	assert.Equal(t, "worker", rootStops[0].AgentName)
-	assert.Equal(t, sess.ID, rootStops[0].ParentSessionID)
-	assert.Equal(t, child.ID, rootStops[0].SessionID)
-	assert.Equal(t, "worker done", rootStops[0].StopResponse)
+		dispatchOut := toolResultContent(t, sess, "call_run_worker")
+		require.Contains(t, dispatchOut, "Background agent task started with ID: ",
+			"run_background_agent must return a task ID immediately (async dispatch)")
+		taskID := parseBackgroundTaskID(t, dispatchOut)
 
-	assert.Equal(t, "root", rt.CurrentAgent().Name(),
-		"the shared current agent must still be root after the whole chain")
+		// The whole nested chain runs on detached goroutines that never touch
+		// the runtime's shared current agent.
+		waitClosed(t, workerDrained, "worker background task to drain")
+		assert.Equal(t, "root", rt.CurrentAgent().Name(),
+			"shared current agent must remain root while background tasks run")
+
+		// The subagent_stop hooks fire just before HandleRun's goroutines mark
+		// their tasks completed, so await both terminal statuses through the
+		// real registered list handler after both goroutines have finished.
+		listHandler := rt.toolMap[agenttool.ToolNameListBackgroundAgents]
+		require.NotNil(t, listHandler, "list_background_agents must be registered on the runtime tool map")
+		listCall := tools.ToolCall{
+			ID:       "call_list_poll",
+			Type:     "function",
+			Function: tools.FunctionCall{Name: agenttool.ToolNameListBackgroundAgents},
+		}
+		synctest.Wait()
+		res, err := listHandler(t.Context(), sess, listCall, NewChannelSink(make(chan Event, 4)), tools.NopRuntime{})
+		require.NoError(t, err)
+		listOut := res.Output
+		require.Equal(t, 2, strings.Count(listOut, "Status:  completed"),
+			"both background tasks must reach completed status via the real list handler")
+		// Both the root-dispatched worker task and the worker-dispatched helper
+		// task live in the same real handler.
+		assert.Contains(t, listOut, "Agent:   worker")
+		assert.Contains(t, listOut, "Agent:   helper")
+		assert.Contains(t, listOut, taskID)
+
+		// Turn 2: root's model inspects the finished task through the real
+		// view handler; the task ID is dynamic, parsed from turn 1's result.
+		rootProv.enqueue(
+			newStreamBuilder().
+				AddToolCallName("call_view_worker", agenttool.ToolNameViewBackgroundAgent).
+				AddToolCallArguments("call_view_worker", fmt.Sprintf(`{"task_id":%q}`, taskID)).
+				AddToolCallStopWithUsage(10, 5).
+				Build(),
+			newStreamBuilder().AddContent("background check complete").AddStopWithUsage(10, 5).Build(),
+		)
+		sess.AddMessage(session.UserMessage("check on the background task"))
+		_, err = rt.Run(t.Context(), sess)
+		require.NoError(t, err)
+
+		viewOut := toolResultContent(t, sess, "call_view_worker")
+		assert.Contains(t, viewOut, taskID)
+		assert.Contains(t, viewOut, "Status:  completed", "the worker task must be completed")
+		assert.Contains(t, viewOut, "worker done", "the worker's final output must be visible through view_background_agent")
+
+		// Session structure: root → worker (pinned child) → helper (pinned
+		// grandchild), with delegation lineage recorded per edge.
+		child := firstSubSession(sess)
+		require.NotNil(t, child, "root session must carry the worker sub-session")
+		assert.Equal(t, "worker", child.AgentName, "background child session must be pinned to worker")
+		assert.Equal(t, []string{"root"}, child.DelegationLineage)
+		assert.Equal(t, "worker done", child.GetLastAssistantMessageContent())
+
+		grandchild := firstSubSession(child)
+		require.NotNil(t, grandchild, "worker session must carry the nested helper sub-session")
+		assert.Equal(t, "helper", grandchild.AgentName, "nested background grandchild must be pinned to helper")
+		assert.Equal(t, []string{"root", "worker"}, grandchild.DelegationLineage)
+		assert.Equal(t, "nested helper done", grandchild.GetLastAssistantMessageContent())
+
+		// Hook attribution: the nested helper completion belongs to worker (the
+		// pinned caller), the worker completion to root.
+		workerStops := rbWorker.snapshot()
+		require.Len(t, workerStops, 1, "worker's subagent_stop hook must fire exactly once")
+		assert.Equal(t, "helper", workerStops[0].AgentName)
+		assert.Equal(t, child.ID, workerStops[0].ParentSessionID)
+		assert.Equal(t, grandchild.ID, workerStops[0].SessionID)
+		assert.Equal(t, "nested helper done", workerStops[0].StopResponse)
+
+		rootStops := rbRoot.snapshot()
+		require.Len(t, rootStops, 1, "root's subagent_stop hook must fire exactly once")
+		assert.Equal(t, "worker", rootStops[0].AgentName)
+		assert.Equal(t, sess.ID, rootStops[0].ParentSessionID)
+		assert.Equal(t, child.ID, rootStops[0].SessionID)
+		assert.Equal(t, "worker done", rootStops[0].StopResponse)
+
+		assert.Equal(t, "root", rt.CurrentAgent().Name(),
+			"the shared current agent must still be root after the whole chain")
+	})
 }
