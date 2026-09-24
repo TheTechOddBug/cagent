@@ -3321,7 +3321,11 @@
         },
         "base_url": {
           "type": "string",
-          "description": "API base URL (TypeSafe default: https://api.typesafe.ai)."
+          "description": "API base URL (TypeSafe default: https://api.typesafe.ai); /v1/systemone is appended unless endpoint is set."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Exact HTTP(S) evaluator URL, overriding base_url and its default path. No credentials, query, or fragment."
         },
         "token_key": {
           "type": "string",

@@ -14,6 +14,7 @@ type EvaluatorConfig struct {
 	Provider     string            `json:"provider"`
 	Model        string            `json:"model"`
 	BaseURL      string            `json:"base_url,omitempty"`
+	Endpoint     string            `json:"endpoint,omitempty"`
 	TokenKey     string            `json:"token_key,omitempty"`
 	Type         string            `json:"type"`
 	Instructions string            `json:"instructions"`
@@ -44,10 +45,16 @@ func (e EvaluatorConfig) Validate() error {
 			}
 		}
 	}
-	if e.BaseURL != "" {
-		u, err := url.Parse(e.BaseURL)
+	for _, target := range []struct{ name, value string }{
+		{"base_url", e.BaseURL},
+		{"endpoint", e.Endpoint},
+	} {
+		if target.value == "" {
+			continue
+		}
+		u, err := url.Parse(target.value)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-			return errors.New("base_url must be an HTTP(S) URL without credentials, query, or fragment")
+			return fmt.Errorf("%s must be an HTTP(S) URL without credentials, query, or fragment", target.name)
 		}
 	}
 	switch e.Type {

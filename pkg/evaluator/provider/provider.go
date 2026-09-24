@@ -49,6 +49,11 @@ func New(ctx context.Context, cfg latest.EvaluatorConfig, env environment.Provid
 		return nil, errors.New("evaluator base URL must be an HTTP(S) URL without credentials, query, or fragment")
 	}
 
+	endpoint := cfg.Endpoint
+	if endpoint == "" {
+		endpoint = strings.TrimRight(baseURL, "/") + "/v1/systemone"
+	}
+
 	timeout := cfg.Timeout.Duration
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -86,7 +91,7 @@ func New(ctx context.Context, cfg latest.EvaluatorConfig, env environment.Provid
 	return &typesafe{
 		client:          client,
 		env:             env,
-		endpoint:        strings.TrimRight(baseURL, "/") + "/v1/systemone",
+		endpoint:        endpoint,
 		tokenKey:        cfg.TokenKey,
 		model:           cfg.Model,
 		resultType:      cfg.Type,
@@ -95,6 +100,6 @@ func New(ctx context.Context, cfg latest.EvaluatorConfig, env environment.Provid
 		probabilityKeys: probabilityKeys,
 		timeout:         timeout,
 		cost:            cost,
-		officialPricing: strings.TrimRight(baseURL, "/") == defaultBaseURL,
+		officialPricing: endpoint == defaultBaseURL+"/v1/systemone",
 	}, nil
 }

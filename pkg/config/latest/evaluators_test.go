@@ -121,6 +121,7 @@ func TestEvaluatorConfigRoundTripAndReferences(t *testing.T) {
   risk:
     provider: typesafe
     model: jev-latest
+    endpoint: https://example.com/development/predict
     type: boolean
     instructions: Does this expose credentials?
     timeout: 2s
@@ -142,6 +143,7 @@ agents:
 `
 	var cfg Config
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
+	assert.Equal(t, "https://example.com/development/predict", cfg.Evaluators["risk"].Endpoint)
 	assert.Equal(t, 2*time.Second, cfg.Evaluators["risk"].Timeout.Duration)
 	assert.Equal(t, &CostConfig{Input: 0.042}, cfg.Evaluators["risk"].Cost)
 	data, err := json.Marshal(cfg)
@@ -201,4 +203,66 @@ func TestEvaluatorCostValidation(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &decoded))
 		assert.Equal(t, cost, decoded.Cost)
 	}
+}
+
+func TestEvaluatorURLValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{"base_url", "endpoint"} {
+		for _, tc := range []struct {
+			name  string
+			value string
+			valid bool
+		}{
+			{"empty", "", true},
+			{"https", "https://example.com/development/predict", true},
+			{"http", "http://localhost:8000/predict/", true},
+			{"relative", "/development/predict", false},
+			{"scheme", "ftp://example.com/predict", false},
+			{"missing host", "https://", false},
+			{"credentials", "https://user:private-token@example.com/predict", false},
+			{"query", "https://example.com/predict?token=private-token", false},
+			{"empty query", "https://example.com/predict?", false},
+			{"fragment", "https://example.com/predict#private-token", false},
+			{"whitespace", " ", false},
+			{"invalid escape", "https://example.com/%private-token", false},
+		} {
+			t.Run(field+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				cfg := EvaluatorConfig{Provider: "typesafe", Model: "english", Type: "boolean", Instructions: "Assess risk."}
+				if field == "base_url" {
+					cfg.BaseURL = tc.value
+				} else {
+					cfg.Endpoint = tc.value
+				}
+				err := cfg.Validate()
+				if tc.valid {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, field)
+					assert.NotContains(t, err.Error(), "private-token")
+				}
+			})
+		}
+	}
+}
+
+func TestEvaluatorResolveEndpoint(t *testing.T) {
+	t.Parallel()
+
+	cfg := EvaluatorConfig{
+		Provider: "laya", Model: "english", Type: "boolean", Instructions: "Assess risk.",
+		Endpoint: "https://example.com/development/predict",
+	}
+	providers := map[string]ProviderConfig{
+		"laya": {Provider: "typesafe", BaseURL: "https://other.example.com", TokenKey: "BASETEN_API_KEY"},
+	}
+	resolved, err := cfg.Resolve(providers)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.Endpoint, resolved.Endpoint)
+	assert.Equal(t, providers["laya"].BaseURL, resolved.BaseURL)
+	assert.Equal(t, "BASETEN_API_KEY", resolved.TokenKey)
+	assert.Equal(t, "typesafe", resolved.Provider)
+	assert.Equal(t, "laya", cfg.Provider)
+	assert.Empty(t, cfg.BaseURL)
 }

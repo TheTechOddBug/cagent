@@ -100,6 +100,7 @@ func TestEstimateCost(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		baseURL   string
+		endpoint  string
 		requested string
 		model     string
 		price     *latest.CostConfig
@@ -108,6 +109,13 @@ func TestEstimateCost(t *testing.T) {
 	}{
 		{name: "resolved alias", requested: "jev-latest", model: "jev-1.13.0", want: 0.084, known: true},
 		{name: "explicit official endpoint", baseURL: defaultBaseURL + "/", model: "jev-1.13.0", want: 0.084, known: true},
+		{name: "exact official endpoint", endpoint: defaultBaseURL + "/v1/systemone", model: "jev-1.13.0", want: 0.084, known: true},
+		{name: "exact custom endpoint", endpoint: "https://example.com/development/predict", model: "jev-1.13.0"},
+		{name: "exact endpoint overrides official base", baseURL: defaultBaseURL, endpoint: "https://example.com/development/predict", model: "jev-1.13.0"},
+		{name: "exact endpoint overrides custom base", baseURL: "https://example.com", endpoint: defaultBaseURL + "/v1/systemone", model: "jev-1.13.0", want: 0.084, known: true},
+		{name: "exact custom path", endpoint: defaultBaseURL + "/development/predict", model: "jev-1.13.0"},
+		{name: "exact lookalike endpoint", endpoint: defaultBaseURL + ".example.com/v1/systemone", model: "jev-1.13.0"},
+		{name: "exact endpoint price override", endpoint: "https://example.com/development/predict", model: "laya-rl-agent", price: &latest.CostConfig{Input: 1, Output: 2}, want: 8, known: true},
 		{name: "unknown model", model: "jev-future"},
 		{name: "unresolved alias", model: "jev-latest"},
 		{name: "no requested model fallback", requested: "jev-1.13.0", model: "jev-future"},
@@ -125,7 +133,7 @@ func TestEstimateCost(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := testConfig("boolean")
-			cfg.BaseURL, cfg.Cost = tt.baseURL, tt.price
+			cfg.BaseURL, cfg.Endpoint, cfg.Cost = tt.baseURL, tt.endpoint, tt.price
 			if tt.requested != "" {
 				cfg.Model = tt.requested
 			}

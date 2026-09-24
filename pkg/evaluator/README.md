@@ -29,7 +29,12 @@ appropriate for that service.
 The initial backend posts one question named `evaluation` to `/v1/systemone`.
 It requires an explicit model, uses `https://api.typesafe.ai` by default, and
 retrieves `TYPESAFE_API_KEY` from the environment provider on each request. A
-custom token key, base URL, and timeout can be configured. The default timeout
+custom token key, base URL, exact `endpoint`, and timeout can be configured.
+`endpoint` overrides the base URL and uses its path unchanged, allowing
+Jev-compatible services such as Laya on Baseten's `/development/predict`.
+Credentials, queries, and fragments are rejected in both URL settings. Automatic
+TypeSafe pricing applies only when the effective endpoint is the official URL.
+The default timeout
 is 10 seconds and includes credential lookup, HTTP transfer, and response reads.
 Requests respect context cancellation. Redirects are never followed, responses
 are limited to 1 MiB, and errors omit credentials, input, and response bodies.
