@@ -119,6 +119,11 @@ are not replacements for `new`.
 `Value.Type().Field(i)` loops that the upstream iterator analyzer misses. It
 excludes receiver mutation/escape, unrelated index uses, and unsafe callbacks.
 
+`Lint/StdlibUUID` recommends stdlib UUIDs for random strings and canonical
+literal-to-string conversions. It preserves UUIDv5 and compatibility parsers,
+and skips recommendations when production or test code configures Google UUID
+randomness. General parsers and values exposing the Google UUID type are excluded.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:

@@ -55,6 +55,7 @@ var cops = []cop.Cop{
 var programCops = []prog.Cop{
 	PointerHelper,
 	ReflectFields,
+	StdlibUUID,
 	SplitTrimJoin,
 	FieldsSeq,
 	SessionStateAccessors,
