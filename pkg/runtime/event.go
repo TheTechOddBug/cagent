@@ -299,16 +299,54 @@ func ErrorWithCodeForSession(sessionID, code, msg string) Event {
 type ShellOutputEvent struct {
 	AgentContext
 
-	Type   string `json:"type"`
-	Output string `json:"output"`
+	Type      string `json:"type"`
+	CommandID string `json:"command_id,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Done      bool   `json:"done,omitempty"`
 }
 
 func ShellOutput(output string) Event {
 	return &ShellOutputEvent{
 		Type:         "shell",
 		Output:       output,
+		Done:         true,
 		AgentContext: newAgentContext(""),
 	}
+}
+
+func ShellCommandStarted(id, command string) Event {
+	return &ShellOutputEvent{
+		Type:         "shell",
+		CommandID:    id,
+		Command:      command,
+		AgentContext: newAgentContext(""),
+	}
+}
+
+func ShellCommandOutput(id, output string) Event {
+	return &ShellOutputEvent{
+		Type:         "shell",
+		CommandID:    id,
+		Output:       output,
+		AgentContext: newAgentContext(""),
+	}
+}
+
+func ShellCommandFinished(id, command, output string, err error) Event {
+	event := &ShellOutputEvent{
+		Type:         "shell",
+		CommandID:    id,
+		Command:      command,
+		Output:       output,
+		Done:         true,
+		AgentContext: newAgentContext(""),
+	}
+	if err != nil {
+		event.Error = err.Error()
+	}
+	return event
 }
 
 type WarningEvent struct {

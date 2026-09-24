@@ -2,6 +2,7 @@ package leantui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
+	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
@@ -302,6 +304,17 @@ func (m *model) runBangCommand(ctx context.Context, command string) {
 		return
 	}
 	m.app.RunBangCommand(ctx, command)
+}
+
+func shellCommandCall(id, command string) tools.ToolCall {
+	arguments, _ := json.Marshal(map[string]string{"cmd": command})
+	return tools.ToolCall{
+		ID: id,
+		Function: tools.FunctionCall{
+			Name:      builtinshell.ToolNameShell,
+			Arguments: string(arguments),
+		},
+	}
 }
 
 // handleSlash dispatches a slash command. It returns true when the command was

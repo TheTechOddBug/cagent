@@ -2,6 +2,7 @@ package chat
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/sound"
 	"github.com/docker/docker-agent/pkg/tools"
+	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/components/sidebar"
 	"github.com/docker/docker-agent/pkg/tui/core"
@@ -99,7 +101,7 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, p.handleMessageAdded(msg)
 
 	case *runtime.ShellOutputEvent:
-		return true, p.messages.AddShellOutputMessage(msg.Output)
+		return true, p.handleShellCommand(msg)
 
 	// ===== Tool Events =====
 	case *runtime.PartialToolCallEvent:
@@ -458,6 +460,55 @@ func (p *chatPage) handleToolCall(msg *runtime.ToolCallEvent) tea.Cmd {
 
 func (p *chatPage) handleToolCallOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd {
 	return tea.Batch(p.messages.AppendToolOutput(msg), p.messages.ScrollToBottom())
+}
+
+func (p *chatPage) handleShellCommand(msg *runtime.ShellOutputEvent) tea.Cmd {
+	if msg.CommandID == "" {
+		return p.messages.AddShellOutputMessage(msg.Output)
+	}
+
+	toolDef := tools.Tool{Name: builtinshell.ToolNameShell}
+	if msg.Command != "" {
+		arguments, _ := json.Marshal(map[string]string{"cmd": msg.Command})
+		toolCall := tools.ToolCall{
+			ID: msg.CommandID,
+			Function: tools.FunctionCall{
+				Name:      builtinshell.ToolNameShell,
+				Arguments: string(arguments),
+			},
+		}
+		if !msg.Done {
+			return tea.Batch(
+				p.messages.AddOrUpdateToolCall("", toolCall, toolDef, types.ToolStatusRunning),
+				p.messages.ScrollToBottom(),
+			)
+		}
+	}
+
+	if !msg.Done {
+		return tea.Batch(
+			p.messages.AppendToolOutput(&runtime.ToolCallOutputEvent{ToolCallID: msg.CommandID, Output: msg.Output}),
+			p.messages.ScrollToBottom(),
+		)
+	}
+
+	response := msg.Output
+	if msg.Error != "" && response == "" {
+		response = "Error: " + msg.Error
+	}
+	status := types.ToolStatusCompleted
+	if msg.Error != "" {
+		status = types.ToolStatusError
+	}
+	return tea.Batch(
+		p.messages.AddToolResult(&runtime.ToolCallResponseEvent{
+			ToolCallID:     msg.CommandID,
+			Response:       response,
+			Result:         &tools.ToolCallResult{Output: response, IsError: msg.Error != ""},
+			ToolDefinition: toolDef,
+		}, status),
+		p.messages.ScrollToBottom(),
+	)
 }
 
 func (p *chatPage) handleToolCallResponse(msg *runtime.ToolCallResponseEvent) tea.Cmd {
