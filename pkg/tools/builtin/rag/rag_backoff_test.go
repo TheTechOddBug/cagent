@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -211,23 +212,25 @@ func TestRAGStartableBackoff_DetachedStatusErrorStillEngagesGate(t *testing.T) {
 func TestRAGStartableBackoff_IndexingTimeoutDeadlineDoesNotEngageGate(t *testing.T) {
 	t.Parallel()
 
-	blocking := &blockingIndexStrategy{
-		release: make(chan struct{}), // never closed: only the indexing_timeout ends Initialize
-		ctxCh:   make(chan context.Context, 1),
-	}
-	toolset := newTestRAGToolSet(t, blocking, WithIndexingTimeout(30*time.Millisecond))
-	s := tools.NewStartable(toolset)
+	synctest.Test(t, func(t *testing.T) {
+		blocking := &blockingIndexStrategy{
+			release: make(chan struct{}), // never closed: only the indexing_timeout ends Initialize
+			ctxCh:   make(chan context.Context, 1),
+		}
+		toolset := newTestRAGToolSet(t, blocking, WithIndexingTimeout(30*time.Millisecond))
+		s := tools.NewStartable(toolset)
 
-	_, err := s.TryStart(t.Context())
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Equal(t, int32(1), blocking.calls.Load())
+		_, err := s.TryStart(t.Context())
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, int32(1), blocking.calls.Load())
 
-	// No backoff armed: the very next TryStart must re-invoke Initialize
-	// immediately, with no wait and no retained gate error.
-	_, err = s.TryStart(t.Context())
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Equal(t, int32(2), blocking.calls.Load(),
-		"an indexing_timeout deadline must not arm the backoff gate")
+		// No backoff armed: the very next TryStart must re-invoke Initialize
+		// immediately, with no wait and no retained gate error.
+		_, err = s.TryStart(t.Context())
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, int32(2), blocking.calls.Load(),
+			"an indexing_timeout deadline must not arm the backoff gate")
+	})
 }
