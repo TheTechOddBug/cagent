@@ -102,6 +102,15 @@ Key conventions:
 - Use functional options pattern for constructors
 - In tests: use `t.Context()`, `t.TempDir()`, `t.Setenv()`, and `t.Parallel()`
 
+## Project-specific lint rules
+
+`task lint` runs the custom cops in `lint/`. `Lint/FieldsSeq` flags
+`strings.Fields` slices used only for one value-only range, including loops
+with an empty-input fallback. Use `strings.FieldsSeq`, evaluate its input at
+the original location, and track whether any word was yielded when preserving
+that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
+inputs, and `FieldsFunc` callbacks are intentionally excluded.
+
 ## Opening Issues
 
 File issues on the [GitHub issue tracker](https://github.com/docker/docker-agent/issues). Please:
