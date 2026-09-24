@@ -462,26 +462,28 @@ func TestSupervisor_StopBeforeStart(t *testing.T) {
 func TestSupervisor_StopWakesRestartAndWait(t *testing.T) {
 	t.Parallel()
 
-	sess := newFakeSession()
-	c := newScriptedConnector(scriptStep{session: sess})
-	s := lifecycle.New("test", c, lifecycle.Policy{Backoff: fastBackoff})
-	assert.NilError(t, s.Start(t.Context()))
+	synctest.Test(t, func(t *testing.T) {
+		sess := newFakeSession()
+		c := newScriptedConnector(scriptStep{session: sess})
+		s := lifecycle.New("test", c, lifecycle.Policy{Backoff: fastBackoff})
+		assert.NilError(t, s.Start(t.Context()))
 
-	done := make(chan error, 1)
-	go func() { done <- s.RestartAndWait(t.Context(), 30*time.Second) }()
+		done := make(chan error, 1)
+		go func() { done <- s.RestartAndWait(t.Context(), 30*time.Second) }()
 
-	// RestartAndWait force-closes the current session before parking in
-	// its select; once the close is observed it is safe to Stop.
-	sess.waitClosed(t)
-	assert.NilError(t, s.Stop(t.Context()))
+		// RestartAndWait force-closes the current session before parking in
+		// its select; once the close is observed it is safe to Stop.
+		sess.waitClosed(t)
+		assert.NilError(t, s.Stop(t.Context()))
 
-	select {
-	case err := <-done:
-		// We expect either ErrNotStarted or the supervisor's last error.
-		assert.Check(t, err != nil)
-	case <-time.After(2 * time.Second):
-		t.Fatal("RestartAndWait did not return after Stop")
-	}
+		select {
+		case err := <-done:
+			// We expect either ErrNotStarted or the supervisor's last error.
+			assert.Check(t, err != nil)
+		case <-time.After(2 * time.Second):
+			t.Fatal("RestartAndWait did not return after Stop")
+		}
+	})
 }
 
 // TestSupervisor_FailedWakesRestartAndWait verifies that when the
