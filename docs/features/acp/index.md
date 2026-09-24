@@ -58,7 +58,7 @@ Host Application
 
 - **Stdio transport** — No network ports needed; ideal for subprocess integration
 - **Session persistence** — SQLite-backed sessions survive process restarts
-- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio MCP servers are supported; audio prompts are not supported; use `session/resume`, not `session/load`, for persisted sessions.
+- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio MCP servers are supported; audio prompts are not supported; `session/load` replays persisted history, while `session/resume` reconnects without replay.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
@@ -94,11 +94,11 @@ Commands share the session's normal turn admission, cancellation, and cleanup. M
 
 Cancellation takes precedence, and responses wait until runtime events have fully drained. Child-session outcomes, recoverable compaction diagnostics, warnings, and model fallbacks do not by themselves fail the root prompt. A later successful response supersedes an earlier model stop during a continued turn.
 
-Fatal root-runtime failures return JSON-RPC internal error `-32603` with `data.sessionId`, `data.runtimeCode`, and `data.error`. Budget termination is reported this way as `budget_exceeded`, not confused with an output-token or iteration limit. Diagnostic updates may already have streamed before the error response. Missing prompt/resume sessions return `-32002` (resource not found); invalid workspace parameters return `-32602` (invalid params).
+Fatal root-runtime failures return JSON-RPC internal error `-32603` with `data.sessionId`, `data.runtimeCode`, and `data.error`. Budget termination is reported this way as `budget_exceeded`, not confused with an output-token or iteration limit. Diagnostic updates may already have streamed before the error response. Missing prompt/resume/load sessions return `-32002` (resource not found); invalid workspace parameters return `-32602` (invalid params).
 
 ## Client-Supplied MCP Servers
 
-Pass stdio MCP servers in `mcpServers` on `session/new` or `session/resume`:
+Pass stdio MCP servers in `mcpServers` on `session/new`, `session/resume`, or `session/load`:
 
 ```json
 {
@@ -139,6 +139,18 @@ A resume must name the same directory as the saved workspace. Filesystem aliases
 Every successful resume replaces the complete `additionalDirectories` list. Omitting it or sending an empty array revokes all additional roots; previous roots are never implicitly restored. Invalid paths or workspace mismatches leave session state unchanged.
 
 Resuming a registered session while a foreground prompt is running, queued, or draining, or another resume holds the setup reservation, returns a busy error without canceling that work or changing roots. Retry after it finishes. This guards foreground turns, not detached background work or already-issued client I/O; it is not an atomic revocation guarantee.
+
+## Loading Session History
+
+`session/load` reconnects to a saved session and sends its persisted conversation as `session/update` notifications before returning the load response. Unlike `session/resume`, it replays history. Both paths retain workspace identity validation and complete replacement of client MCP servers and additional roots. The load wire request requires `sessionId`, `cwd`, and a non-null `mcpServers` array (use `[]` for none). Cold load starts the configured default agent; loading an existing idle session keeps its runtime and agent selection.
+
+Replay reads a captured copy of persisted history, including partial replies and errors saved before a failed turn. It does not call the model, execute historical tools, request permission, rerun hooks, or fetch attachment content. Requested MCP servers are set up as part of reconnection, as with resume. Foreground prompts and competing reconnects are rejected while a load holds the reservation; a load also rejects a running, queued, or draining foreground prompt without canceling it. Detached background work is not frozen by this reservation.
+
+Visible user/assistant messages, stored reasoning, tool results, and errors retain stored item order. Nested sessions replay at their stored positions; original cross-session streaming interleaving is not recoverable. System/implicit messages, internal compaction summaries, evaluations, and provider-private state are excluded. Historical tools use fresh opaque IDs and terminal status from stored results. Missing results use `failed` with an explicit unknown-outcome notice, not an assertion that execution failed. Historical arguments and derived locations are omitted because stored arguments can predate input transforms/redaction. Tool-result attachments, transient edit diffs, and plan snapshots are not reconstructed from raw output.
+
+Text is chunked into UTF-8-safe updates; tool output is limited to a 64 KiB prefix with a truncation notice. Stored inline binary attachments up to 512 KiB can be replayed; larger blobs, external file/artifact references, remote image URLs, and audio use unavailable-content notices without I/O. Replay notifications are capped at 1 MiB of JSON-encoded session payload, leaving room below the transport frame limit. This is a persisted transcript view, not lossless recovery of every live notification or original resource URI.
+
+Replay errors return an error rather than a successful load response and close/unroute the session; already-delivered notifications cannot be rolled back. Retry with an explicit load after cleanup succeeds, resetting any partially rendered client history first. Request-context cancellation, close, and shutdown stop replay and join its operation; `session/cancel` remains a prompt cancellation method. The SDK cannot interrupt a blocked writer, so cleanup has no hard write deadline.
 
 ## Listing Sessions
 
