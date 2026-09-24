@@ -1444,62 +1444,64 @@ func TestEmitStartupInfo_SkipsToolsetWhoseListingHangs(t *testing.T) {
 func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 	t.Parallel()
 
-	prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
+	synctest.Test(t, func(t *testing.T) {
+		prov := &mockProvider{id: "test/startup-model", stream: &mockStream{}}
 
-	// release is closed on cleanup so the orphaned start goroutine (whose
-	// Start() ignores context cancellation) exits instead of leaking.
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
+		// release is closed on cleanup so the orphaned start goroutine (whose
+		// Start() ignores context cancellation) exits instead of leaking.
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
 
-	hanging := &blockingStartToolSet{release: release}
-	fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
+		hanging := &blockingStartToolSet{release: release}
+		fast := newStubToolSet(nil, []tools.Tool{{Name: "ready"}}, nil)
 
-	root := agent.New("root", "agent",
-		agent.WithModel(prov),
-		agent.WithToolSets(hanging, fast),
-	)
-	tm := team.New(team.WithAgents(root))
+		root := agent.New("root", "agent",
+			agent.WithModel(prov),
+			agent.WithToolSets(hanging, fast),
+		)
+		tm := team.New(team.WithAgents(root))
 
-	rt, err := NewLocalRuntime(t.Context(), tm,
-		WithCurrentAgent("root"),
-		WithModelStore(mockModelStore{}),
-		WithToolStartTimeout(50*time.Millisecond),
-	)
-	require.NoError(t, err)
+		rt, err := NewLocalRuntime(t.Context(), tm,
+			WithCurrentAgent("root"),
+			WithModelStore(mockModelStore{}),
+			WithToolStartTimeout(50*time.Millisecond),
+		)
+		require.NoError(t, err)
 
-	events := make(chan Event, 32)
-	done := make(chan struct{})
-	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
-		close(events)
-		close(done)
-	}()
+		events := make(chan Event, 32)
+		done := make(chan struct{})
+		go func() {
+			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
+			close(events)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EmitStartupInfo did not return: a toolset with a hung Start blocked startup tool loading")
-	}
-
-	var toolsetInfos []*ToolsetInfoEvent
-	var warning *WarningEvent
-	for e := range events {
-		switch ev := e.(type) {
-		case *ToolsetInfoEvent:
-			toolsetInfos = append(toolsetInfos, ev)
-		case *WarningEvent:
-			warning = ev
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("EmitStartupInfo did not return: a toolset with a hung Start blocked startup tool loading")
 		}
-	}
 
-	require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
-	last := toolsetInfos[len(toolsetInfos)-1]
-	assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar spinner stops")
-	assert.Equal(t, 1, last.AvailableTools,
-		"the hung toolset is skipped; the fast toolset's single tool is still counted")
+		var toolsetInfos []*ToolsetInfoEvent
+		var warning *WarningEvent
+		for e := range events {
+			switch ev := e.(type) {
+			case *ToolsetInfoEvent:
+				toolsetInfos = append(toolsetInfos, ev)
+			case *WarningEvent:
+				warning = ev
+			}
+		}
 
-	require.NotNil(t, warning, "a start timeout must surface a user-visible warning")
-	assert.Contains(t, warning.Message, "taking too long to start")
+		require.NotEmpty(t, toolsetInfos, "expected at least one ToolsetInfo event")
+		last := toolsetInfos[len(toolsetInfos)-1]
+		assert.False(t, last.Loading, "final ToolsetInfo must report Loading=false so the sidebar spinner stops")
+		assert.Equal(t, 1, last.AvailableTools,
+			"the hung toolset is skipped; the fast toolset's single tool is still counted")
+
+		require.NotNil(t, warning, "a start timeout must surface a user-visible warning")
+		assert.Contains(t, warning.Message, "taking too long to start")
+	})
 }
 
 // TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight pins the
