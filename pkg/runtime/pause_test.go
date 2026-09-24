@@ -50,17 +50,21 @@ func TestIsPaused_TracksToggle(t *testing.T) {
 func TestWaitIfPaused_NotPaused(t *testing.T) {
 	t.Parallel()
 
-	r := &LocalRuntime{}
+	synctest.Test(t, func(t *testing.T) {
+		r := &LocalRuntime{}
 
-	done := make(chan error, 1)
-	go func() { done <- r.waitIfPaused(t.Context()) }()
+		done := make(chan error, 1)
+		go func() { done <- r.waitIfPaused(t.Context()) }()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("waitIfPaused should return immediately when not paused")
-	}
+		synctest.Wait()
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		default:
+			t.Fatal("waitIfPaused should return immediately when not paused")
+		}
+	})
 }
 
 // TestWaitIfPaused_BlocksUntilResumed verifies that a goroutine in
@@ -68,27 +72,33 @@ func TestWaitIfPaused_NotPaused(t *testing.T) {
 func TestWaitIfPaused_BlocksUntilResumed(t *testing.T) {
 	t.Parallel()
 
-	r := &LocalRuntime{}
-	_, _ = r.TogglePause(t.Context()) // pause
+	synctest.Test(t, func(t *testing.T) {
+		r := &LocalRuntime{}
+		_, _ = r.TogglePause(t.Context()) // pause
 
-	done := make(chan error, 1)
-	go func() { done <- r.waitIfPaused(t.Context()) }()
+		done := make(chan error, 1)
+		go func() { done <- r.waitIfPaused(t.Context()) }()
 
-	// Should still be blocked.
-	select {
-	case <-done:
-		t.Fatal("waitIfPaused returned before resume")
-	case <-time.After(50 * time.Millisecond):
-	}
+		synctest.Wait()
+		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // Preserve the observation window using fake time.
+		synctest.Wait()
 
-	_, _ = r.TogglePause(t.Context()) // resume
+		select {
+		case <-done:
+			t.Fatal("waitIfPaused returned before resume")
+		default:
+		}
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("waitIfPaused did not unblock after resume")
-	}
+		_, _ = r.TogglePause(t.Context()) // resume
+		synctest.Wait()
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		default:
+			t.Fatal("waitIfPaused did not unblock after resume")
+		}
+	})
 }
 
 // TestWaitIfPaused_ContextCancellation verifies cancelling the context wakes
@@ -96,28 +106,35 @@ func TestWaitIfPaused_BlocksUntilResumed(t *testing.T) {
 func TestWaitIfPaused_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	r := &LocalRuntime{}
-	_, _ = r.TogglePause(t.Context()) // pause
+	synctest.Test(t, func(t *testing.T) {
+		r := &LocalRuntime{}
+		_, _ = r.TogglePause(t.Context()) // pause
 
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- r.waitIfPaused(ctx) }()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- r.waitIfPaused(ctx) }()
 
-	// Should still be blocked.
-	select {
-	case <-done:
-		t.Fatal("waitIfPaused returned before cancellation")
-	case <-time.After(50 * time.Millisecond):
-	}
+		synctest.Wait()
+		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // Preserve the observation window using fake time.
+		synctest.Wait()
 
-	cancel()
+		select {
+		case <-done:
+			t.Fatal("waitIfPaused returned before cancellation")
+		default:
+		}
 
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("waitIfPaused did not unblock after ctx cancellation")
-	}
+		cancel()
+		synctest.Wait()
+
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		default:
+			t.Fatal("waitIfPaused did not unblock after ctx cancellation")
+		}
+	})
 }
 
 // TestWaitIfPaused_BroadcastsToAllWaiters verifies a single resume wakes up
