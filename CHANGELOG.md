@@ -3,6 +3,97 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.144.0] - 2026-09-25
+
+This release expands ACP v1 compatibility with session management, audio prompts, client terminals, remote MCP servers, and host credential authentication, while also closing several sandbox and filesystem confinement gaps and improving TUI rendering performance.
+
+## What's New
+
+- Adds ACP session deletion after draining owned work, with `sessionCapabilities.delete` support
+- Adds ACP elicitation bridge supporting negotiated form and URL elicitation capabilities
+- Adds ACP session model reasoning and safety options, including `session/set_config_option` and legacy `session/set_mode`
+- Adds ACP shell tool execution through client terminals via `terminal/create` and related wire methods
+- Adds ACP support for client-supplied Streamable HTTP and legacy SSE MCP servers in `session/new`, `session/resume`, and `session/load`
+- Adds ACP host credential authentication and connection-local logout
+- Adds ACP audio prompt support and bounded history replay
+- Adds ACP message identity persistence and tool name exposure
+- Adds sandbox cloud mode (`--cloud`) and v3 kit support for running sandboxes without a local Docker dependency
+- Adds evaluator support for exact endpoints on compatible services via an optional `endpoint` field in `EvaluatorConfig`
+- Adds `Lint/CutPrefix` cop to detect `HasPrefix`+`TrimPrefix` patterns that should use `strings.CutPrefix`
+- Adds `Lint/CutSuffix` cop to detect `HasSuffix`+`TrimSuffix` patterns that should use `strings.CutSuffix`
+- Adds `Lint/SlicesClone` cop to detect manual slice-copy idioms that should use `slices.Clone`
+- Adds `Lint/SortStableFunc` cop to detect `sort.SliceStable` calls that should use `slices.SortStableFunc`
+- Adds additional lint cops: `Lint/SplitTrimJoin`, `Lint/NewExpr`, `Lint/FieldsSeq`, and detectors for AWS scalar pointer helpers, paired reflection field loops, stdlib UUID string opportunities, equivalent manual URL clones, buffered JSON newline workarounds, and simple benchmark loop modernization
+
+## Improvements
+
+- Streams bang command progress in TUIs, running commands asynchronously and emitting lifecycle/output events in both lean and full TUIs
+- Replaces tmux focus-events heuristic with an async poll that checks real pane visibility, so only hidden panes pause rendering
+- Keeps tmux chooser previews rendering continuously
+- Reuses chat pane formatting while scrolling the sidebar, avoiding redundant re-formatting on unchanged message content
+- Migrates `sort.SliceStable` usages to `slices.SortStableFunc` in model picker, lean TUI, and deferred search ranking
+- Migrates manual slice-copy idioms to `slices.Clone` across the codebase
+- Migrates `HasPrefix`+`TrimPrefix` and `HasSuffix`+`TrimSuffix` patterns to `strings.CutPrefix`/`strings.CutSuffix` across multiple packages
+
+## Bug Fixes
+
+- Fixes `none` reasoning effort being ignored on GPT-6 Sol/Luna models, which caused silent fallback to `"low"` effort
+- Fixes skill supporting-file reads to be confined to the skill directory using `os.OpenRoot`, preventing symlink escapes
+- Fixes filesystem path policies to reject dangling symlinks
+- Fixes prompt file staging to be confined to the kit directory
+- Fixes sandbox skill staging reads to be anchored to the source root
+- Fixes tool extraction to use `os.Root` confinement, closing a symlink-swap gap during archive extraction
+- Fixes forked skill output and session IDs from bleeding across message groups by keying batching on session ID in addition to agent name
+- Fixes active segment offset going stale when an earlier message resizes while scrolled up, preventing clipped transcript rendering
+
+## Technical Changes
+
+- Refactors TUI command contracts, tool confirmation dialogs, and tool renderer registry to be dependency-light and reusable
+- Enables `errorsastype` and `reflecttypeassert` lint modernization checks
+- Switches to shared cops from `rubocop-go v1.0.0`, removing duplicate local implementations
+### Pull Requests
+
+- [#4423](https://github.com/docker/docker-agent/pull/4423) - fix: stream bang command progress in TUIs
+- [#4424](https://github.com/docker/docker-agent/pull/4424) - feat(lint): flag split-trim-join, new-expr, and fields-seq waste
+- [#4429](https://github.com/docker/docker-agent/pull/4429) - fix(tui): pause rendering only for hidden tmux panes
+- [#4430](https://github.com/docker/docker-agent/pull/4430) - docs: update CHANGELOG.md for v1.143.0
+- [#4431](https://github.com/docker/docker-agent/pull/4431) - feat(acp): delete sessions after draining owned work
+- [#4432](https://github.com/docker/docker-agent/pull/4432) - feat(evaluators): support exact endpoints for compatible services
+- [#4433](https://github.com/docker/docker-agent/pull/4433) - feat(lint): enforce recent Go modernization patterns
+- [#4434](https://github.com/docker/docker-agent/pull/4434) - feat(acp): bridge negotiated form and URL elicitation
+- [#4435](https://github.com/docker/docker-agent/pull/4435) - fix: support none reasoning effort on GPT-6 Sol/Luna
+- [#4436](https://github.com/docker/docker-agent/pull/4436) - test: make timer coverage deterministic with synctest
+- [#4437](https://github.com/docker/docker-agent/pull/4437) - test(httpclient): use in-memory HTTP for SSE filter tests
+- [#4438](https://github.com/docker/docker-agent/pull/4438) - fix(skills): confine supporting-file reads to the skill directory
+- [#4439](https://github.com/docker/docker-agent/pull/4439) - test(tui): wait for shell completion in bang command tests
+- [#4440](https://github.com/docker/docker-agent/pull/4440) - fix: close filesystem and sandbox kit confinement gaps
+- [#4441](https://github.com/docker/docker-agent/pull/4441) - chore(lint): use shared cops from rubocop-go v1.0.0
+- [#4442](https://github.com/docker/docker-agent/pull/4442) - chore(deps): bump charm.land/bubbletea/v2 v2.0.9→v2.0.10
+- [#4443](https://github.com/docker/docker-agent/pull/4443) - chore(deps): bump github.com/docker/cli to v29.8.1
+- [#4444](https://github.com/docker/docker-agent/pull/4444) - test: speed up slow test suites with deterministic waits
+- [#4445](https://github.com/docker/docker-agent/pull/4445) - feat(acp): expose session model reasoning and safety options
+- [#4446](https://github.com/docker/docker-agent/pull/4446) - fix: confine tool extraction with os.Root
+- [#4447](https://github.com/docker/docker-agent/pull/4447) - test: make board heartbeat checks deterministic
+- [#4448](https://github.com/docker/docker-agent/pull/4448) - feat(acp): execute shell tools through client terminals
+- [#4449](https://github.com/docker/docker-agent/pull/4449) - docs: auto-update for merged PRs (2026-09-25)
+- [#4450](https://github.com/docker/docker-agent/pull/4450) - feat(acp): support client-supplied HTTP and SSE MCP servers
+- [#4451](https://github.com/docker/docker-agent/pull/4451) - fix: stop forked skill output from bleeding across message groups
+- [#4452](https://github.com/docker/docker-agent/pull/4452) - feat(acp): add host credential authentication and connection logout
+- [#4454](https://github.com/docker/docker-agent/pull/4454) - fix: keep active segment offset in sync when earlier item resizes
+- [#4455](https://github.com/docker/docker-agent/pull/4455) - feat(lint): detect strings.CutPrefix opportunities
+- [#4457](https://github.com/docker/docker-agent/pull/4457) - test: fix encrypt mode timestamp flake
+- [#4458](https://github.com/docker/docker-agent/pull/4458) - feat(lint): add CutSuffix cop and fix its findings
+- [#4459](https://github.com/docker/docker-agent/pull/4459) - test: synchronize askpass helper cancellation test
+- [#4460](https://github.com/docker/docker-agent/pull/4460) - lint: add SortStableFunc cop for sort.SliceStable migrations
+- [#4462](https://github.com/docker/docker-agent/pull/4462) - lint: add SlicesClone cop and migrate manual slice-copy idioms
+- [#4464](https://github.com/docker/docker-agent/pull/4464) - feat(acp): support audio prompts and bounded history replay
+- [#4465](https://github.com/docker/docker-agent/pull/4465) - feat(sandbox): add cloud mode and v3 kit support
+- [#4466](https://github.com/docker/docker-agent/pull/4466) - chore(deps): bump AWS SDK v2 direct dependencies
+- [#4468](https://github.com/docker/docker-agent/pull/4468) - feat(acp): persist message identities and expose tool names
+- [#4469](https://github.com/docker/docker-agent/pull/4469) - perf(tui): reuse chat pane formatting while scrolling sidebar
+- [#4470](https://github.com/docker/docker-agent/pull/4470) - refactor(tui): make reusable components dependency-light
+
+
 ## [v1.143.0] - 2026-09-24
 
 This release delivers a large set of ACP (Agent Control Protocol) compatibility improvements, new evaluator and provider features, and significant TUI stability fixes, alongside broad test modernization using Go's synctest framework.
@@ -6596,3 +6687,5 @@ This release improves the terminal user interface with better error handling and
 [v1.142.0]: https://github.com/docker/docker-agent/releases/tag/v1.142.0
 
 [v1.143.0]: https://github.com/docker/docker-agent/releases/tag/v1.143.0
+
+[v1.144.0]: https://github.com/docker/docker-agent/releases/tag/v1.144.0
