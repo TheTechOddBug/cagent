@@ -584,7 +584,7 @@ func (p *chatPage) attentionDialogCmd(event tea.Msg) tea.Cmd {
 		return nil
 	}
 	return core.CmdHandler(dialog.OpenDialogMsg{
-		Model:            dialog.NewAttentionDialog(p.ctx(), p.ar, p.app, p.sessionState, event),
+		Model:            dialog.NewAttentionDialog(p.ctx(), p.ar, p.app, p.sessionState, event, p.toolRenderers),
 		OriginatingEvent: event,
 	})
 }

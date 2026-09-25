@@ -106,6 +106,7 @@ type expandedToolView interface {
 
 // Model represents a collapsible reasoning + tool calls block.
 type Model struct {
+	toolRenderers    *tool.Registry
 	ar               *animation.Runtime
 	id               string
 	agentName        string
@@ -125,20 +126,35 @@ type Model struct {
 	now func() time.Time
 }
 
+type Option func(*Model)
+
+func WithToolRenderers(registry *tool.Registry) Option {
+	return func(m *Model) {
+		if registry != nil {
+			m.toolRenderers = registry
+		}
+	}
+}
+
 // New creates a new reasoning block.
-func New(ar *animation.Runtime, id, agentName string, sessionState service.SessionStateReader) *Model {
+func New(ar *animation.Runtime, id, agentName string, sessionState service.SessionStateReader, opts ...Option) *Model {
 	if ar == nil {
 		panic("reasoningblock: nil animation runtime")
 	}
-	return &Model{
-		ar:           ar,
-		animationSub: ar.Subscribe(), id: id,
+	m := &Model{
+		toolRenderers: tool.NewRegistry(),
+		ar:            ar,
+		animationSub:  ar.Subscribe(), id: id,
 		agentName:    agentName,
 		expanded:     sessionState == nil || sessionState.ExpandThinking(),
 		width:        80,
 		sessionState: sessionState,
 		now:          defaultNow,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // ID returns the block's unique identifier.
@@ -210,14 +226,14 @@ func (m *Model) AddToolCall(msg *types.Message) tea.Cmd {
 	for i, entry := range m.toolEntries {
 		if entry.msg.ToolCall.ID == msg.ToolCall.ID {
 			m.toolEntries[i].msg = msg
-			m.toolEntries[i].view = tool.New(m.ar, msg, m.sessionState)
+			m.toolEntries[i].view = m.toolRenderers.New(m.ar, msg, m.sessionState)
 			m.toolEntries[i].view.SetSize(m.contentWidth(), 0)
 			return m.toolEntries[i].view.Init()
 		}
 	}
 
 	// New tool call - add to entries and track position in content sequence
-	view := tool.New(m.ar, msg, m.sessionState)
+	view := m.toolRenderers.New(m.ar, msg, m.sessionState)
 	view.SetSize(m.contentWidth(), 0)
 	toolIndex := len(m.toolEntries)
 	m.toolEntries = append(m.toolEntries, toolEntry{msg: msg, view: view})
@@ -299,7 +315,7 @@ func (m *Model) UpdateToolResult(toolCallID, content string, status types.ToolSt
 		}
 
 		// Recreate view to pick up new state
-		view := tool.New(m.ar, entry.msg, m.sessionState)
+		view := m.toolRenderers.New(m.ar, entry.msg, m.sessionState)
 		view.SetSize(m.contentWidth(), 0)
 		m.toolEntries[i] = entry
 		m.toolEntries[i].view = view

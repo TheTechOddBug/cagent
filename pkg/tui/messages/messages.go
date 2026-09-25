@@ -13,3 +13,6 @@
 // messages by the domain they affect, making it easier to understand
 // which components handle which messages.
 package messages
+
+// ToggleDiffViewMsg invalidates views after changing the diff layout.
+type ToggleDiffViewMsg struct{}

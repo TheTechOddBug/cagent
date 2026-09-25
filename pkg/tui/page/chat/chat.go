@@ -23,6 +23,8 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/components/sidebar"
+	"github.com/docker/docker-agent/pkg/tui/components/tool"
+	tooldefaults "github.com/docker/docker-agent/pkg/tui/components/tool/defaults"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -201,6 +203,7 @@ const maxQueuedMessages = 5
 //
 //nolint:gocritic // Kept near its supporting queued-message declarations.
 type chatPage struct {
+	toolRenderers *tool.Registry
 	ar            *animation.Runtime
 	width, height int
 
@@ -389,13 +392,15 @@ func defaultKeyMap() KeyMap {
 // New creates a new chat page
 func New(ar *animation.Runtime, ctx context.Context, a *app.App, sessionState *service.SessionState, opts ...PageOption) Page {
 	pageCtx, cancel := context.WithCancel(ctx)
+	registry := tooldefaults.NewRegistry()
 	p := &chatPage{
+		toolRenderers:     registry,
 		ar:                ar,
 		cancel:            cancel,
 		ctx:               func() context.Context { return context.WithoutCancel(ctx) },
 		inputScope:        newInputScope(context.WithoutCancel(ctx), a),
 		sidebar:           sidebar.New(ar, pageCtx, sessionState),
-		messages:          messages.New(ar, sessionState),
+		messages:          messages.New(ar, sessionState, messages.WithToolRenderers(registry)),
 		app:               a,
 		keyMap:            defaultKeyMap(),
 		commandParser:     commands.NewParser(),
@@ -412,6 +417,15 @@ func New(ar *animation.Runtime, ctx context.Context, a *app.App, sessionState *s
 
 // PageOption configures a chat page.
 type PageOption func(*chatPage)
+
+func WithToolRenderers(registry *tool.Registry) PageOption {
+	return func(p *chatPage) {
+		if registry != nil {
+			p.toolRenderers = registry
+			p.messages.SetToolRenderers(registry)
+		}
+	}
+}
 
 // WithLeanMode creates a lean chat page with no sidebar.
 func WithLeanMode() PageOption {

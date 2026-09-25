@@ -10,7 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
-	toolcomponent "github.com/docker/docker-agent/pkg/tui/components/tool"
+	tooldefaults "github.com/docker/docker-agent/pkg/tui/components/tool/defaults"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
@@ -56,9 +56,7 @@ func EnsureToolDefinition(toolCall tools.ToolCall, toolDef tools.Tool) tools.Too
 	return toolDef
 }
 
-// RenderTool renders a tool call with the same renderer registry used by the
-// full TUI. This keeps built-in tools and registered custom renderers visually
-// consistent between the normal and lean interfaces.
+// RenderTool uses the full builtin renderer bundle, like the normal TUI.
 func RenderTool(t ToolView, width int) []string {
 	return RenderToolWithState(&t, width, 0, service.StaticSessionState{})
 }
@@ -79,7 +77,7 @@ func RenderToolWithState(t *ToolView, width, frame int, sessionState service.Ses
 	innerWidth := max(width-boxStyle.GetHorizontalFrameSize(), 1)
 
 	ar := animation.NewSnapshotRuntime(time.Duration(frame) * animation.ChatSpinnerFrameDuration)
-	view := toolcomponent.New(ar, t.message, sessionState)
+	view := tooldefaults.NewRegistry().New(ar, t.message, sessionState)
 	view.SetSize(innerWidth, 0)
 	if t.message.ToolStatus == tuitypes.ToolStatusPending || t.message.ToolStatus == tuitypes.ToolStatusRunning {
 		defer animation.StopView(view)

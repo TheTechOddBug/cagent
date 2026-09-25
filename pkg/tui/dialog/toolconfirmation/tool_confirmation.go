@@ -45,8 +45,8 @@ type (
 	}
 )
 
-// ToolConfirmationResponse represents the user's response to tool confirmation
-type ToolConfirmationResponse struct {
+// Response represents the user's response to tool confirmation
+type Response struct {
 	Response string // "approve", "reject", or "approve-session"
 }
 
@@ -333,9 +333,9 @@ func (d *toolConfirmationDialog) renderMetadata(contentWidth int) string {
 }
 
 // NewToolConfirmationDialog creates a new tool confirmation dialog
-func NewToolConfirmationDialog(ar *animation.Runtime, msg *runtime.ToolCallConfirmationEvent, sessionState ConfirmationSessionState) common.Dialog {
+func NewToolConfirmationDialog(ar *animation.Runtime, msg *runtime.ToolCallConfirmationEvent, sessionState ConfirmationSessionState, opts ...messages.Option) common.Dialog {
 	// Create scrollable view with minimal initial size (will be updated in SetSize)
-	scrollView := messages.NewScrollableView(ar, 1, 1, sessionState)
+	scrollView := messages.NewScrollableView(ar, 1, 1, sessionState, opts...)
 
 	// Add the tool call message to the view
 	scrollView.AddOrUpdateToolCall(

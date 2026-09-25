@@ -36,6 +36,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/statusbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tabbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
+	tooldefaults "github.com/docker/docker-agent/pkg/tui/components/tool/defaults"
 	"github.com/docker/docker-agent/pkg/tui/components/tour"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -71,9 +72,10 @@ const (
 
 // Model is the top-level TUI model that wraps the chat page.
 type appModel struct {
-	ar           *animation.Runtime
-	shutdownDone <-chan struct{}
-	cleanupOnce  sync.Once
+	toolRenderers *tool.Registry
+	ar            *animation.Runtime
+	shutdownDone  <-chan struct{}
+	cleanupOnce   sync.Once
 
 	// cleanupAllOnce guards the full cleanupAll shutdown sequence so repeat
 	// invocations (ExitSessionMsg followed by ExitConfirmedMsg, …) are no-ops:
@@ -446,7 +448,7 @@ func WithTranscriber(t Transcriber) Option {
 	}
 }
 
-// WithToolRenderers registers custom tool-call renderers, keyed by tool name
+// WithToolRenderers registers custom tool-call renderers for this TUI, keyed by tool name
 // (e.g. "add") or a "category:<name>" key (e.g. "category:compute"). Registered
 // renderers take precedence over the built-in ones, letting an embedder customize
 // how specific tools are displayed — e.g. typesetting a calculator's result as
@@ -455,9 +457,9 @@ func WithTranscriber(t Transcriber) Option {
 // See pkg/tui/components/tool for the Builder contract; a renderer is typically
 // a thin wrapper around toolcommon.NewBase.
 func WithToolRenderers(renderers map[string]tool.Builder) Option {
-	return func(*appModel) {
+	return func(m *appModel) {
 		for key, b := range renderers {
-			tool.Register(key, b)
+			m.toolRenderers.Register(key, b)
 		}
 	}
 }
@@ -494,8 +496,9 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 	initialTab := &tabModel{sessionState: initialSessionState}
 
 	m := &appModel{
-		ar:           ar,
-		shutdownDone: ctx.Done(),
+		ar:            ar,
+		shutdownDone:  ctx.Done(),
+		toolRenderers: tooldefaults.NewRegistry(),
 		buildCommandCategories: func(ctx context.Context, _ tea.Model) []commands.Category {
 			return commanddefaults.BuildCommandCategories(ctx, initialApp)
 		},
@@ -644,6 +647,7 @@ func (m *appModel) commandCategories() []commands.Category {
 // appModel configuration (e.g. lean mode).
 func (m *appModel) chatPageOpts() []chat.PageOption {
 	opts := []chat.PageOption{
+		chat.WithToolRenderers(m.toolRenderers),
 		chat.WithCommandParser(commands.NewParser(m.commandCategories()...)),
 		chat.WithLayoutSettings(m.layoutSettings),
 		chat.WithSendMode(m.sendMode),

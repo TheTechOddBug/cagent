@@ -80,7 +80,7 @@ func (m *appModel) replayPendingEvent(tabID string) tea.Cmd {
 		model := tab.attentionDialogs[event]
 		delete(tab.attentionDialogs, event)
 		if model == nil {
-			model = dialog.NewAttentionDialog(m.ctx(), m.ar, runner.App, tab.sessionState, event)
+			model = dialog.NewAttentionDialog(m.ctx(), m.ar, runner.App, tab.sessionState, event, m.toolRenderers)
 		}
 		if model != nil {
 			cmds = append(cmds, m.updateDialogCmd(dialog.OpenDialogMsg{Model: model, OriginatingEvent: event}))
