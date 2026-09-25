@@ -1,8 +1,8 @@
 package modelpicker
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/junegunn/fzf/src/algo"
@@ -52,8 +52,8 @@ func Filter(choices []runtime.ModelChoice, query string) []runtime.ModelChoice {
 			matches = append(matches, scoredChoice{choice: choice, score: score})
 		}
 	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		return matches[i].score > matches[j].score
+	slices.SortStableFunc(matches, func(a, b scoredChoice) int {
+		return cmp.Compare(b.score, a.score)
 	})
 
 	result := make([]runtime.ModelChoice, len(matches))
