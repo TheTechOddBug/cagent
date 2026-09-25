@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // startTestProgram runs a bubbletea program around root in the background and
@@ -33,8 +34,36 @@ func startTestProgram(t *testing.T, root *appModel, model tea.Model, opts ...tea
 	return program
 }
 
+func TestStreamingMotionModelReadyAfterStartupResizeFrame(t *testing.T) {
+	root, _, _ := frozenClockRoot(t, 120, 40)
+	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
+	isReady := func() bool {
+		select {
+		case <-model.ready:
+			return true
+		default:
+			return false
+		}
+	}
+
+	_ = model.View()
+	require.False(t, isReady(), "the initial view precedes the asynchronous startup resize")
+	_, _ = model.Update(struct{}{})
+	_ = model.View()
+	require.False(t, isReady(), "unrelated messages must not signal readiness")
+
+	_, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	require.False(t, isReady(), "the resized frame must be rendered before signaling readiness")
+	_ = model.View()
+	require.True(t, isReady())
+
+	_, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	_ = model.View()
+	require.True(t, isReady(), "later resizes must not close the channel again")
+}
+
 // startStreamingMotionProgram is startTestProgram for a streamingMotionModel;
-// it additionally blocks until the model has rendered its first frame.
+// it additionally blocks until the first frame following the startup size message.
 func startStreamingMotionProgram(t *testing.T, model *streamingMotionModel, opts ...tea.ProgramOption) *tea.Program {
 	t.Helper()
 	program := startTestProgram(t, model.root, model, opts...)
