@@ -11,9 +11,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/userprompt/types"
 )
 
-const ToolNameUserPrompt = "user_prompt"
+const ToolNameUserPrompt = types.ToolNameUserPrompt
 
 // CreateToolSet is used by the tools registry.
 func CreateToolSet() (tools.ToolSet, error) {

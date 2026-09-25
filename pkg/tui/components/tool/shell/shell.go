@@ -3,7 +3,7 @@ package shell
 import (
 	"strings"
 
-	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
+	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell/types"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/spinner"
 	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
