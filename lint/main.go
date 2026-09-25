@@ -62,6 +62,7 @@ var programCops = []prog.Cop{
 	rubocops.NewLintSplitTrimJoin(),
 	rubocops.NewLintFieldsSeq(),
 	CutPrefix,
+	CutSuffix,
 	SessionStateAccessors,
 	rubocops.NewLintStreamCloseSafety(),
 	ExclusiveStreamLease,

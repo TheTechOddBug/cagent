@@ -131,6 +131,12 @@ Preserve short-circuit evaluation and assignments to existing variables when
 using `strings.CutPrefix`; a redundant check may only need `TrimPrefix`.
 Generated files and frozen config versions are excluded.
 
+`Lint/CutSuffix` flags an adjacent `strings.HasSuffix` check and matching
+`TrimSuffix` or suffix-only slice, including early-return/continue guards.
+Only constant or local identifier inputs are matched; compound conditions,
+intervening work, and effectful expressions are excluded. Preserve original
+values, assignment scope, and evaluation order when introducing the cut result.
+
 `Lint/NewExpr` flags a fresh local declared only to return its address, recommending
 `new(expr)` instead. It requires the declaration and `return &x` to be adjacent, the
 variable to have no other uses, and skips composite literals (`&T{...}` stays clearer
