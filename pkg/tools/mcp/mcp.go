@@ -179,7 +179,7 @@ type Toolset struct {
 	// callTimeout bounds an individual callTool invocation, including its
 	// one reconnect-retry. Zero means no timeout (use the caller's ctx).
 	callTimeout time.Duration
-	// sessionOwned stdio connections are explicitly replaced, never auto-reconnected.
+	// sessionOwned connections are explicitly replaced, never auto-reconnected.
 	sessionOwned bool
 
 	mu sync.Mutex
@@ -531,11 +531,28 @@ func (ts *Toolset) Stop(ctx context.Context) error {
 		return nil
 	}
 	if ts.sessionOwned {
-		client := ts.mcpClient.(*stdioMCPClient)
-		stopKill := context.AfterFunc(ctx, client.cancelProcess)
-		defer stopKill()
-		defer client.cancelProcess()
-		return errors.Join(ts.supervisor.Stop(ctx), ctx.Err())
+		var forceClose func()
+		var finalize func(context.Context) error
+		switch client := ts.mcpClient.(type) {
+		case *stdioMCPClient:
+			forceClose = client.cancelProcess
+		case *sessionRemoteClient:
+			forceClose = client.forceClose
+			finalize = client.Close
+		}
+		forced := make(chan struct{})
+		stopForce := context.AfterFunc(ctx, func() { forceClose(); close(forced) })
+		defer func() {
+			if !stopForce() {
+				<-forced
+			}
+			forceClose()
+		}()
+		err := ts.supervisor.Stop(ctx)
+		if finalize != nil {
+			err = errors.Join(err, finalize(ctx))
+		}
+		return errors.Join(err, ctx.Err())
 	}
 	if err := ts.supervisor.Stop(ctx); err != nil && ctx.Err() == nil {
 		slog.ErrorContext(ctx, "Failed to stop MCP toolset", "server", ts.logID, "error", err)

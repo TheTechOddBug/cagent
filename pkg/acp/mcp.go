@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/coder/acp-go-sdk"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/docker/docker-agent/pkg/tools"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
@@ -22,37 +25,101 @@ import (
 
 const clientMCPSetupTimeout = 30 * time.Second
 
-func validateClientMCPServers(servers []acp.McpServer) ([]acp.McpServerStdio, error) {
-	result := make([]acp.McpServerStdio, 0, len(servers))
+type clientMCPServer struct {
+	stdio     *acp.McpServerStdio
+	url       string
+	transport string
+	headers   map[string]string
+}
+
+func validateClientMCPServers(servers []acp.McpServer) ([]clientMCPServer, error) {
+	result := make([]clientMCPServer, 0, len(servers))
 	seen := make(map[string]bool)
 	for i, server := range servers {
-		if server.Stdio == nil || server.Http != nil || server.Sse != nil || server.Acp != nil {
-			return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: only stdio transport is supported", i))
+		var spec clientMCPServer
+		var name string
+		var headers []acp.HttpHeader
+		variants := 0
+		if server.Stdio != nil {
+			variants++
 		}
-		s := *server.Stdio
-		if strings.TrimSpace(s.Name) == "" || seen[s.Name] {
+		if server.Http != nil {
+			variants++
+		}
+		if server.Sse != nil {
+			variants++
+		}
+		if server.Acp != nil {
+			variants++
+		}
+		if variants != 1 || server.Acp != nil {
+			return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: expected one stdio, http, or sse transport", i))
+		}
+		switch {
+		case server.Stdio != nil:
+			s := *server.Stdio
+			name = s.Name
+			if !filepath.IsAbs(s.Command) || strings.ContainsRune(s.Command, 0) {
+				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: command must be an absolute executable path", i))
+			}
+			for _, arg := range s.Args {
+				if strings.ContainsRune(arg, 0) {
+					return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: arguments must not contain NUL", i))
+				}
+			}
+			for _, env := range s.Env {
+				if env.Name == "" || strings.ContainsAny(env.Name, "=\x00") || strings.ContainsRune(env.Value, 0) {
+					return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: invalid environment variable", i))
+				}
+			}
+			s.Args, s.Env, s.Meta = slices.Clone(s.Args), slices.Clone(s.Env), nil
+			spec.stdio = &s
+		case server.Http != nil:
+			s := server.Http
+			if s.Type != "http" {
+				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: invalid http discriminator", i))
+			}
+			name, spec.url, spec.transport, headers = s.Name, s.Url, "streamable", s.Headers
+		case server.Sse != nil:
+			s := server.Sse
+			if s.Type != "sse" {
+				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: invalid sse discriminator", i))
+			}
+			name, spec.url, spec.transport, headers = s.Name, s.Url, "sse", s.Headers
+		}
+		if strings.TrimSpace(name) == "" || seen[name] {
 			return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: name must be nonempty and unique", i))
 		}
-		seen[s.Name] = true
-		if !filepath.IsAbs(s.Command) || strings.ContainsRune(s.Command, 0) {
-			return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: command must be an absolute executable path", i))
-		}
-		for _, arg := range s.Args {
-			if strings.ContainsRune(arg, 0) {
-				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: arguments must not contain NUL", i))
+		seen[name] = true
+		if spec.stdio == nil {
+			u, err := url.Parse(spec.url)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.Contains(spec.url, "#") || u.Opaque != "" {
+				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: expected an absolute HTTP(S) URL without userinfo or fragment", i))
+			}
+			spec.headers = make(map[string]string, len(headers))
+			for _, header := range headers {
+				key := http.CanonicalHeaderKey(header.Name)
+				_, duplicate := spec.headers[key]
+				if !httpguts.ValidHeaderFieldName(header.Name) || !httpguts.ValidHeaderFieldValue(header.Value) || duplicate || reservedClientMCPHeader(key) {
+					return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: invalid, duplicate, or reserved HTTP header", i))
+				}
+				spec.headers[key] = header.Value
 			}
 		}
-		for _, env := range s.Env {
-			if env.Name == "" || strings.ContainsAny(env.Name, "=\x00") || strings.ContainsRune(env.Value, 0) {
-				return nil, acp.NewInvalidParams(fmt.Sprintf("MCP server %d: invalid environment variable", i))
-			}
-		}
-		s.Args = slices.Clone(s.Args)
-		s.Env = slices.Clone(s.Env)
-		s.Meta = nil
-		result = append(result, s)
+		result = append(result, spec)
 	}
 	return result, nil
+}
+
+func reservedClientMCPHeader(name string) bool {
+	if strings.HasPrefix(name, "Mcp-") || strings.HasPrefix(name, "Proxy-") {
+		return true
+	}
+	switch name {
+	case "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "Te", "Trailer", "Upgrade", "Content-Length", "Content-Type", "Content-Encoding", "Accept", "Accept-Encoding", "Expect", "Last-Event-Id", "Idempotency-Key", "X-Idempotency-Key":
+		return true
+	}
+	return false
 }
 
 // clientMCPTools is a stable view shared by the session's agents, not a lifecycle owner.
@@ -185,7 +252,7 @@ func (g *clientMCPGeneration) close(ctx context.Context) error {
 	return g.closeErr
 }
 
-func prepareClientMCP(ctx context.Context, servers []acp.McpServerStdio, workingDir string) (*clientMCPGeneration, error) {
+func prepareClientMCP(ctx context.Context, servers []clientMCPServer, workingDir string) (*clientMCPGeneration, error) {
 	ctx, cancel := context.WithTimeout(ctx, clientMCPSetupTimeout)
 	defer cancel()
 	lifetime, stop := context.WithCancel(context.WithoutCancel(ctx))
@@ -193,11 +260,18 @@ func prepareClientMCP(ctx context.Context, servers []acp.McpServerStdio, working
 	prefix := "acp_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")[:16]
 	var instructions []string
 	for i, spec := range servers {
-		env := os.Environ()
-		for _, variable := range spec.Env {
-			env = append(env, variable.Name+"="+variable.Value)
+		name := prefix + "_" + strconv.Itoa(i)
+		var server *mcptools.Toolset
+		if spec.stdio != nil {
+			s := spec.stdio
+			env := os.Environ()
+			for _, variable := range s.Env {
+				env = append(env, variable.Name+"="+variable.Value)
+			}
+			server = mcptools.NewSessionToolsetCommand(name, s.Command, s.Args, env, workingDir)
+		} else {
+			server = mcptools.NewSessionRemoteToolset(name, spec.url, spec.transport, spec.headers)
 		}
-		server := mcptools.NewSessionToolsetCommand(prefix+"_"+strconv.Itoa(i), spec.Command, spec.Args, env, workingDir)
 		tools.ConfigureHandlers(server, tools.ScopedElicitationHandler, tools.SamplingScopeHandler, tools.SamplingWithToolsScopeHandler, nil, false, "")
 		g.servers = append(g.servers, server)
 		if err := server.Start(ctx); err != nil {

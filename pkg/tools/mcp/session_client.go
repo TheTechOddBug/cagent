@@ -28,6 +28,7 @@ import (
 // single-MCP agent, useless in any agent wired to two or more.
 type sessionClient struct {
 	session                  *gomcp.ClientSession
+	sanitizeError            func(error) error
 	serverAddress            string
 	toolListChangedHandler   func()
 	promptListChangedHandler func()
@@ -44,6 +45,13 @@ type inflightCall struct {
 	scope  tools.HandlerScope
 	ctx    context.Context //nolint:containedctx // bounded by CallTool; canceled when unregistered
 	cancel context.CancelFunc
+}
+
+func (c *sessionClient) safeError(err error) error {
+	if c.sanitizeError != nil {
+		return c.sanitizeError(err)
+	}
+	return err
 }
 
 // setSession stores the session under the write lock.
@@ -159,6 +167,7 @@ func (c *sessionClient) ListTools(ctx context.Context, request *gomcp.ListToolsP
 				// Record each error inline rather than only the
 				// last one — paginated lists may yield multiple
 				// failures and the trace should reflect them all.
+				err = c.safeError(err)
 				span.RecordError(err, "")
 			} else if tool != nil {
 				count++
@@ -195,6 +204,7 @@ func (c *sessionClient) CallTool(ctx context.Context, request *gomcp.CallToolPar
 	defer c.unregisterCallContext(callID)
 	result, err := s.CallTool(spanCtx, request)
 	if err != nil {
+		err = c.safeError(err)
 		span.RecordError(err, "")
 	}
 	return result, err
@@ -223,6 +233,7 @@ func (c *sessionClient) ListPrompts(ctx context.Context, request *gomcp.ListProm
 		}
 		for prompt, err := range s.Prompts(spanCtx, request) {
 			if err != nil {
+				err = c.safeError(err)
 				span.RecordError(err, "")
 			}
 			if !yield(prompt, err) {
@@ -255,6 +266,7 @@ func (c *sessionClient) GetPrompt(ctx context.Context, request *gomcp.GetPromptP
 
 	result, err := s.GetPrompt(spanCtx, request)
 	if err != nil {
+		err = c.safeError(err)
 		span.RecordError(err, "")
 	}
 	return result, err
