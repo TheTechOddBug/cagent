@@ -150,12 +150,13 @@ func resolveJSONPointer(root map[string]any, pointer string) (map[string]any, bo
 	if pointer == "" {
 		return root, true
 	}
-	if !strings.HasPrefix(pointer, "/") {
+	rest, found := strings.CutPrefix(pointer, "/")
+	if !found {
 		return nil, false
 	}
 
 	var current any = root
-	for tok := range strings.SplitSeq(pointer[1:], "/") {
+	for tok := range strings.SplitSeq(rest, "/") {
 		tok = strings.ReplaceAll(tok, "~1", "/")
 		tok = strings.ReplaceAll(tok, "~0", "~")
 
