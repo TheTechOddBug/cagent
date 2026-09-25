@@ -74,10 +74,11 @@ func literalsByValue(literals map[*ast.BasicLit]string) map[string]bool {
 }
 
 func isLegacyEnvVar(value string) bool {
-	if !strings.HasPrefix(value, legacyEnvPrefix) || len(value) == len(legacyEnvPrefix) {
+	suffix, found := strings.CutPrefix(value, legacyEnvPrefix)
+	if !found || suffix == "" {
 		return false
 	}
-	for _, r := range value[len(legacyEnvPrefix):] {
+	for _, r := range suffix {
 		if r != '_' && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			return false
 		}

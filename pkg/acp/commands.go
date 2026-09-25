@@ -75,11 +75,11 @@ func (a *Agent) dispatchCommand(ctx context.Context, s *Session, prompt []acp.Co
 		leading.WriteString(block.Text.Text)
 		count++
 	}
-	text := leading.String()
-	if !strings.HasPrefix(text, "/") {
+	name, ok := strings.CutPrefix(leading.String(), "/")
+	if !ok {
 		return prompt, false, nil
 	}
-	name, args := text[1:], ""
+	args := ""
 	if i := strings.IndexFunc(name, unicode.IsSpace); i >= 0 {
 		_, width := utf8.DecodeRuneInString(name[i:])
 		args = name[i+width:]

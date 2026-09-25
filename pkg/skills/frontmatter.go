@@ -11,11 +11,12 @@ func parseFrontmatter(content string) (Skill, bool) {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
 
-	if !strings.HasPrefix(content, "---") {
+	rest, found := strings.CutPrefix(content, "---")
+	if !found {
 		return Skill{}, false
 	}
 
-	endIndex := strings.Index(content[3:], "\n---")
+	endIndex := strings.Index(rest, "\n---")
 	if endIndex == -1 {
 		return Skill{}, false
 	}

@@ -389,7 +389,8 @@ func parseAuthParams(wwwAuth string) map[string]string {
 		}
 		name := strings.ToLower(s[:nameEnd])
 		s = strings.TrimLeft(s[nameEnd:], " \t")
-		if !strings.HasPrefix(s, "=") {
+		rest, found := strings.CutPrefix(s, "=")
+		if !found {
 			// A bare token rather than a name=value auth-param. In a
 			// multi-challenge header this is the next challenge's
 			// auth-scheme token (e.g. "Bearer" in
@@ -403,7 +404,7 @@ func parseAuthParams(wwwAuth string) map[string]string {
 			// documented, deterministic behavior on such input.
 			continue
 		}
-		s = strings.TrimLeft(s[1:], " \t")
+		s = strings.TrimLeft(rest, " \t")
 
 		var value string
 		if strings.HasPrefix(s, `"`) {

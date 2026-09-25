@@ -581,11 +581,11 @@ func (p *parser) tryBlockquote(line string) bool {
 	var quoteLines []string
 	for p.lineIdx < len(p.lines) {
 		l := strings.TrimLeft(p.lines[p.lineIdx], " \t")
-		if !strings.HasPrefix(l, ">") {
+		content, found := strings.CutPrefix(l, ">")
+		if !found {
 			break
 		}
-		// Remove the > and optional space
-		content := strings.TrimPrefix(l, ">")
+		// Remove the optional space.
 		content = strings.TrimPrefix(content, " ")
 		quoteLines = append(quoteLines, content)
 		p.lineIdx++
@@ -612,11 +612,11 @@ func (p *parser) renderBlockquoteContent(lines []string, indent string, availabl
 			var nestedLines []string
 			for i < len(lines) {
 				l := strings.TrimSpace(lines[i])
-				if !strings.HasPrefix(l, ">") {
+				content, found := strings.CutPrefix(l, ">")
+				if !found {
 					break
 				}
-				// Strip the > and optional space
-				content := strings.TrimPrefix(l, ">")
+				// Remove the optional space.
 				content = strings.TrimPrefix(content, " ")
 				nestedLines = append(nestedLines, content)
 				i++
@@ -1454,13 +1454,12 @@ func (p *parser) renderListBlockquote(bulletWidth int) {
 		line := p.lines[p.lineIdx]
 		ltrimmed := strings.TrimLeft(line, " \t")
 
-		// Check if this line is part of the blockquote
-		if !strings.HasPrefix(ltrimmed, ">") {
+		content, found := strings.CutPrefix(ltrimmed, ">")
+		if !found {
 			break
 		}
 
-		// Remove the > and optional space
-		content := strings.TrimPrefix(ltrimmed, ">")
+		// Remove the optional space.
 		content = strings.TrimPrefix(content, " ")
 		quoteLines = append(quoteLines, content)
 		p.lineIdx++

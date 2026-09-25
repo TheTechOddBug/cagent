@@ -66,10 +66,10 @@ func BuildSkillSystemMessage(prepared *PreparedSkillFork, attachedFiles []string
 // block from a SKILL.md payload. Returns the input unchanged if no
 // leading fence or no closing fence is found.
 func stripFrontmatter(content string) string {
-	if !strings.HasPrefix(content, "---") {
+	rest, ok := strings.CutPrefix(content, "---")
+	if !ok {
 		return content
 	}
-	rest := content[3:]
 	_, after, found := strings.Cut(rest, "\n---")
 	if !found {
 		return content
