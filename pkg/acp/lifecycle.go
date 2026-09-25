@@ -23,13 +23,14 @@ type sessionLifecycle struct {
 
 type agentOperation struct {
 	cancel    context.CancelFunc
+	done      chan struct{}
 	lifecycle *sessionLifecycle
 }
 
 // startOperationLocked enrolls work before shutdown can stop admission.
 func (a *Agent) startOperationLocked(ctx context.Context, lifecycle *sessionLifecycle) (context.Context, *agentOperation) {
 	ctx, cancel := context.WithCancel(ctx)
-	op := &agentOperation{cancel: cancel, lifecycle: lifecycle}
+	op := &agentOperation{cancel: cancel, lifecycle: lifecycle, done: make(chan struct{})}
 	if a.pending == nil {
 		a.pending = make(map[*agentOperation]struct{})
 	}
@@ -58,6 +59,7 @@ func (a *Agent) finishOperation(op *agentOperation) {
 	}
 	a.mu.Unlock()
 	a.operations.Done()
+	close(op.done)
 }
 
 func (a *Agent) beginOperation(ctx context.Context) (context.Context, *agentOperation, error) {
@@ -65,6 +67,9 @@ func (a *Agent) beginOperation(ctx context.Context) (context.Context, *agentOper
 	defer a.mu.Unlock()
 	if a.stopped {
 		return nil, nil, errors.New("agent stopped")
+	}
+	if err := a.authenticationErrorLocked(); err != nil {
+		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -81,6 +86,9 @@ func (a *Agent) beginSessionConstruction(ctx context.Context, sid string) (conte
 	}
 	if a.deletion != nil {
 		return nil, nil, errors.New("session deletion in progress; retry after it finishes")
+	}
+	if err := a.authenticationErrorLocked(); err != nil {
+		return nil, nil, err
 	}
 	if a.team == nil {
 		return nil, nil, errors.New("agent not initialized")

@@ -27,6 +27,10 @@ func (a *Agent) UnstableDeleteSession(ctx context.Context, params acp.UnstableDe
 		a.mu.Unlock()
 		return acp.UnstableDeleteSessionResponse{}, err
 	}
+	if err := a.authenticationErrorLocked(); err != nil {
+		a.mu.Unlock()
+		return acp.UnstableDeleteSessionResponse{}, err
+	}
 	if a.stopped || a.team == nil {
 		a.mu.Unlock()
 		return acp.UnstableDeleteSessionResponse{}, acp.NewInvalidRequest("agent is stopped or not initialized")

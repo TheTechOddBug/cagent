@@ -43,17 +43,23 @@ type Agent struct {
 	loadTeam          func(context.Context, string) (*teamloader.LoadResult, error)
 	loadGate          chan struct{}
 
-	mu           sync.Mutex
-	stopped      bool
-	initializing bool
-	operations   sync.WaitGroup
-	pending      map[*agentOperation]struct{}
-	lifecycles   map[string]*sessionLifecycle
-	stopDone     chan struct{}
-	stopErr      error
-	cleanupErr   error
-	owned        map[*Session]struct{}
-	deletion     *sessionDeletion
+	mu                sync.Mutex
+	stopped           bool
+	initializing      bool
+	initialized       bool
+	credentialRefresh bool
+	authBlocked       bool
+	authenticating    *agentOperation
+	logout            *agentLogout
+	authRunConfig     *config.RuntimeConfig
+	operations        sync.WaitGroup
+	pending           map[*agentOperation]struct{}
+	lifecycles        map[string]*sessionLifecycle
+	stopDone          chan struct{}
+	stopErr           error
+	cleanupErr        error
+	owned             map[*Session]struct{}
+	deletion          *sessionDeletion
 }
 
 var _ acp.Agent = (*Agent)(nil)
@@ -73,6 +79,7 @@ type Session struct {
 	rootUsage       *runtime.Usage
 	usageCosts      map[string]float64
 	configModels    map[string]latest.ModelConfig
+	configProviders map[string]latest.ProviderConfig
 	configEnabled   bool
 	lastConfig      *sessionConfiguration
 	modelSelections map[string]modelSelection
@@ -277,7 +284,7 @@ func NewAgent(agentSource config.Source, runConfig *config.RuntimeConfig, sessio
 			teamloader.WithToolsetRegistry(createToolsetRegistry(a)),
 			teamloader.WithWorkingDir(workingDir),
 		)
-		return teamloader.LoadWithConfig(ctx, a.agentSource, a.runConfig, opts...)
+		return teamloader.LoadWithConfig(ctx, a.agentSource, a.runtimeConfig(ctx), opts...)
 	}
 	return a
 }
@@ -297,7 +304,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 		a.mu.Unlock()
 		return acp.InitializeResponse{}, errors.New("agent stopped")
 	}
-	if a.team != nil || a.initializing {
+	if a.initialized || a.team != nil || a.initializing {
 		a.mu.Unlock()
 		return acp.InitializeResponse{}, errors.New("agent already initialized or initializing")
 	}
@@ -312,13 +319,16 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 	}()
 
 	loadResult, err := a.loadTeamSerialized(ctx, a.defaultWorkingDir())
-	if err != nil {
+	if err != nil && !isAuthenticationRequired(err) {
 		return acp.InitializeResponse{}, fmt.Errorf("failed to load teams: %w", err)
 	}
 	a.mu.Lock()
 	if a.stopped || ctx.Err() != nil {
 		a.mu.Unlock()
-		cleanupErr := a.discardSession(ctx, op, &Session{team: loadResult.Team})
+		var cleanupErr error
+		if loadResult != nil {
+			cleanupErr = a.discardSession(ctx, op, &Session{team: loadResult.Team})
+		}
 		return acp.InitializeResponse{}, errors.Join(context.Canceled, cleanupErr)
 	}
 	a.clientFS = params.ClientCapabilities.Fs
@@ -326,19 +336,24 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 	if caps := params.ClientCapabilities.Elicitation; caps != nil {
 		a.clientElicitation = *caps
 	}
-	a.team = loadResult.Team
+	a.initialized = true
+	a.authBlocked = err != nil
+	if loadResult != nil {
+		a.team = loadResult.Team
+	}
 	a.mu.Unlock()
-	slog.DebugContext(ctx, "Teams loaded successfully", "source", a.agentSource.Name(), "agent_count", loadResult.Team.Size())
 
 	agentTitle := "docker agent"
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
+		AuthMethods:     hostCredentialMethods(),
 		AgentInfo: &acp.Implementation{
 			Name:    "docker agent",
 			Version: version.Version,
 			Title:   &agentTitle,
 		},
 		AgentCapabilities: acp.AgentCapabilities{
+			Auth:        acp.AgentAuthCapabilities{Logout: &acp.LogoutCapabilities{}},
 			LoadSession: true,
 			SessionCapabilities: acp.SessionCapabilities{
 				AdditionalDirectories: &acp.SessionAdditionalDirectoriesCapabilities{},
@@ -365,6 +380,15 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 	workingDir = cmp.Or(workingDir, a.defaultWorkingDir())
 	loadResult, err := a.loadTeamSerialized(ctx, workingDir)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if isAuthenticationRequired(err) {
+			a.mu.Lock()
+			a.credentialRefresh = true
+			a.mu.Unlock()
+			return nil, nil, hostCredentialsRequired()
+		}
 		return nil, nil, fmt.Errorf("failed to load session team: %w", err)
 	}
 	acpSess := &Session{team: loadResult.Team, clientMCP: &clientMCPTools{}}
@@ -386,12 +410,10 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 		return acpSess, nil, fmt.Errorf("failed to resolve default agent: %w", err)
 	}
 
-	rc := a.runConfig
-	if rc == nil {
-		rc = &config.RuntimeConfig{}
-	}
+	rc := a.runtimeConfig(ctx)
 	acpSess.configEnabled = true
 	acpSess.configModels = loadResult.Models
+	acpSess.configProviders = loadResult.Providers
 	switcher := &runtime.ModelSwitcherConfig{
 		Models: loadResult.Models, Providers: loadResult.Providers, ProviderRegistry: loadResult.ProviderRegistry,
 		AgentDefaultModels: loadResult.AgentDefaultModels, ModelsGateway: rc.ModelsGateway,
@@ -432,6 +454,9 @@ func (a *Agent) registerSessionIfAbsent(ctx context.Context, acpSess *Session, l
 	defer a.mu.Unlock()
 	if a.stopped {
 		return nil, false, errors.New("agent stopped")
+	}
+	if err := a.authenticationErrorLocked(); err != nil {
+		return nil, false, err
 	}
 	if a.lifecycles[acpSess.id] != lifecycle || lifecycle.closing {
 		return nil, false, errSessionClosed
@@ -528,18 +553,6 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 	return acp.NewSessionResponse{SessionId: acp.SessionId(sess.ID), ConfigOptions: configuration.Options, Modes: configuration.Modes}, nil
 }
 
-// Authenticate implements [acp.Agent].
-func (a *Agent) Authenticate(ctx context.Context, _ acp.AuthenticateRequest) (acp.AuthenticateResponse, error) {
-	slog.DebugContext(ctx, "ACP Authenticate called")
-	return acp.AuthenticateResponse{}, nil
-}
-
-// Logout implements [acp.Agent] (optional, not supported).
-func (a *Agent) Logout(ctx context.Context, _ acp.LogoutRequest) (acp.LogoutResponse, error) {
-	slog.DebugContext(ctx, "ACP Logout called (not supported)")
-	return acp.LogoutResponse{}, acp.NewMethodNotFound(acp.AgentMethodLogout)
-}
-
 // LoadSession implements [acp.AgentLoader].
 func (a *Agent) LoadSession(ctx context.Context, params acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
 	var configuration sessionConfiguration
@@ -631,6 +644,9 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 	overrides, _ := sess.ModelStateSnapshot()
 	for name, ref := range overrides {
 		if err := acpSess.rt.SetAgentModel(ctx, name, ref); err != nil {
+			if authErr := a.modelAuthenticationError(ctx, acpSess, ref); authErr != nil {
+				return authErr
+			}
 			return fmt.Errorf("restoring model override for %s: %w", name, err)
 		}
 		selected, _ := acpSess.team.Agent(name)
@@ -706,6 +722,10 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	slog.DebugContext(ctx, "ACP Prompt called", "session_id", sid)
 
 	a.mu.Lock()
+	if err := a.authenticationErrorLocked(); err != nil {
+		a.mu.Unlock()
+		return acp.PromptResponse{}, err
+	}
 	acpSess, ok := a.sessions[sid]
 	a.mu.Unlock()
 

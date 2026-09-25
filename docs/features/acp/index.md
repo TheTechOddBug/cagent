@@ -114,6 +114,30 @@ Cancellation takes precedence, and responses wait until runtime events have full
 
 Fatal root-runtime failures return JSON-RPC internal error `-32603` with `data.sessionId`, `data.runtimeCode`, and `data.error`. Budget termination is reported this way as `budget_exceeded`, not confused with an output-token or iteration limit. Diagnostic updates may already have streamed before the error response. Missing prompt/resume/load sessions return `-32002` (resource not found); invalid workspace parameters return `-32602` (invalid params).
 
+## Authentication and Logout
+
+ACP advertises the agent-managed `host-credentials` method (**Use configured host credentials**) and `agentCapabilities.auth.logout`. No keys are accepted in `authenticate`, `_meta`, or elicitation forms. This is explicit adoption of the agent host's configured credentials, not an interactive login or a check that a provider will accept a token.
+
+Working ambient credentials and local models continue to work without an extra authentication call. If initialization encounters a recognized missing model-credential or Docker gateway login error, it still returns capabilities and authentication methods. Session creation/load/resume then returns ACP `Authentication required` (`-32000`), rather than preventing the editor from initializing. Invalid configuration and unrelated initialization failures remain errors.
+
+Configure credentials **outside ACP, on the agent host**: for example, run `docker agent setup`, update the configured env file, or sign in to Docker Desktop for the Docker gateway. Then retry:
+
+```json
+{"method": "authenticate", "params": {"methodId": "host-credentials"}}
+```
+
+Authentication reloads credential sources and validates the configured team before reopening access. It can see newly created or changed credential files, while preserving source precedence and explicit provider overrides. It never changes the process environment, writes credentials, or substitutes another model. Changing the launching shell's environment cannot change an already-running agent; restart it to pick up those environment changes. Repeating authentication on a healthy connection is a no-op. Unknown method IDs are rejected. If a later session load detects missing credentials, close existing sessions before authenticating to refresh them; live sessions never have their clients silently replaced.
+
+```json
+{"method": "logout", "params": {}}
+```
+
+Logout is **connection-local**: it immediately blocks new work, cancels and drains session construction, prompts, background work, terminals, and MCP connections, then closes the validation team. Repeated logout joins the same cleanup. Canceling a logout request does not reopen access or abandon cleanup; shutdown also waits for it. Cleanup failure remains an error and prevents reauthentication.
+
+Logout does **not** delete shared API keys, ChatGPT/Docker logins, revoke provider tokens, or erase conversation history. Other agent processes/connections remain unaffected, and a newly started agent can still use those ambient credentials. After successful logout, this connection requires `authenticate` before new sessions, load/resume, prompts, configuration changes, listing, or deletion. Close/cancel remain available for cleanup; a deletion already admitted before logout may have committed. Resume/load saved sessions after reauthentication to continue them.
+
+Terminal authentication, browser/device-code login driven by the editor, and the deprecated experimental `env_var` authentication method are not advertised. Remote provider 401 responses are not treated as proof that the host credential snapshot should be replaced.
+
 ## Client-Supplied MCP Servers
 
 Pass stdio, Streamable HTTP (`type: "http"`), or legacy SSE (`type: "sse"`) MCP servers in `mcpServers` on `session/new`, `session/resume`, or `session/load`:
