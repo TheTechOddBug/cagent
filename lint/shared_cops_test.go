@@ -22,7 +22,7 @@ import (
 func TestSharedCopRegistrations(t *testing.T) {
 	t.Parallel()
 	require.Len(t, cops, 29)
-	require.Len(t, programCops, 14)
+	require.Len(t, programCops, 15)
 	counts := make(map[string]int)
 	for _, c := range cops {
 		counts[c.Name()]++
@@ -30,7 +30,7 @@ func TestSharedCopRegistrations(t *testing.T) {
 	for _, c := range programCops {
 		counts[c.Name()]++
 	}
-	assert.Len(t, counts, 43)
+	assert.Len(t, counts, 44)
 	for name, count := range counts {
 		assert.Equal(t, 1, count, name)
 	}

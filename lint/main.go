@@ -52,6 +52,7 @@ var cops = []cop.Cop{
 // the entire loaded program rather than once per file.
 var programCops = []prog.Cop{
 	SlicesClone,
+	prog.FromFile(SortStableFunc),
 	rubocops.NewLintPointerHelper(cop.WithScope(outsideFrozenConfig)),
 	rubocops.NewLintReflectFields(cop.WithScope(outsideFrozenConfig)),
 	rubocops.NewLintStdlibUUID(cop.WithScope(outsideFrozenConfig)),
