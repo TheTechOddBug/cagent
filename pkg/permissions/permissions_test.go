@@ -545,6 +545,10 @@ func TestMatchGlob(t *testing.T) {
 
 		// Wildcards
 		{"*", "anything", true},
+		{"*", "", true},
+		{"sudo*", "sudo rm -rf /", true},
+		{"sudo*", "su rm -rf /", false},
+		{"foo**", "foobar", true},
 		{"???", "abc", true},
 		{"???", "abcd", false},
 
