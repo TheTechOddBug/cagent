@@ -268,10 +268,7 @@ func stripANSI(s string) string {
 // lineHasContent reports whether the rendered line has user input after the
 // prompt has been stripped.
 func lineHasContent(line, prompt string) bool {
-	plain := stripANSI(line)
-	if prompt != "" && strings.HasPrefix(plain, prompt) {
-		plain = strings.TrimPrefix(plain, prompt)
-	}
+	plain := strings.TrimPrefix(stripANSI(line), prompt)
 
 	return strings.TrimSpace(plain) != ""
 }
@@ -279,10 +276,7 @@ func lineHasContent(line, prompt string) bool {
 // extractLineText extracts the user input text from a rendered view line,
 // stripping ANSI codes and the prompt prefix.
 func extractLineText(line, prompt string) string {
-	plain := stripANSI(line)
-	if prompt != "" && strings.HasPrefix(plain, prompt) {
-		plain = strings.TrimPrefix(plain, prompt)
-	}
+	plain := strings.TrimPrefix(stripANSI(line), prompt)
 	return strings.TrimRight(plain, " ")
 }
 
