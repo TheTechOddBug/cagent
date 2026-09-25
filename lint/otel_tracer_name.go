@@ -3,7 +3,9 @@ package main
 import (
 	"go/ast"
 	"go/constant"
+	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
@@ -121,4 +123,17 @@ func tracerName(p *cop.Pass, expr ast.Expr) (string, bool) {
 		return val, true
 	}
 	return "", false
+}
+
+// stringLit returns the unquoted value of a string-literal expression.
+func stringLit(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	val, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return val, true
 }

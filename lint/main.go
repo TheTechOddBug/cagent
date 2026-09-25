@@ -1,4 +1,4 @@
-// Package main runs project-specific linting cops using rubocop-go.
+// Package main runs shared and project-specific linting cops using rubocop-go.
 //
 // Usage: go run ./lint [path...]
 package main
@@ -14,10 +14,8 @@ import (
 	"github.com/dgageot/rubocop-go/runner"
 )
 
-// cops lists every project-specific cop, in declaration order.
-//
-// To add a cop: declare it as a var in its own file using cop.New (or a
-// cop.Func literal when it needs Scope/Types) and append it here.
+// Select shared cops explicitly so dependency upgrades cannot enable new rules.
+// Project-specific cops remain declared in this package.
 var cops = []cop.Cop{
 	ConfigVersionImport,
 	ConfigPackageName,
@@ -32,15 +30,15 @@ var cops = []cop.Cop{
 	HookConfigSync,
 	HookBuiltinsRegistered,
 	HookBuiltinsDocumented,
-	SlogContextual,
+	rubocops.NewLintSlogContextual(),
 	ToolArgumentsViaAIJSON,
-	ConstructorPurity,
+	rubocops.NewLintConstructorPurity(),
 	ConstructorCommandExec,
-	ConstructorNetworkIO,
-	WrapErrors,
-	ErrorStringMatching,
-	DeferMutexUnlock,
-	NewExpr,
+	rubocops.NewLintConstructorNetworkIO(),
+	rubocops.NewLintWrapErrors(),
+	rubocops.NewLintErrorStringMatching(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintDeferMutexUnlock(),
+	rubocops.NewLintNewExpr(cop.WithScope(outsideFrozenConfig)),
 	EnvironmentVariablePrefix,
 	NoStdoutInLibraries,
 	OTelTracerName,
@@ -53,16 +51,16 @@ var cops = []cop.Cop{
 // programCops lists whole-program, inter-procedural cops. These run once over
 // the entire loaded program rather than once per file.
 var programCops = []prog.Cop{
-	PointerHelper,
-	ReflectFields,
-	StdlibUUID,
-	URLClone,
-	JSONMarshalWrite,
-	BenchmarkLoop,
-	SplitTrimJoin,
-	FieldsSeq,
+	rubocops.NewLintPointerHelper(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintReflectFields(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintStdlibUUID(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintURLClone(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintJSONMarshalWrite(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintBenchmarkLoop(cop.WithScope(outsideFrozenConfig)),
+	rubocops.NewLintSplitTrimJoin(),
+	rubocops.NewLintFieldsSeq(),
 	SessionStateAccessors,
-	StreamCloseSafety,
+	rubocops.NewLintStreamCloseSafety(),
 	ExclusiveStreamLease,
 	DrainRunStreamBeforeRelease,
 	rubocops.NewLintContextConnectivity(),
