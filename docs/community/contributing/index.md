@@ -124,6 +124,13 @@ keys and preserve stable ties. Floating-point keys (NaN ordering), side-effectin
 comparators, generated code, tests, and frozen configs are excluded. The cop
 reports suggestions, not automatic rewrites.
 
+`Lint/CutPrefix` flags `strings.HasPrefix` paired with `TrimPrefix` or equivalent
+prefix slicing, including early-exit guards and switch cases. It matches resolved
+stdlib calls and stable arguments, stopping at intervening calls or mutations.
+Preserve short-circuit evaluation and assignments to existing variables when
+using `strings.CutPrefix`; a redundant check may only need `TrimPrefix`.
+Generated files and frozen config versions are excluded.
+
 `Lint/NewExpr` flags a fresh local declared only to return its address, recommending
 `new(expr)` instead. It requires the declaration and `return &x` to be adjacent, the
 variable to have no other uses, and skips composite literals (`&T{...}` stays clearer

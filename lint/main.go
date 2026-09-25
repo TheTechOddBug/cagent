@@ -61,6 +61,7 @@ var programCops = []prog.Cop{
 	rubocops.NewLintBenchmarkLoop(cop.WithScope(outsideFrozenConfig)),
 	rubocops.NewLintSplitTrimJoin(),
 	rubocops.NewLintFieldsSeq(),
+	CutPrefix,
 	SessionStateAccessors,
 	rubocops.NewLintStreamCloseSafety(),
 	ExclusiveStreamLease,
