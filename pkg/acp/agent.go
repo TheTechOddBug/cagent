@@ -298,6 +298,8 @@ func (a *Agent) SetAgentConnection(conn *acp.AgentSideConnection) {
 
 // Initialize implements [acp.Agent].
 func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
+	ctx, span := startACPRequest(ctx, "initialize", params.Meta)
+	defer span.End()
 	slog.DebugContext(ctx, "ACP Initialize called", "client_version", params.ProtocolVersion)
 
 	a.mu.Lock()
@@ -478,6 +480,8 @@ func (a *Agent) registerSessionIfAbsent(ctx context.Context, acpSess *Session, l
 
 // NewSession implements [acp.Agent].
 func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_ acp.NewSessionResponse, retErr error) {
+	ctx, span := startACPRequest(ctx, "session/new", params.Meta)
+	defer span.End()
 	slog.DebugContext(ctx, "ACP NewSession called", "cwd", params.Cwd)
 
 	servers, err := validateClientMCPServers(params.McpServers)
@@ -556,6 +560,8 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (_
 
 // LoadSession implements [acp.AgentLoader].
 func (a *Agent) LoadSession(ctx context.Context, params acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/load", params.Meta)
+	defer span.End()
 	var configuration sessionConfiguration
 	err := a.reconnectSession(ctx, acp.ResumeSessionRequest{
 		SessionId: params.SessionId, Cwd: params.Cwd,
@@ -566,6 +572,8 @@ func (a *Agent) LoadSession(ctx context.Context, params acp.LoadSessionRequest) 
 
 // CloseSession implements [acp.Agent].
 func (a *Agent) CloseSession(ctx context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/close", params.Meta)
+	defer span.End()
 	sid := string(params.SessionId)
 	slog.DebugContext(ctx, "ACP CloseSession called", "session_id", sid)
 
@@ -580,6 +588,8 @@ func (a *Agent) CloseSession(ctx context.Context, params acp.CloseSessionRequest
 
 // ResumeSession implements [acp.Agent].
 func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/resume", params.Meta)
+	defer span.End()
 	var configuration sessionConfiguration
 	err := a.reconnectSession(ctx, params, false, &configuration)
 	return acp.ResumeSessionResponse{ConfigOptions: configuration.Options, Modes: configuration.Modes}, err
@@ -702,9 +712,11 @@ func (a *Agent) reconnectSession(ctx context.Context, params acp.ResumeSessionRe
 }
 
 // Cancel implements [acp.Agent].
-func (a *Agent) Cancel(_ context.Context, params acp.CancelNotification) error {
+func (a *Agent) Cancel(ctx context.Context, params acp.CancelNotification) error {
+	ctx, span := startACPRequest(ctx, "session/cancel", params.Meta)
+	defer span.End()
 	sid := string(params.SessionId)
-	slog.Debug("ACP Cancel called", "session_id", sid)
+	slog.DebugContext(ctx, "ACP Cancel called", "session_id", sid)
 
 	a.mu.Lock()
 	acpSess, ok := a.sessions[sid]
@@ -719,6 +731,8 @@ func (a *Agent) Cancel(_ context.Context, params acp.CancelNotification) error {
 
 // Prompt implements [acp.Agent].
 func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.PromptResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/prompt", params.Meta)
+	defer span.End()
 	sid := string(params.SessionId)
 	slog.DebugContext(ctx, "ACP Prompt called", "session_id", sid)
 
@@ -783,6 +797,7 @@ func (a *Agent) sendUpdate(ctx context.Context, sessionID string, update acp.Ses
 		update = withMessageID(update, uuid.NewV4().String())
 	}
 	return a.conn.SessionUpdate(ctx, acp.SessionNotification{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Update:    update,
 	})
@@ -934,6 +949,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 	toolCallUpdate.ToolCallId = id
 
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(acpSess.id),
 		ToolCall:  toolCallUpdate,
 		Options: []acp.PermissionOption{
@@ -986,6 +1002,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session, e *runtime.MaxIterationsReachedEvent) error {
 	title := fmt.Sprintf("Maximum iterations (%d) reached", e.MaxIterations)
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(acpSess.id),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: "max_iterations",

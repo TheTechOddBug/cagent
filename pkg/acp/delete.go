@@ -18,6 +18,8 @@ type sessionDeletion struct {
 
 // UnstableDeleteSession implements the SDK's session/delete handler.
 func (a *Agent) UnstableDeleteSession(ctx context.Context, params acp.UnstableDeleteSessionRequest) (acp.UnstableDeleteSessionResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/delete", params.Meta)
+	defer span.End()
 	sid := string(params.SessionId)
 	if sid == "" {
 		return acp.UnstableDeleteSessionResponse{}, acp.NewInvalidParams("sessionId is required")

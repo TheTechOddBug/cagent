@@ -10,6 +10,7 @@ import (
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	otelmcp "github.com/docker/docker-agent/pkg/telemetry/mcp"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -310,7 +311,8 @@ func (c *sessionClient) requestContext(fallback context.Context) context.Context
 		return tools.WithoutHandlerScope(fallback)
 	}
 	for _, call := range c.inflight {
-		return tools.WithHandlerScope(fallback, call.scope)
+		owner := trace.ContextWithSpanContext(fallback, trace.SpanContextFromContext(call.ctx))
+		return tools.WithHandlerScope(owner, call.scope)
 	}
 	return tools.WithoutHandlerScope(fallback)
 }
@@ -320,7 +322,9 @@ func (c *sessionClient) elicitationContext(fallback context.Context) (context.Co
 	defer c.mu.RUnlock()
 	if len(c.inflight) == 1 {
 		for _, call := range c.inflight {
-			ctx, cancel := context.WithCancel(tools.WithHandlerScope(fallback, call.scope))
+			// Connection contexts outlive turns; retain the owning call's trace instead.
+			owner := trace.ContextWithSpanContext(fallback, trace.SpanContextFromContext(call.ctx))
+			ctx, cancel := context.WithCancel(tools.WithHandlerScope(owner, call.scope))
 			stop := context.AfterFunc(call.ctx, cancel)
 			if call.ctx.Err() != nil {
 				cancel()

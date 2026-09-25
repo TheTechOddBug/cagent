@@ -63,6 +63,8 @@ func (a *Agent) runtimeConfig(ctx context.Context) *config.RuntimeConfig {
 
 // Authenticate adopts configured credentials; it never collects or writes them.
 func (a *Agent) Authenticate(ctx context.Context, params acp.AuthenticateRequest) (acp.AuthenticateResponse, error) {
+	ctx, span := startACPRequest(ctx, "authenticate", params.Meta)
+	defer span.End()
 	empty := acp.AuthenticateResponse{}
 	a.mu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -182,7 +184,9 @@ type agentLogout struct {
 }
 
 // Logout revokes this connection's access and drains owned work, not host logins.
-func (a *Agent) Logout(ctx context.Context, _ acp.LogoutRequest) (acp.LogoutResponse, error) {
+func (a *Agent) Logout(ctx context.Context, params acp.LogoutRequest) (acp.LogoutResponse, error) {
+	ctx, span := startACPRequest(ctx, "logout", params.Meta)
+	defer span.End()
 	empty := acp.LogoutResponse{}
 	a.mu.Lock()
 	if err := ctx.Err(); err != nil {

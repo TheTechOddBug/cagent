@@ -132,7 +132,7 @@ func (t *terminalToolset) run(ctx context.Context, args shell.RunShellArgs, _ to
 	}
 	var exit acp.WaitForTerminalExitResponse
 	if runCtx.Err() == nil {
-		exit, err = owner.conn.WaitForTerminalExit(runCtx, acp.WaitForTerminalExitRequest{SessionId: owner.sid, TerminalId: op.id})
+		exit, err = owner.conn.WaitForTerminalExit(runCtx, acp.WaitForTerminalExitRequest{Meta: traceMeta(runCtx, nil), SessionId: owner.sid, TerminalId: op.id})
 	} else {
 		err = runCtx.Err()
 	}
@@ -145,7 +145,7 @@ func (t *terminalToolset) run(ctx context.Context, args shell.RunShellArgs, _ to
 	}
 	outputCtx, stopOutput := context.WithTimeout(context.WithoutCancel(ctx), terminalCleanupBudget)
 	defer stopOutput()
-	output, outputErr := owner.conn.TerminalOutput(outputCtx, acp.TerminalOutputRequest{SessionId: owner.sid, TerminalId: op.id})
+	output, outputErr := owner.conn.TerminalOutput(outputCtx, acp.TerminalOutputRequest{Meta: traceMeta(outputCtx, nil), SessionId: owner.sid, TerminalId: op.id})
 	if outputErr != nil {
 		return tools.ResultError("Error reading ACP terminal output: " + outputErr.Error()), nil
 	}

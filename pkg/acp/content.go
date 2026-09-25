@@ -149,6 +149,7 @@ func (a *Agent) readResourceLink(ctx context.Context, sessionID string, rl *acp.
 		return "", false
 	}
 	resp, err := a.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
 	})
