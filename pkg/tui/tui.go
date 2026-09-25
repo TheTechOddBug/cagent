@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/commands"
+	commanddefaults "github.com/docker/docker-agent/pkg/tui/commands/defaults"
 	"github.com/docker/docker-agent/pkg/tui/components/completion"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
 	"github.com/docker/docker-agent/pkg/tui/components/editor/completions"
@@ -420,7 +421,7 @@ func WithDisabledCommands(slashCommands []string) Option {
 // WithCommandBuilder builds the command categories shown in the command
 // palette from the given function. It overrides the default command category
 // builder. To include the default commands, the given function should call
-// commands.BuildCommandCategories and merge the result with its own.
+// commanddefaults.BuildCommandCategories and merge the result with its own.
 //
 // The tea.Model passed to the builder function must not be accessed during
 // the build call itself - it should only be captured for use within command
@@ -496,7 +497,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		ar:           ar,
 		shutdownDone: ctx.Done(),
 		buildCommandCategories: func(ctx context.Context, _ tea.Model) []commands.Category {
-			return commands.BuildCommandCategories(ctx, initialApp)
+			return commanddefaults.BuildCommandCategories(ctx, initialApp)
 		},
 		supervisor:                    sv,
 		tabBar:                        tb,

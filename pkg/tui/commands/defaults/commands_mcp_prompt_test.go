@@ -1,4 +1,4 @@
-package commands
+package defaults
 
 import (
 	"testing"
@@ -6,26 +6,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
+	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 // parserForPrompt wires a single MCP-prompt item into a parser exactly as
 // BuildCommandCategories does, so Parse exercises the real item produced by
 // newMCPPromptItem.
-func parserForPrompt(info mcptools.PromptInfo) *Parser {
-	return NewParser(Category{
+func parserForPrompt(info tools.PromptInfo) *commands.Parser {
+	return commands.NewParser(commands.Category{
 		Name:     "MCP Prompts",
-		Commands: []Item{newMCPPromptItem(info.Name, info)},
+		Commands: []commands.Item{newMCPPromptItem(info.Name, info)},
 	})
 }
 
 // Regression guard: MCP-prompt items must carry SlashCommand + Immediate, or
-// Parser.Parse never matches them and the prompt falls through as plain chat
+// commands.Parser.Parse never matches them and the prompt falls through as plain chat
 // text instead of being invoked.
 func TestMCPPromptItem_WiredForSlashDispatch(t *testing.T) {
 	t.Parallel()
-	item := newMCPPromptItem("summarize", mcptools.PromptInfo{Name: "summarize"})
+	item := newMCPPromptItem("summarize", tools.PromptInfo{Name: "summarize"})
 	assert.Equal(t, "/summarize", item.SlashCommand)
 	assert.True(t, item.Immediate)
 }
@@ -33,9 +34,9 @@ func TestMCPPromptItem_WiredForSlashDispatch(t *testing.T) {
 // A non-empty argument string is mapped to the prompt's first declared argument.
 func TestMCPPromptItem_ParseMapsArgToFirstArgument(t *testing.T) {
 	t.Parallel()
-	parser := parserForPrompt(mcptools.PromptInfo{
+	parser := parserForPrompt(tools.PromptInfo{
 		Name: "summarize",
-		Arguments: []mcptools.PromptArgument{
+		Arguments: []tools.PromptArgument{
 			{Name: "topic"},
 			{Name: "tone"},
 		},
@@ -53,9 +54,9 @@ func TestMCPPromptItem_ParseMapsArgToFirstArgument(t *testing.T) {
 // empty argument map (the palette-click path).
 func TestMCPPromptItem_ParseNoArgNoRequiredRunsEmpty(t *testing.T) {
 	t.Parallel()
-	parser := parserForPrompt(mcptools.PromptInfo{
+	parser := parserForPrompt(tools.PromptInfo{
 		Name:      "summarize",
-		Arguments: []mcptools.PromptArgument{{Name: "topic"}}, // optional
+		Arguments: []tools.PromptArgument{{Name: "topic"}}, // optional
 	})
 
 	cmd := parser.Parse("/summarize")
@@ -70,9 +71,9 @@ func TestMCPPromptItem_ParseNoArgNoRequiredRunsEmpty(t *testing.T) {
 // dialog rather than invoking the prompt with a missing value.
 func TestMCPPromptItem_ParseNoArgWithRequiredOpensDialog(t *testing.T) {
 	t.Parallel()
-	parser := parserForPrompt(mcptools.PromptInfo{
+	parser := parserForPrompt(tools.PromptInfo{
 		Name:      "summarize",
-		Arguments: []mcptools.PromptArgument{{Name: "topic", Required: true}},
+		Arguments: []tools.PromptArgument{{Name: "topic", Required: true}},
 	})
 
 	cmd := parser.Parse("/summarize")

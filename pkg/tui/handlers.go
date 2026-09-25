@@ -23,7 +23,6 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
-	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/components/tool/editfile"
 	"github.com/docker/docker-agent/pkg/tui/core"
@@ -602,7 +601,7 @@ func (m *appModel) handleRestartToolset(name string) (tea.Model, tea.Cmd) {
 // --- MCP prompts ---
 
 func (m *appModel) handleShowMCPPromptInput(promptName string, promptInfo any) (tea.Model, tea.Cmd) {
-	info, ok := promptInfo.(mcptools.PromptInfo)
+	info, ok := promptInfo.(tools.PromptInfo)
 	if !ok {
 		return m, notification.ErrorCmd("Invalid prompt info")
 	}

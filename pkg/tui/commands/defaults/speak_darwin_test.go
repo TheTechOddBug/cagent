@@ -1,6 +1,6 @@
 //go:build darwin
 
-package commands
+package defaults
 
 import (
 	"testing"
