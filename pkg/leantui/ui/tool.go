@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
+	"github.com/docker/docker-agent/pkg/tui/components/tool"
 	tooldefaults "github.com/docker/docker-agent/pkg/tui/components/tool/defaults"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/styles"
@@ -20,6 +21,7 @@ import (
 // the same TUI message shape used by the full-screen TUI so the lean renderer
 // can delegate the visual representation to pkg/tui/components/tool.
 type ToolView struct {
+	renderers *tool.Registry
 	message   *tuitypes.Message
 	images    []InlineImage
 	lastWidth int
@@ -44,7 +46,8 @@ const MaxToolOutputLines = 12
 // NewToolView creates a tool call render model.
 func NewToolView(agentName string, toolCall tools.ToolCall, toolDef tools.Tool, status tuitypes.ToolStatus) *ToolView {
 	return &ToolView{
-		message: tuitypes.ToolCallMessage(agentName, toolCall, EnsureToolDefinition(toolCall, toolDef), status),
+		message:   tuitypes.ToolCallMessage(agentName, toolCall, EnsureToolDefinition(toolCall, toolDef), status),
+		renderers: tooldefaults.NewRegistry(),
 	}
 }
 
@@ -77,7 +80,10 @@ func RenderToolWithState(t *ToolView, width, frame int, sessionState service.Ses
 	innerWidth := max(width-boxStyle.GetHorizontalFrameSize(), 1)
 
 	ar := animation.NewSnapshotRuntime(time.Duration(frame) * animation.ChatSpinnerFrameDuration)
-	view := tooldefaults.NewRegistry().New(ar, t.message, sessionState)
+	if t.renderers == nil {
+		t.renderers = tooldefaults.NewRegistry()
+	}
+	view := t.renderers.New(ar, t.message, sessionState)
 	view.SetSize(innerWidth, 0)
 	if t.message.ToolStatus == tuitypes.ToolStatusPending || t.message.ToolStatus == tuitypes.ToolStatusRunning {
 		defer animation.StopView(view)
