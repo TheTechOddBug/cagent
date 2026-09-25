@@ -50,6 +50,8 @@ type MessageImageURL struct {
 }
 
 type Message struct {
+	// MessageID identifies a conversation message independently of provider and database IDs.
+	MessageID    string        `json:"message_id,omitempty"`
 	Role         MessageRole   `json:"role"`
 	Content      string        `json:"content"`
 	MultiContent []MessagePart `json:"multi_content,omitempty"`

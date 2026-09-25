@@ -107,3 +107,17 @@ func TestProviderState_JSONRoundTrip(t *testing.T) {
 	assert.Nil(t, plain.ProviderState)
 	assert.Nil(t, plain.ReplayableProviderState("anthropic"))
 }
+
+func TestMessageIDDoesNotInvalidateProviderState(t *testing.T) {
+	t.Parallel()
+	msg := assistantWithState(t)
+	before := msg.VisibleContentHash()
+	msg.MessageID = "conversation-id"
+	assert.Equal(t, before, msg.VisibleContentHash())
+	wire, err := json.Marshal(msg)
+	require.NoError(t, err)
+	var restored Message
+	require.NoError(t, json.Unmarshal(wire, &restored))
+	assert.Equal(t, msg.MessageID, restored.MessageID)
+	assert.Equal(t, "msg_1", restored.ProviderState.MessageID)
+}

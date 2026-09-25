@@ -213,3 +213,25 @@ func TestMergeEventsPreservesContentSessions(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeEventsPreservesMessageIDs(t *testing.T) {
+	t.Parallel()
+	for _, reasoning := range []bool{false, true} {
+		makeEvent := func(id, text string) tea.Msg {
+			if reasoning {
+				return runtime.AgentChoiceReasoning("root", "session", text, id)
+			}
+			return runtime.AgentChoice("root", "session", text, id)
+		}
+		events := []tea.Msg{makeEvent("one", "a"), makeEvent("one", "b"), makeEvent("two", "c"), makeEvent("", "d")}
+		merged := (&App{}).mergeEvents(events)
+		require.Len(t, merged, 3)
+		if reasoning {
+			assert.Equal(t, "one", merged[0].(*runtime.AgentChoiceReasoningEvent).MessageID)
+			assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceReasoningEvent).Content)
+		} else {
+			assert.Equal(t, "one", merged[0].(*runtime.AgentChoiceEvent).MessageID)
+			assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceEvent).Content)
+		}
+	}
+}

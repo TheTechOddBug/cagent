@@ -41,6 +41,7 @@ func newAgentContext(agentName string) AgentContext {
 type UserMessageEvent struct {
 	AgentContext
 
+	MessageID       string             `json:"message_id,omitempty"`
 	Type            string             `json:"type"`
 	Message         string             `json:"message"`
 	MultiContent    []chat.MessagePart `json:"multi_content,omitempty"`
@@ -61,6 +62,12 @@ func UserMessage(message, sessionID string, multiContent []chat.MessagePart, ses
 		SessionPosition: pos,
 		AgentContext:    newAgentContext(""),
 	}
+}
+
+func userMessageEvent(msg chat.Message, sessionID string, position int) Event {
+	event := UserMessage(msg.Content, sessionID, msg.MultiContent, position).(*UserMessageEvent)
+	event.MessageID = msg.MessageID
+	return event
 }
 
 func (e *UserMessageEvent) GetSessionID() string { return e.SessionID }
@@ -192,12 +199,18 @@ type AgentChoiceEvent struct {
 	Type      string `json:"type"`
 	Content   string `json:"content"`
 	SessionID string `json:"session_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
 }
 
 func (e *AgentChoiceEvent) GetSessionID() string { return e.SessionID }
 
-func AgentChoice(agentName, sessionID, content string) Event {
+func AgentChoice(agentName, sessionID, content string, messageID ...string) Event {
+	var id string
+	if len(messageID) > 0 {
+		id = messageID[0]
+	}
 	return &AgentChoiceEvent{
+		MessageID:    id,
 		Type:         "agent_choice",
 		Content:      content,
 		SessionID:    sessionID,
@@ -211,12 +224,18 @@ type AgentChoiceReasoningEvent struct {
 	Type      string `json:"type"`
 	Content   string `json:"content"`
 	SessionID string `json:"session_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
 }
 
 func (e *AgentChoiceReasoningEvent) GetSessionID() string { return e.SessionID }
 
-func AgentChoiceReasoning(agentName, sessionID, content string) Event {
+func AgentChoiceReasoning(agentName, sessionID, content string, messageID ...string) Event {
+	var id string
+	if len(messageID) > 0 {
+		id = messageID[0]
+	}
 	return &AgentChoiceReasoningEvent{
+		MessageID:    id,
 		Type:         "agent_choice_reasoning",
 		Content:      content,
 		SessionID:    sessionID,

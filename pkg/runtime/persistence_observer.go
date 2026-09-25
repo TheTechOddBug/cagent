@@ -42,6 +42,7 @@ type streamingState struct {
 	reasoningContent strings.Builder
 	agentName        string
 	messageID        int64 // ID of the in-flight row, 0 for none.
+	logicalID        string
 }
 
 // newPersistenceObserver returns an observer that persists to store, or
@@ -89,18 +90,22 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 
 	switch e := event.(type) {
 	case *AgentChoiceEvent:
+		p.beginStreamingMessage(e.MessageID)
 		p.streaming.content.WriteString(e.Content)
 		p.streaming.agentName = e.AgentName
 		p.persistStreamingContent(ctx, sess.ID)
 
 	case *AgentChoiceReasoningEvent:
+		p.beginStreamingMessage(e.MessageID)
 		p.streaming.reasoningContent.WriteString(e.Content)
 		p.streaming.agentName = e.AgentName
 		p.persistStreamingContent(ctx, sess.ID)
 
 	case *UserMessageEvent:
 		p.streaming = streamingState{}
-		if _, err := p.store.AddMessage(ctx, e.SessionID, session.UserMessage(e.Message, e.MultiContent...)); err != nil {
+		msg := session.UserMessage(e.Message, e.MultiContent...)
+		msg.Message.MessageID = e.MessageID
+		if _, err := p.store.AddMessage(ctx, e.SessionID, msg); err != nil {
 			slog.WarnContext(ctx, "Failed to persist user message", "session_id", e.SessionID, "error", err)
 		}
 
@@ -108,7 +113,7 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		// Finalise the streaming row (if any) with the canonical
 		// MessageAddedEvent payload, then reset for the next stream.
 		var err error
-		if p.streaming.messageID != 0 {
+		if p.streaming.messageID != 0 && e.Message.Message.Role == chat.MessageRoleAssistant && e.Message.Message.MessageID == p.streaming.logicalID {
 			err = p.store.UpdateMessage(ctx, e.SessionID, p.streaming.messageID, e.Message)
 		} else {
 			_, err = p.store.AddMessage(ctx, e.SessionID, e.Message)
@@ -179,6 +184,12 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 	}
 }
 
+func (p *PersistenceObserver) beginStreamingMessage(id string) {
+	if id != p.streaming.logicalID {
+		p.streaming = streamingState{logicalID: id}
+	}
+}
+
 // persistStreamingContent creates or updates the streaming assistant
 // message row. The runtime emits one AgentChoice / AgentChoiceReasoning
 // event per delta chunk, so this fires repeatedly during a streaming
@@ -189,6 +200,7 @@ func (p *PersistenceObserver) persistStreamingContent(ctx context.Context, sessi
 		AgentName: p.streaming.agentName,
 		Message: chat.Message{
 			Role:             chat.MessageRoleAssistant,
+			MessageID:        p.streaming.logicalID,
 			Content:          p.streaming.content.String(),
 			ReasoningContent: p.streaming.reasoningContent.String(),
 		},

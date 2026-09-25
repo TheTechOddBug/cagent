@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 
 	"github.com/docker/docker-agent/pkg/session"
 )
@@ -64,14 +65,20 @@ func WithEventObserver(o EventObserver) Opt {
 // channel. Observers run synchronously, so a slow observer
 // back-pressures the consumer.
 func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner <-chan Event) <-chan Event {
-	for _, obs := range r.observers {
+	observers := slices.Clone(r.observers)
+	for i, obs := range observers {
+		if p, ok := obs.(*PersistenceObserver); ok {
+			observers[i] = newPersistenceObserver(p.store)
+		}
+	}
+	for _, obs := range observers {
 		obs.OnRunStart(ctx, sess)
 	}
 	out := make(chan Event, cap(inner))
 	go func() {
 		defer close(out)
 		for event := range inner {
-			for _, obs := range r.observers {
+			for _, obs := range observers {
 				obs.OnEvent(ctx, sess, event)
 			}
 			out <- event

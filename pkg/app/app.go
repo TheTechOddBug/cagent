@@ -1932,7 +1932,7 @@ func mergeAgentChoiceRun(first *runtime.AgentChoiceEvent, rest []tea.Msg) (*runt
 	total := len(first.Content)
 	for _, msg := range rest {
 		next, ok := msg.(*runtime.AgentChoiceEvent)
-		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID {
+		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID || next.MessageID != first.MessageID {
 			break
 		}
 		total += len(next.Content)
@@ -1951,6 +1951,7 @@ func mergeAgentChoiceRun(first *runtime.AgentChoiceEvent, rest []tea.Msg) (*runt
 	return &runtime.AgentChoiceEvent{
 		Type:         first.Type,
 		SessionID:    first.SessionID,
+		MessageID:    first.MessageID,
 		Content:      b.String(),
 		AgentContext: first.AgentContext,
 	}, n
@@ -1963,7 +1964,7 @@ func mergeAgentChoiceReasoningRun(first *runtime.AgentChoiceReasoningEvent, rest
 	total := len(first.Content)
 	for _, msg := range rest {
 		next, ok := msg.(*runtime.AgentChoiceReasoningEvent)
-		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID {
+		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID || next.MessageID != first.MessageID {
 			break
 		}
 		total += len(next.Content)
@@ -1982,6 +1983,7 @@ func mergeAgentChoiceReasoningRun(first *runtime.AgentChoiceReasoningEvent, rest
 	return &runtime.AgentChoiceReasoningEvent{
 		Type:         first.Type,
 		SessionID:    first.SessionID,
+		MessageID:    first.MessageID,
 		Content:      b.String(),
 		AgentContext: first.AgentContext,
 	}, n

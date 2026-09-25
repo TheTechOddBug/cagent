@@ -270,6 +270,18 @@ Background usage is recorded without unsolicited client writes. It appears on th
 
 No `usage_update` is emitted until a positive root context-window limit is known. `/usage` can still report text with an unknown limit and recorded cost. The last limit may lag a model change; switching the selected agent without a matching root usage observation makes it unknown. Agent names and child context windows are not inferred from each other's usage events.
 
+## Message and Tool Identifiers
+
+Message chunks carry agent-generated `messageId` values. Chunks and rich-content blocks from the same message share an ID; assistant thoughts and visible answers use distinct IDs. New model-stream attempts get fresh logical IDs before their first delta, including retries/fallbacks. Response-cache hits also emit an identified answer, once per hit; cache entries containing XML tool payloads are treated as misses rather than exposing text suppressed during their original stream.
+
+Logical IDs are stored with messages and survive SQLite persistence and JSON round-trips. ACP derives opaque display UUIDs from the owning session, logical message, and content/thought channel. Persisted messages therefore keep their display IDs across active and cold `session/load`, while copied messages in a different owning session have different IDs. Nested histories use each child's owning session, not the root notification destination. User input is identified by the agent; the pinned SDK's obsolete draft `session/prompt.messageId` and response `userMessageId` fields are not adopted or echoed.
+
+Older messages without logical IDs receive deterministic replay IDs based on their owning session and original history position. Those IDs remain stable only while the history's positions remain unchanged. Warnings, command results, and other transient display notices receive fresh IDs; replayed stored errors have position-based IDs and are not correlated to their original live notices. IDs do not guarantee durability: store failures and interrupted child output that was never persisted cannot be recovered by replay. Tool-call invocation IDs remain separate, opaque, and fresh during replay.
+
+Tool calls also expose the exact programmatic `name`, separately from their human-readable `title`, on starts, permission requests, updates, and known completions. Client MCP names remain generation-specific aliases; names do not confer permission or transfer approvals. Unknown orphan names and invalid/oversized names are omitted, not guessed or truncated. Historical names do not enable replay of stored tool arguments or derived locations.
+
+The pinned ACP SDK lacks the stable tool `name` field. `Agent.NewConnection` (used by `serve acp`) promotes a private `_meta` carrier only at protocol tool-call boundaries. Embedders binding the SDK connection directly instead receive `docker-agent/internal-acp-tool-name` in the tool call's `_meta`; use `NewConnection` for the stable top-level field. Arbitrary tool payloads and unrelated metadata are not rewritten.
+
 ## Prompt Attachments
 
 ACP text remains text. Embedded text resources, binary resources, images, audio blocks, and successfully read file links become ordered document attachments with safe display names, MIME types, actual byte sizes, and inline payloads. Duplicate resources remain separate attachments. Text resources such as `application/json` are sent as text even when the model does not support that MIME as a binary format. Binary document support still depends on the selected model/provider.

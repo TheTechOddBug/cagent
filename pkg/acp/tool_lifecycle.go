@@ -19,6 +19,7 @@ type toolCallKey struct {
 
 type toolCallState struct {
 	id       acp.ToolCallId
+	name     string
 	rejected bool
 	result   *runtime.ToolCallResponseEvent
 }
@@ -38,7 +39,7 @@ func (t *toolCallTracker) report(ctx context.Context, a *Agent, s *Session, agen
 		return state, nil
 	}
 	if !exists {
-		state = &toolCallState{id: acp.ToolCallId(uuid.NewV4().String())}
+		state = &toolCallState{id: acp.ToolCallId(uuid.NewV4().String()), name: call.Function.Name}
 		if t.active == nil {
 			t.active = make(map[toolCallKey]*toolCallState)
 		}
@@ -49,6 +50,7 @@ func (t *toolCallTracker) report(ctx context.Context, a *Agent, s *Session, agen
 	if exists {
 		fields := buildToolCallUpdate(call, definition, status, workingDir)
 		update = acp.UpdateToolCall(state.id,
+			func(call *acp.SessionToolCallUpdate) { call.Meta = fields.Meta },
 			acp.WithUpdateTitle(*fields.Title), acp.WithUpdateKind(*fields.Kind),
 			acp.WithUpdateStatus(status), acp.WithUpdateRawInput(fields.RawInput), acp.WithUpdateLocations(fields.Locations),
 		)
@@ -70,10 +72,13 @@ func (t *toolCallTracker) complete(ctx context.Context, a *Agent, s *Session, ev
 	key := toolCallKey{agent: event.AgentName, id: event.ToolCallID}
 	state, exists := t.active[key]
 	if !exists {
-		state = &toolCallState{id: acp.ToolCallId(uuid.NewV4().String())}
+		state = &toolCallState{id: acp.ToolCallId(uuid.NewV4().String()), name: event.ToolDefinition.Name}
 	}
 	mappedEvent := *event
 	mappedEvent.ToolCallID = string(state.id)
+	if state.name != "" {
+		mappedEvent.ToolDefinition.Name = state.name
+	}
 	update := buildToolCallComplete(&mappedEvent)
 	if !exists {
 		fields := update.ToolCallUpdate
@@ -85,6 +90,7 @@ func (t *toolCallTracker) complete(ctx context.Context, a *Agent, s *Session, ev
 			title = "Tool call"
 		}
 		update = acp.StartToolCall(state.id, title,
+			func(call *acp.SessionUpdateToolCall) { call.Meta = toolNameMeta(state.name) },
 			acp.WithStartKind(determineToolKind(event.ToolDefinition.Name, event.ToolDefinition)),
 			acp.WithStartStatus(*fields.Status), acp.WithStartContent(fields.Content), acp.WithStartRawOutput(fields.RawOutput),
 		)
@@ -113,6 +119,7 @@ func (t *toolCallTracker) interrupt(ctx context.Context, a *Agent, s *Session) e
 			continue
 		}
 		update := acp.UpdateToolCall(state.id,
+			func(call *acp.SessionToolCallUpdate) { call.Meta = toolNameMeta(state.name) },
 			acp.WithUpdateStatus(acp.ToolCallStatusFailed),
 			acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock("Tool call interrupted before a result was available; side effects may have occurred."))}),
 		)

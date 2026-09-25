@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -51,8 +52,10 @@ func (r *LocalRuntime) registerDefaultTools() {
 
 // appendSteerAndEmit adds a steer message to the session and emits the corresponding event.
 func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, events EventSink) {
-	pos := sess.AddMessage(session.UserMessage(sm.Content, sm.MultiContent...))
-	events.Emit(UserMessage(sm.Content, sess.ID, sm.MultiContent, pos))
+	msg := session.UserMessage(sm.Content, sm.MultiContent...)
+	msg.Message.MessageID = uuid.NewV4().String()
+	pos := sess.AddMessage(msg)
+	events.Emit(userMessageEvent(msg.Message, sess.ID, pos))
 }
 
 // drainAndEmitSteered drains all messages from the steer queue and injects
@@ -429,7 +432,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// signal here too: "a real user prompt is at the tail of the session".
 	if sess.SendUserMessage && len(messages) > 0 {
 		lastMsg := messages[len(messages)-1]
-		sink.Emit(UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, sess.ItemCount()-1))
+		sink.Emit(userMessageEvent(lastMsg, sess.ID, sess.ItemCount()-1))
 
 		// user_prompt_submit fires once per real user message, after
 		// session_start and before the first model call.
@@ -1134,8 +1137,9 @@ func (r *LocalRuntime) runTurn(
 		// undivided agent turn.
 		if followUp, ok := r.followUpQueue.Dequeue(ctx); ok {
 			userMsg := session.UserMessage(followUp.Content, followUp.MultiContent...)
+			userMsg.Message.MessageID = uuid.NewV4().String()
 			pos := sess.AddMessage(userMsg)
-			events.Emit(UserMessage(followUp.Content, sess.ID, followUp.MultiContent, pos))
+			events.Emit(userMessageEvent(userMsg.Message, sess.ID, pos))
 			stop, msg, ctxMsgs := r.executeUserFollowupSubmitHooks(ctx, sess, a, followUp.Content, events)
 			if stop {
 				slog.WarnContext(ctx, "user_followup_submit hook signalled run termination",
@@ -1320,6 +1324,7 @@ func (r *LocalRuntime) recordAssistantMessage(
 	messageModel := modelID
 
 	assistantMessage := chat.Message{
+		MessageID:         res.MessageID,
 		Role:              chat.MessageRoleAssistant,
 		Content:           res.Content,
 		ReasoningContent:  res.ReasoningContent,
