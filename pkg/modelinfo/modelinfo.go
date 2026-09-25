@@ -336,10 +336,10 @@ func atLeastGPT(modelID string, major, minor int) bool {
 // Matches both "gemini-3-<family>" and "gemini-3.X-<family>" patterns.
 func UsesThinkingLevel(modelID string) bool {
 	m := normalize(modelID)
-	if !strings.HasPrefix(m, "gemini-3") {
+	rest, found := strings.CutPrefix(m, "gemini-3")
+	if !found {
 		return false
 	}
-	rest := m[len("gemini-3"):]
 	if rest == "" {
 		return false
 	}
