@@ -171,3 +171,11 @@ func TestConvertDocumentResponseInput_JSONText(t *testing.T) {
 	require.NotNil(t, parts[0].OfInputText)
 	assert.Contains(t, parts[0].OfInputText.Text, doc.Source.InlineText)
 }
+
+func TestResponseInputDoesNotEncodeAudioAsFile(t *testing.T) {
+	t.Parallel()
+	doc := chat.Document{Name: "audio", MimeType: "audio/wav", Source: chat.DocumentSource{InlineData: []byte{1, 2, 3}}}
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelinfo.CapsWith(false, false, true, false))
+	require.NoError(t, err)
+	assert.Empty(t, parts)
+}

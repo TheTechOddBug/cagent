@@ -100,8 +100,22 @@ func (a *Agent) buildUserMessage(ctx context.Context, sessionID string, prompt [
 			appendDocument("image", content.Image.MimeType, chat.DocumentSource{InlineData: data})
 
 		case content.Audio != nil:
-			slog.DebugContext(ctx, "Audio content received but not yet supported")
-			appendText("[Audio content provided]")
+			mimeType, ok := promptAudioMIME(content.Audio.MimeType)
+			if !ok {
+				appendText("[Attachment: audio (content unavailable)]")
+				continue
+			}
+			data, err := decodePromptData(content.Audio.Data)
+			if err != nil || len(data) == 0 {
+				appendText("[Attachment: audio (content unavailable)]")
+				continue
+			}
+			hasRichContent = true
+			multiContent = append(multiContent, chat.MessagePart{Type: chat.MessagePartTypeDocument, Document: &chat.Document{
+				Name: "audio", MimeType: mimeType, Size: int64(len(data)), Source: chat.DocumentSource{InlineData: data},
+			}})
+			// Keep audio-only turns meaningful when a model/provider drops the bytes.
+			appendText(promptAudioNote)
 		}
 	}
 
@@ -270,4 +284,18 @@ func promptDocument(name, mimeType string, source chat.DocumentSource) (*chat.Do
 		return doc, fmt.Sprintf("[Attachment: %s (empty)]", name), nil
 	}
 	return doc, "", nil
+}
+
+const promptAudioNote = "[Audio attachment supplied; not a transcript. Audio access depends on the selected model/provider.]"
+
+func promptAudioMIME(value string) (string, bool) {
+	if len(value) > 256 {
+		return "", false
+	}
+	mediaType, params, err := mime.ParseMediaType(value)
+	if err != nil || !strings.HasPrefix(mediaType, "audio/") || strings.Contains(mediaType, "*") {
+		return "", false
+	}
+	canonical := mime.FormatMediaType(mediaType, params)
+	return canonical, canonical != "" && len(canonical) <= 256
 }

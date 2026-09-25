@@ -365,7 +365,7 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 			PromptCapabilities: acp.PromptCapabilities{
 				EmbeddedContext: true,
 				Image:           true,
-				Audio:           false, // Not yet supported
+				Audio:           true,
 			},
 			McpCapabilities: acp.McpCapabilities{
 				Http: true,

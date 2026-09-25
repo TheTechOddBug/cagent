@@ -58,7 +58,7 @@ Host Application
 
 - **Stdio transport** — No network ports needed; ideal for subprocess integration
 - **Session persistence** — SQLite-backed sessions survive process restarts
-- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio, Streamable HTTP, and SSE MCP servers are supported; audio prompts are not supported; `session/load` replays persisted history, while `session/resume` reconnects without replay.
+- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio, Streamable HTTP, and SSE MCP servers are supported; audio prompt blocks are accepted (model/provider support varies); `session/load` replays persisted history, while `session/resume` reconnects without replay.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
@@ -224,7 +224,7 @@ Replay reads a captured copy of persisted history, including partial replies and
 
 Visible user/assistant messages, stored reasoning, tool results, and errors retain stored item order. Nested sessions replay at their stored positions; original cross-session streaming interleaving is not recoverable. System/implicit messages, internal compaction summaries, evaluations, and provider-private state are excluded. Historical tools use fresh opaque IDs and terminal status from stored results. Missing results use `failed` with an explicit unknown-outcome notice, not an assertion that execution failed. Historical arguments and derived locations are omitted because stored arguments can predate input transforms/redaction. Tool-result attachments, transient edit diffs, and plan snapshots are not reconstructed from raw output.
 
-Text is chunked into UTF-8-safe updates; tool output is limited to a 64 KiB prefix with a truncation notice. Stored inline binary attachments up to 512 KiB can be replayed; larger blobs, external file/artifact references, remote image URLs, and audio use unavailable-content notices without I/O. Replay notifications are capped at 1 MiB of JSON-encoded session payload, leaving room below the transport frame limit. This is a persisted transcript view, not lossless recovery of every live notification or original resource URI.
+Text is chunked into UTF-8-safe updates; tool output is limited to a 64 KiB prefix with a truncation notice. Stored inline binary attachments up to 512 KiB can be replayed; user audio within that bound is replayed as audio blocks with MIME parameters preserved. Larger blobs, external file/artifact references, remote image URLs, and assistant audio use unavailable-content notices without I/O. Replay notifications are capped at 1 MiB of JSON-encoded session payload, leaving room below the transport frame limit. This is a persisted transcript view, not lossless recovery of every live notification or original resource URI.
 
 Replay errors return an error rather than a successful load response and close/unroute the session; already-delivered notifications cannot be rolled back. Retry with an explicit load after cleanup succeeds, resetting any partially rendered client history first. Request-context cancellation, close, and shutdown stop replay and join its operation; `session/cancel` remains a prompt cancellation method. The SDK cannot interrupt a blocked writer, so cleanup has no hard write deadline.
 
@@ -272,13 +272,33 @@ No `usage_update` is emitted until a positive root context-window limit is known
 
 ## Prompt Attachments
 
-ACP text remains text. Embedded text resources, binary resources, images, and successfully read file links become ordered document attachments with safe display names, MIME types, actual byte sizes, and inline payloads. Duplicate resources remain separate attachments. Text resources such as `application/json` are sent as text even when the model does not support that MIME as a binary format. Binary document support still depends on the selected model/provider.
+ACP text remains text. Embedded text resources, binary resources, images, audio blocks, and successfully read file links become ordered document attachments with safe display names, MIME types, actual byte sizes, and inline payloads. Duplicate resources remain separate attachments. Text resources such as `application/json` are sent as text even when the model does not support that MIME as a binary format. Binary document support still depends on the selected model/provider.
 
 Images are validated and normalized using the attachment pipeline; resizing includes a coordinate-mapping note. Per-attachment limits are 5 MiB for text, 20 MiB for decoded binary data, and 16 million pixels for locally decoded images. The transport's message-size limit still applies before these checks. Invalid or oversized attachments produce a bounded unavailable-content notice without exposing the payload or full source URI.
 
+### Audio Prompts
+
+The agent advertises `promptCapabilities.audio: true`. Supply raw base64 bytes and an audio MIME type in a `session/prompt` block:
+
+```json
+{"type": "audio", "mimeType": "audio/wav", "data": "<base64-encoded WAV bytes>"}
+```
+
+Audio is preserved byte-for-byte as an inline document, in prompt order; duplicate blocks remain separate. MIME type casing is normalized and format parameters such as `audio/pcm; rate=24000` are retained. MIME metadata is limited to 256 bytes. Empty audio, malformed base64, invalid/non-audio/wildcard MIME types, or oversized attachments become a fixed unavailable-content notice. These are MIME/base64/size checks, not audio codec validation. No URL/file lookup, playback, transcription, transcoding, subprocess, or automatic model switch is performed.
+
+Every accepted audio block also adds a short text notice explaining that it is not a transcript and audio access depends on the selected model/provider. The notice remains if capability filtering or provider conversion drops the audio, including for audio-only prompts. Actual support requires both an audio-capable model (catalog metadata or an explicit `capabilities.audio` override) and a suitable API:
+
+- **Gemini:** native inline audio bytes and MIME parameters, subject to the model/API's supported formats and limits.
+- **OpenAI-compatible Chat Completions:** native `input_audio` for WAV (`audio/wav`, `audio/x-wav`, `audio/wave`, `audio/vnd.wave`) and MP3 (`audio/mpeg`, `audio/mp3`). Other audio formats are omitted, not relabeled or transcoded.
+- **OpenAI Responses/ChatGPT and Anthropic:** audio bytes are not sent; the text notice remains. A capability override does not add an unsupported API format.
+
+The 20 MiB decoded-binary attachment ceiling still applies, but the ACP transport rejects frames above 10 MiB **before** attachment handling. Base64 and JSON overhead therefore make the effective on-wire audio limit less than roughly 7.5 MiB, further reduced by other blocks. Such rejected frames cannot receive an attachment placeholder. Replay has the smaller 512 KiB inline-binary limit described above.
+
+### Resource Links and Attachment Handling
+
 File resource links are read only through a client that advertises `fs.readTextFile`, after session-root validation. File URIs are decoded once, so a literal `%20` in a filename is not changed into a space. Remote authorities and non-file URIs are not fetched, and unavailable links never fall back to host file contents. Resource links retain the separate session-root policy described below, not a filesystem toolset's allow/deny policy.
 
-This preserves payloads rather than providing lossless protocol round-tripping: arbitrary ACP annotations, `_meta`, titles/descriptions, and original source URIs are not persisted as document metadata. Image encoding may change during normalization. Audio prompts remain unsupported. The secret-redaction builtin scans document text and labels before model calls without changing stored history; it does not scan inside binary files or images.
+This preserves payloads rather than providing lossless protocol round-tripping: arbitrary ACP annotations, `_meta`, titles/descriptions, and original source URIs are not persisted as document metadata. Image encoding may change during normalization. The secret-redaction builtin scans document text and labels before model calls without changing stored history; it does not scan inside binary files, images, or audio.
 
 Attachment-bearing prompts bypass lookup and storage in the agent response cache, whose keys contain only text. This does not disable provider-side prompt caching.
 
