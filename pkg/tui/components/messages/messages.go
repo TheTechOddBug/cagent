@@ -1624,6 +1624,9 @@ func (m *model) refreshRenderedItem(index int) bool {
 	for i := index + 1; i < len(m.lineOffsets); i++ {
 		m.lineOffsets[i] += delta
 	}
+	if m.activeSegments != nil && m.activeSegments.index > index {
+		m.activeSegments.start += delta
+	}
 	m.totalHeight += delta
 	if wasAtBottom && !m.userHasScrolled {
 		m.scrollOffset = max(0, m.totalScrollableHeight()-m.height)
