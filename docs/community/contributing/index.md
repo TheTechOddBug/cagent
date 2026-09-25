@@ -111,6 +111,17 @@ the original location, and track whether any word was yielded when preserving
 that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
 inputs, and `FieldsFunc` callbacks are intentionally excluded.
 
+`Lint/NewExpr` flags a fresh local declared only to return its address, recommending
+`new(expr)` instead. It requires the declaration and `return &x` to be adjacent, the
+variable to have no other uses, and skips composite literals (`&T{...}` stays clearer
+than `new(T{...})`) and any file that shadows the builtin `new`.
+
+`Lint/SplitTrimJoin` flags `strings.Split` followed by suffix-only trimming and a
+`strings.Join` that needlessly materializes and rejoins the string; use
+`strings.CutLast` instead. Only adjacent, local patterns with a single-byte
+separator are matched, and predicates that mutate or retain a pointer into the
+slice are excluded.
+
 `Lint/PointerHelper` recommends native `new` expressions for AWS scalar pointer
 helpers. Preserve explicit numeric conversions; slice/map and dereference helpers
 are not replacements for `new`.
