@@ -111,10 +111,11 @@ func hookBuiltinsInReference(path string) (map[string]bool, error) {
 		if !strings.HasPrefix(line, "|") {
 			break
 		}
-		if !strings.HasPrefix(line, "| `") {
+		rest, found := strings.CutPrefix(line, "| `")
+		if !found {
 			continue
 		}
-		name, _, ok := strings.Cut(strings.TrimPrefix(line, "| `"), "`")
+		name, _, ok := strings.Cut(rest, "`")
 		if ok {
 			names[name] = true
 		}
