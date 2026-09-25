@@ -62,8 +62,11 @@ func TestGitUnbornHead(t *testing.T) {
 func TestGitLogLimitIsCapped(t *testing.T) {
 	t.Parallel()
 	dir, repo := newRepo(t)
-	for i := range maxLogLimit + 5 {
-		addCommit(t, repo, dir, map[string]string{"a.txt": strconv.Itoa(i) + "\n"}, "commit "+strconv.Itoa(i))
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	for i := range maxLogLimit + 1 {
+		_, err := wt.Commit("commit "+strconv.Itoa(i), &gogit.CommitOptions{Author: sig(), AllowEmptyCommits: true})
+		require.NoError(t, err)
 	}
 
 	res, err := New(dir).log(t.Context(), LogArgs{Limit: 1000000})
