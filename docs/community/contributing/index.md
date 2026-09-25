@@ -117,6 +117,12 @@ the original location, and track whether any word was yielded when preserving
 that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
 inputs, and `FieldsFunc` callbacks are intentionally excluded.
 
+The custom `Lint/FieldsSeqLookup` complements it by flagging guarded first-field
+reads and `slices.Contains(strings.Fields(...), ...)`. Stop iteration once the
+first field or match is found. Preserve empty-input fallbacks, and evaluate the
+input and membership search value once, in their original order, before iterating.
+Unguarded indexing, other slice uses, and exact field-count checks are excluded.
+
 `Lint/SortStableFunc` recommends `slices.SortStableFunc` with `cmp.Compare`
 for reflection-based `sort.SliceStable` calls comparing integer or string keys,
 including short-circuiting tie-breaks. Reverse comparison arguments for descending
