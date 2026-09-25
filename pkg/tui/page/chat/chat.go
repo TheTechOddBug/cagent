@@ -1461,8 +1461,8 @@ func (p *chatPage) processMessage(msg msgtypes.SendMsg) tea.Cmd {
 	// Check if this is an agent command that needs resolution
 	// If so, show a loading message with the command description
 	var loadingCmd tea.Cmd
-	if strings.HasPrefix(msg.Content, "/") {
-		cmdName, _, _ := strings.Cut(msg.Content[1:], " ")
+	if command, ok := strings.CutPrefix(msg.Content, "/"); ok {
+		cmdName, _, _ := strings.Cut(command, " ")
 		if cmd, found := p.app.CurrentAgentCommands(ctx)[cmdName]; found {
 			loadingCmd = p.messages.AddLoadingMessage(cmd.DisplayText())
 		}
