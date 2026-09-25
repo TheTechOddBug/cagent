@@ -256,3 +256,70 @@ func listImports(t *testing.T, pkg string) map[string]bool {
 
 	return imports
 }
+
+func TestReusableTUIDependencies(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "github.com/docker/docker-agent/"
+	// Runtime event/state contracts retain the runtime's own tools and MCP protocol.
+	// Presentation may not add an executable builtin merely for a name or wire type.
+	runtimeDeps := listTransitiveDeps(t, "./pkg/runtime")
+	for _, entry := range []string{
+		"pkg/tui/commands",
+		"pkg/tui/components/editor/completions",
+		"pkg/tui/components/editor",
+		"pkg/tui/dialog/common",
+		"pkg/tui/dialog/toolconfirmation",
+		"pkg/tui/components/messages",
+		"pkg/tui/components/transcript",
+		"pkg/tui/components/reasoningblock",
+		"pkg/tui/components/tool",
+		"pkg/tui/components/tool/api",
+		"pkg/tui/components/tool/defaulttool",
+	} {
+		t.Run(entry, func(t *testing.T) {
+			t.Parallel()
+			deps := listTransitiveDeps(t, "./"+entry)
+			for dep := range deps {
+				for _, forbidden := range []string{
+					prefix + "pkg/app", prefix + "pkg/cli", prefix + "pkg/js",
+					prefix + "pkg/tui/dialog", prefix + "pkg/tui/commands/defaults",
+					"github.com/dop251/goja",
+				} {
+					if forbidden == prefix+"pkg/tui/dialog" {
+						assert.NotEqual(t, forbidden, dep, "application dialogs leaked into %s", entry)
+						continue
+					}
+					assert.False(t, dep == forbidden || strings.HasPrefix(dep, forbidden+"/"), "%s imports %s", entry, dep)
+				}
+				if strings.HasPrefix(dep, prefix+"pkg/tools/mcp") {
+					assert.Equal(t, prefix+"pkg/tools/mcp/oauthflow", dep, "MCP implementation leaked into %s", entry)
+				}
+				if strings.HasPrefix(dep, prefix+"pkg/tools/builtin/") && !strings.HasSuffix(dep, "/types") {
+					assert.True(t, runtimeDeps[dep], "%s added executable tool dependency %s", entry, dep)
+				}
+				if strings.HasPrefix(dep, prefix+"pkg/tui/components/tool/") {
+					assert.Contains(t, []string{prefix + "pkg/tui/components/tool/api", prefix + "pkg/tui/components/tool/defaulttool"}, dep,
+						"optional builtin renderer leaked into %s", entry)
+				}
+			}
+		})
+	}
+}
+
+func TestToolContractDependencies(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "github.com/docker/docker-agent/"
+	deps := listTransitiveDeps(t,
+		"./pkg/tools/builtin/fetch/types", "./pkg/tools/builtin/filesystem/types",
+		"./pkg/tools/builtin/handoff/types", "./pkg/tools/builtin/plan/types",
+		"./pkg/tools/builtin/shell/types", "./pkg/tools/builtin/todo/types",
+		"./pkg/tools/builtin/transfertask/types", "./pkg/tools/builtin/userprompt/types",
+	)
+	for dep := range deps {
+		if strings.HasPrefix(dep, prefix) {
+			assert.True(t, dep == prefix+"pkg/safety" || strings.HasSuffix(dep, "/types"), "execution dependency in tool contracts: %s", dep)
+		}
+	}
+}
