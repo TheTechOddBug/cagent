@@ -303,6 +303,9 @@ func (p *chatPage) handleTokenUsage(msg *runtime.TokenUsageEvent) {
 
 func (p *chatPage) handleStreamStarted(msg *runtime.StreamStartedEvent) tea.Cmd {
 	slog.Debug("handleStreamStarted called", "agent", msg.AgentName, "session_id", msg.SessionID)
+	if p.contentSessionID == p.contentSession(msg.SessionID) {
+		p.messages.BreakMessageGroup()
+	}
 	p.streamCancelled = false
 	p.streamDepth++
 	p.agentStack = append(p.agentStack, msg.AgentName)
@@ -313,10 +316,29 @@ func (p *chatPage) handleStreamStarted(msg *runtime.StreamStartedEvent) tea.Cmd 
 	return tea.Batch(pendingCmd, spinnerCmd, sidebarCmd)
 }
 
+func (p *chatPage) contentSession(sessionID string) string {
+	if sessionID == "" && p.app != nil {
+		if sess := p.app.Session(); sess != nil {
+			sessionID = sess.ID
+		}
+	}
+	return sessionID
+}
+
+// Content can interleave between parallel forks even when they use the same agent.
+func (p *chatPage) trackContentSession(sessionID string) {
+	sessionID = p.contentSession(sessionID)
+	if sessionID != p.contentSessionID {
+		p.messages.BreakMessageGroup()
+		p.contentSessionID = sessionID
+	}
+}
+
 func (p *chatPage) handleAgentChoice(msg *runtime.AgentChoiceEvent) tea.Cmd {
 	if p.streamCancelled {
 		return nil
 	}
+	p.trackContentSession(msg.SessionID)
 	// Track that we've received assistant content
 	p.hasReceivedAssistantContent = true
 	// Clear pending response indicator - first chunk has arrived
@@ -331,6 +353,7 @@ func (p *chatPage) handleAgentChoiceReasoning(msg *runtime.AgentChoiceReasoningE
 	if p.streamCancelled {
 		return nil
 	}
+	p.trackContentSession(msg.SessionID)
 	p.setPendingResponse(false)
 	activityCmd := p.sidebar.SetAgentActivity(msg.AgentName)
 	return tea.Batch(activityCmd, p.messages.AppendReasoning(msg.AgentName, msg.Content))
@@ -368,6 +391,9 @@ func (p *chatPage) handleStreamStopped(msg *runtime.StreamStoppedEvent) tea.Cmd 
 		"has_content", p.hasReceivedAssistantContent,
 		"stream_depth", p.streamDepth)
 
+	if p.contentSessionID == p.contentSession(msg.SessionID) {
+		p.messages.BreakMessageGroup()
+	}
 	if p.streamDepth > 0 {
 		p.streamDepth--
 		// Keep agentStack in sync: only pop when there was a depth to decrement,

@@ -1925,14 +1925,14 @@ func (a *App) mergeEvents(events []tea.Msg) []tea.Msg {
 }
 
 // mergeAgentChoiceRun merges first with any directly-following AgentChoiceEvents
-// for the same agent. It returns the merged event and the number of follow-up
+// for the same agent and session. It returns the merged event and the number of follow-up
 // events that were consumed.
 func mergeAgentChoiceRun(first *runtime.AgentChoiceEvent, rest []tea.Msg) (*runtime.AgentChoiceEvent, int) {
 	n := 0
 	total := len(first.Content)
 	for _, msg := range rest {
 		next, ok := msg.(*runtime.AgentChoiceEvent)
-		if !ok || next.AgentName != first.AgentName {
+		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID {
 			break
 		}
 		total += len(next.Content)
@@ -1950,6 +1950,7 @@ func mergeAgentChoiceRun(first *runtime.AgentChoiceEvent, rest []tea.Msg) (*runt
 	}
 	return &runtime.AgentChoiceEvent{
 		Type:         first.Type,
+		SessionID:    first.SessionID,
 		Content:      b.String(),
 		AgentContext: first.AgentContext,
 	}, n
@@ -1962,7 +1963,7 @@ func mergeAgentChoiceReasoningRun(first *runtime.AgentChoiceReasoningEvent, rest
 	total := len(first.Content)
 	for _, msg := range rest {
 		next, ok := msg.(*runtime.AgentChoiceReasoningEvent)
-		if !ok || next.AgentName != first.AgentName {
+		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID {
 			break
 		}
 		total += len(next.Content)
@@ -1980,6 +1981,7 @@ func mergeAgentChoiceReasoningRun(first *runtime.AgentChoiceReasoningEvent, rest
 	}
 	return &runtime.AgentChoiceReasoningEvent{
 		Type:         first.Type,
+		SessionID:    first.SessionID,
 		Content:      b.String(),
 		AgentContext: first.AgentContext,
 	}, n
