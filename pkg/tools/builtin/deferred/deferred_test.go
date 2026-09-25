@@ -2,6 +2,7 @@ package deferred
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/fuzzy"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 )
@@ -77,6 +79,40 @@ func TestDeferredToolset_SearchTool(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, result.Output, "delete_file")
 	})
+}
+
+func TestDeferredToolset_SearchRanking(t *testing.T) {
+	t.Parallel()
+
+	const query = "read"
+	candidates := []tools.Tool{
+		{Name: "file_read"},
+		{Name: "read"},
+		{Name: "read_file"},
+		{Name: "xyz"},
+	}
+	dt := New()
+	dt.AddSource(&mockToolSet{toolList: candidates}, true, nil)
+
+	result, err := dt.handleSearchTool(t.Context(), SearchToolArgs{Query: query})
+	require.NoError(t, err)
+	_, output, ok := strings.Cut(result.Output, "\n")
+	require.True(t, ok)
+	var matches []SearchToolResult
+	require.NoError(t, json.Unmarshal([]byte(output), &matches))
+	require.Len(t, matches, 3)
+	names := make([]string, 0, len(matches))
+	var previous int
+	for i, match := range matches {
+		names = append(names, match.Name)
+		score, matched := fuzzy.Score(match.Name+" "+match.Description, []rune(query))
+		require.True(t, matched)
+		if i > 0 {
+			assert.GreaterOrEqual(t, previous, score)
+		}
+		previous = score
+	}
+	assert.ElementsMatch(t, []string{"file_read", "read", "read_file"}, names)
 }
 
 func TestDeferredToolset_AddTool(t *testing.T) {

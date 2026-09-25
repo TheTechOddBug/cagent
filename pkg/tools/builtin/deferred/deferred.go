@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -210,8 +209,8 @@ func (d *ToolSet) handleSearchTool(ctx context.Context, args SearchToolArgs) (*t
 		}
 	}
 
-	sort.SliceStable(matches, func(i, j int) bool {
-		return matches[i].score > matches[j].score
+	slices.SortStableFunc(matches, func(a, b scoredDeferredTool) int {
+		return cmp.Compare(b.score, a.score)
 	})
 
 	var results []SearchToolResult
