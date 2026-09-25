@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,7 +76,7 @@ func (p *elicitationPeer) Write(data []byte) (int, error) {
 func (p *elicitationPeer) snapshot() []map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]map[string]any(nil), p.requests...)
+	return slices.Clone(p.requests)
 }
 
 func newElicitationPeer(t *testing.T, a *Agent, caps *acpsdk.ElicitationCapabilities, respond func(map[string]any) any) *elicitationPeer {

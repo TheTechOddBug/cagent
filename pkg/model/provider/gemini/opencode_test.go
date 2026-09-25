@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync"
 	"testing"
 	"uuid"
@@ -34,7 +35,7 @@ func startOpenCodeCapture(t *testing.T) (*httptest.Server, func() []string) {
 	return server, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]string(nil), seen...)
+		return slices.Clone(seen)
 	}
 }
 
@@ -52,7 +53,7 @@ func redirectTo(t *testing.T, target string) (options.Opt, func() []string) {
 	return opt, func() []string {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return append([]string(nil), r.seen...)
+		return slices.Clone(r.seen)
 	}
 }
 

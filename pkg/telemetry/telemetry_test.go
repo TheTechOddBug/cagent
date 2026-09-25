@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -71,14 +72,22 @@ func (m *MockHTTPClient) RoundTrip(req *http.Request) (*http.Response, error) {
 func (m *MockHTTPClient) GetRequests() []*http.Request {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]*http.Request{}, m.requests...)
+	out := slices.Clone(m.requests)
+	if out == nil {
+		out = []*http.Request{}
+	}
+	return out
 }
 
 // GetBodies returns all captured request bodies
 func (m *MockHTTPClient) GetBodies() [][]byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([][]byte{}, m.bodies...)
+	out := slices.Clone(m.bodies)
+	if out == nil {
+		out = [][]byte{}
+	}
+	return out
 }
 
 // GetRequestCount returns the number of HTTP requests made

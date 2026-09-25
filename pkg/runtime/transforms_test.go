@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -55,7 +56,11 @@ type recordingMsgProvider struct {
 func (p *recordingMsgProvider) BaseConfig() base.Config { return p.baseConfig }
 
 func (p *recordingMsgProvider) CreateChatCompletionStream(_ context.Context, msgs []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
-	p.got = append(p.got, append([]chat.Message{}, msgs...))
+	snapshot := slices.Clone(msgs)
+	if snapshot == nil {
+		snapshot = []chat.Message{}
+	}
+	p.got = append(p.got, snapshot)
 	return p.stream, nil
 }
 

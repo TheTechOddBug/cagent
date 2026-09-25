@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,8 +43,10 @@ func (o *recordingObserver) OnEvent(_ context.Context, _ *session.Session, e Eve
 func (o *recordingObserver) snapshot() []Event {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	out := make([]Event, len(o.events))
-	copy(out, o.events)
+	out := slices.Clone(o.events)
+	if out == nil {
+		out = []Event{}
+	}
 	return out
 }
 

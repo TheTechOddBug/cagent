@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -53,8 +54,16 @@ type soRecordingProvider struct {
 
 func (p *soRecordingProvider) CreateChatCompletionStream(ctx context.Context, msgs []chat.Message, ts []tools.Tool) (chat.MessageStream, error) {
 	p.mu.Lock()
-	p.allMsgs = append(p.allMsgs, append([]chat.Message(nil), msgs...))
-	p.allTools = append(p.allTools, append([]tools.Tool(nil), ts...))
+	msgSnapshot := slices.Clone(msgs)
+	if len(msgSnapshot) == 0 {
+		msgSnapshot = nil
+	}
+	p.allMsgs = append(p.allMsgs, msgSnapshot)
+	toolSnapshot := slices.Clone(ts)
+	if len(toolSnapshot) == 0 {
+		toolSnapshot = nil
+	}
+	p.allTools = append(p.allTools, toolSnapshot)
 	p.mu.Unlock()
 	return p.queueProvider.CreateChatCompletionStream(ctx, msgs, ts)
 }

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -264,13 +265,13 @@ func (rt *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 func (rt *recordingRoundTripper) recordedMethods() []string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return append([]string(nil), rt.methods...)
+	return slices.Clone(rt.methods)
 }
 
 func (rt *recordingRoundTripper) recordedSessionIDs() []string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return append([]string(nil), rt.sessionIDs...)
+	return slices.Clone(rt.sessionIDs)
 }
 
 // TestStreamableHTTPHandler_StatelessNegotiates20260728 proves the production

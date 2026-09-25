@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -42,7 +43,7 @@ func (f *fakeRuntime) Supports(c tools.Capability) bool {
 func (f *fakeRuntime) messages() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.recalls...)
+	return slices.Clone(f.recalls)
 }
 
 func newTestToolSet() *ToolSet {

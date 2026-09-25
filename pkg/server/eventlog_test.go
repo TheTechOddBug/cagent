@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -36,7 +37,7 @@ func collect(t *testing.T, log *eventLog, since *uint64) (stop func(), got func(
 	got = func() []seqEvent {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]seqEvent(nil), events...)
+		return slices.Clone(events)
 	}
 	return stop, got
 }

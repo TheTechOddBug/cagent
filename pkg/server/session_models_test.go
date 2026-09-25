@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -64,8 +65,10 @@ func (m *modelSwitchingRuntime) AvailableModels(_ context.Context) []runtime.Mod
 	m.mu.Lock()
 	delay := m.availableModelsDelay
 	called := m.availableModelsCalled
-	out := make([]runtime.ModelChoice, len(m.availableModels))
-	copy(out, m.availableModels)
+	out := slices.Clone(m.availableModels)
+	if out == nil {
+		out = []runtime.ModelChoice{}
+	}
 	m.mu.Unlock()
 
 	if called != nil {

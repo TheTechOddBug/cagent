@@ -253,7 +253,7 @@ func TestToolsUsesStableIterationOrder(t *testing.T) {
 	}
 
 	// Build the expected sorted-by-id order independently.
-	want := append([]string(nil), ids...)
+	want := slices.Clone(ids)
 	sort.Strings(want)
 
 	ts.mu.RLock()

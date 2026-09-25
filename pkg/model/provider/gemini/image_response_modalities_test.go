@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 
@@ -82,7 +83,7 @@ func (c *capturedRequests) add(b []byte) {
 func (c *capturedRequests) all() [][]byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([][]byte(nil), c.bodies...)
+	return slices.Clone(c.bodies)
 }
 
 // newBodyCapturingGeminiServer starts an httptest server that records the

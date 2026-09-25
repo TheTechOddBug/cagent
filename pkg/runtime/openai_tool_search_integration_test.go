@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -340,7 +341,7 @@ func newFakeResponsesServer(t *testing.T) *fakeResponsesServer {
 func (s *fakeResponsesServer) requests() []responsesRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]responsesRequest(nil), s.seen...)
+	return slices.Clone(s.seen)
 }
 
 // reroute keeps the client configured for api.openai.com while sending its

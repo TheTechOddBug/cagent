@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,10 +43,13 @@ func TestAssistantRenderedSegmentsMatchViewAtEveryMarkdownBoundary(t *testing.T)
 				}
 				segments, ok := m.RenderedSegments(width)
 				require.True(t, ok)
-				segmentedBlocks := append([]markdown.CodeBlock(nil), m.CodeBlocks()...)
-				got := append(append(append([]string{}, segments.Header...), segments.Stable...), segments.Tail...)
+				segmentedBlocks := slices.Clone(m.CodeBlocks())
+				got := append(append(slices.Clone(segments.Header), segments.Stable...), segments.Tail...)
+				if got == nil {
+					got = []string{}
+				}
 				want := strings.Split(strings.TrimSuffix(m.Render(width), "\n"), "\n")
-				oneShotBlocks := append([]markdown.CodeBlock(nil), m.CodeBlocks()...)
+				oneShotBlocks := slices.Clone(m.CodeBlocks())
 				require.Equal(t, linePlain(want), linePlain(got), "byte boundary %d", end)
 				require.Equal(t, lineWidthsForMessage(want), lineWidthsForMessage(got), "widths at byte boundary %d", end)
 				require.Equal(t, oneShotBlocks, segmentedBlocks, "code block metadata at byte boundary %d", end)
@@ -546,7 +550,10 @@ func TestAssistantRenderedSegmentsRebuildHeaderOnWidthChange(t *testing.T) {
 		require.LessOrEqual(t, ansi.StringWidth(line), 32)
 	}
 	want := strings.Split(strings.TrimSuffix(m.Render(32), "\n"), "\n")
-	got := append(append(append([]string{}, narrow.Header...), narrow.Stable...), narrow.Tail...)
+	got := append(append(slices.Clone(narrow.Header), narrow.Stable...), narrow.Tail...)
+	if got == nil {
+		got = []string{}
+	}
 	require.Equal(t, linePlain(want), linePlain(got))
 	require.Equal(t, lineWidthsForMessage(want), lineWidthsForMessage(got))
 }

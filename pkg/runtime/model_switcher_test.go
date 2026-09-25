@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1332,8 +1333,7 @@ func TestDecorateModelChoices(t *testing.T) {
 			{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true},
 			{Name: "other", Ref: "openai/gpt-4o"},
 		}
-		orig := make([]ModelChoice, len(input))
-		copy(orig, input)
+		orig := slices.Clone(input)
 
 		_ = DecorateModelChoices(input, "openai/gpt-4o", []string{"anthropic/claude-sonnet-4-0"})
 

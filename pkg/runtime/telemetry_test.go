@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -93,11 +94,11 @@ func (r *recordingTelemetry) snapshot() recordingTelemetry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return recordingTelemetry{
-		sessionStarts: append([]sessionStart(nil), r.sessionStarts...),
+		sessionStarts: slices.Clone(r.sessionStarts),
 		sessionEnds:   r.sessionEnds,
-		errors:        append([]string(nil), r.errors...),
-		toolCalls:     append([]toolCallRecord(nil), r.toolCalls...),
-		tokenUsages:   append([]tokenUsageRecord(nil), r.tokenUsages...),
+		errors:        slices.Clone(r.errors),
+		toolCalls:     slices.Clone(r.toolCalls),
+		tokenUsages:   slices.Clone(r.tokenUsages),
 	}
 }
 
