@@ -19,6 +19,7 @@ type (
 	streamingMotionModel struct {
 		root                *appModel
 		ready               chan struct{}
+		windowSizeReceived  bool
 		once                sync.Once
 		mu                  sync.Mutex
 		chunks, motions     atomic.Uint64
@@ -45,6 +46,9 @@ func (m *streamingMotionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	updated, cmd := m.root.Update(msg)
 	m.root = updated.(*appModel)
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		m.windowSizeReceived = true
+	}
 	return m, cmd
 }
 
@@ -58,7 +62,10 @@ func (m *streamingMotionModel) View() tea.View {
 	if !wasCached && m.root.viewCacheValid {
 		m.compositions.Add(1)
 	}
-	m.once.Do(func() { close(m.ready) })
+	// Bubble Tea's initial view does not wait for its asynchronous startup resize.
+	if m.windowSizeReceived {
+		m.once.Do(func() { close(m.ready) })
+	}
 	return v
 }
 
