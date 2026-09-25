@@ -843,8 +843,8 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		e.clearSuggestion()
 		if msg.Value != "" && e.currentCompletion != nil {
 			currentText := e.textarea.Value()
-			if strings.HasPrefix(msg.Value, currentText) {
-				e.suggestion = msg.Value[len(currentText):]
+			if suggestion, ok := strings.CutPrefix(msg.Value, currentText); ok {
+				e.suggestion = suggestion
 				e.hasSuggestion = e.suggestion != ""
 			}
 		}
