@@ -42,6 +42,7 @@ func TestDeferredTailKeepsMessageOwnerAcrossTransitions(t *testing.T) {
 		{"reasoning", func(m *model) { m.AppendReasoning("root", "Thinking about the result") }},
 		{"agent return", func(m *model) { m.AddAgentReturn("child", "root") }},
 		{"agent switch", func(m *model) { m.AppendToLastMessage("child", "Child response") }},
+		{"same-agent fork", func(m *model) { m.BreakMessageGroup() }},
 	} {
 		t.Run(transition.name, func(t *testing.T) {
 			t.Parallel()

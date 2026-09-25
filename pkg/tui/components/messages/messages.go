@@ -87,6 +87,8 @@ type Model interface {
 	AppendToolOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd
 	AddToolResult(msg *runtime.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd
 	AppendToLastMessage(agentName, content string) tea.Cmd
+	// BreakMessageGroup prevents merging across streams without flushing deferred content.
+	BreakMessageGroup()
 	// AppendAssistantMedia attaches generated media to the agent's current
 	// assistant message (or starts a media-only one), so it renders in the
 	// same assistant turn as the streamed text.
@@ -198,11 +200,12 @@ func nextBlockID() string {
 
 // model implements Model
 type model struct {
-	ar       *animation.Runtime
-	messages []*types.Message
-	views    []layout.Model
-	width    int // Full width including scrollbar space
-	height   int
+	ar         *animation.Runtime
+	messages   []*types.Message
+	views      []layout.Model
+	groupStart int // Earliest message eligible for same-stream appends.
+	width      int // Full width including scrollbar space
+	height     int
 
 	// Height tracking system fields
 	scrollOffset      int                              // Current scroll position in lines
@@ -1690,14 +1693,18 @@ func (m *model) AddLoadingMessage(description string) tea.Cmd {
 
 func (m *model) ReplaceLoadingWithUser(content string, sessionPos int) tea.Cmd {
 	for i := range slices.Backward(m.messages) {
-		if m.messages[i].Type == types.MessageTypeLoading {
-			m.messages = slices.Delete(m.messages, i, i+1)
-			if i < len(m.views) {
-				m.views = slices.Delete(m.views, i, i+1)
-			}
-			m.invalidateAllItems()
-			break
+		if m.messages[i].Type != types.MessageTypeLoading {
+			continue
 		}
+		if i < m.groupStart {
+			m.groupStart--
+		}
+		m.messages = slices.Delete(m.messages, i, i+1)
+		if i < len(m.views) {
+			m.views = slices.Delete(m.views, i, i+1)
+		}
+		m.invalidateAllItems()
+		break
 	}
 	msg := types.User(content)
 	if sessionPos >= 0 {
@@ -1792,6 +1799,7 @@ func (m *model) addMessage(msg *types.Message) tea.Cmd {
 }
 
 func (m *model) LoadFromSession(sess *session.Session, generatedMedia map[int][]types.AssistantMedia) tea.Cmd {
+	m.groupStart = 0
 	appendSessionMessage := func(msg *types.Message, view layout.Model) {
 		m.messages = append(m.messages, msg)
 		m.views = append(m.views, view)
@@ -2081,6 +2089,13 @@ func (m *model) AddToolResult(msg *runtime.ToolCallResponseEvent, status types.T
 	return nil
 }
 
+func (m *model) BreakMessageGroup() {
+	m.groupStart = len(m.messages)
+	if last := m.lastMessage(); last != nil && last.Type == types.MessageTypeSpinner {
+		m.groupStart--
+	}
+}
+
 func (m *model) AppendToLastMessage(agentName, content string) tea.Cmd {
 	m.removeSpinner()
 
@@ -2095,7 +2110,7 @@ func (m *model) AppendToLastMessage(agentName, content string) tea.Cmd {
 	lastMsg := m.messages[lastIdx]
 
 	// Append to existing assistant message from same agent
-	if lastMsg.Type == types.MessageTypeAssistant && lastMsg.Sender == agentName {
+	if lastIdx >= m.groupStart && lastMsg.Type == types.MessageTypeAssistant && lastMsg.Sender == agentName {
 		if m.userHasScrolled {
 			var materializeCmd tea.Cmd
 			if len(m.deferredTail) == 0 || m.deferredTailIndex != lastIdx {
@@ -2136,7 +2151,7 @@ func (m *model) AppendAssistantMedia(agentName string, media []types.AssistantMe
 	if len(m.messages) > 0 {
 		lastIdx := len(m.messages) - 1
 		lastMsg := m.messages[lastIdx]
-		if lastMsg.Type == types.MessageTypeAssistant && lastMsg.Sender == agentName {
+		if lastIdx >= m.groupStart && lastMsg.Type == types.MessageTypeAssistant && lastMsg.Sender == agentName {
 			lastMsg.AssistantMedia = append(lastMsg.AssistantMedia, media...)
 			cmd := m.views[lastIdx].(message.Model).SetMessage(lastMsg)
 			m.invalidateItem(lastIdx)
@@ -2198,7 +2213,7 @@ func (m *model) AppendReasoning(agentName, content string) tea.Cmd {
 	lastMsg := m.messages[lastIdx]
 
 	// Append to existing reasoning block for this agent
-	if lastMsg.Type == types.MessageTypeAssistantReasoningBlock && lastMsg.Sender == agentName {
+	if lastIdx >= m.groupStart && lastMsg.Type == types.MessageTypeAssistantReasoningBlock && lastMsg.Sender == agentName {
 		if block, ok := m.views[lastIdx].(*reasoningblock.Model); ok {
 			block.AppendReasoning(content)
 			lastMsg.Content += content // Keep content in sync for copying
@@ -2292,7 +2307,7 @@ func (m *model) getActiveReasoningBlock(agentName string) (*reasoningblock.Model
 	lastIdx := len(m.messages) - 1
 	lastMsg := m.messages[lastIdx]
 
-	if lastMsg.Type == types.MessageTypeAssistantReasoningBlock && lastMsg.Sender == agentName {
+	if lastIdx >= m.groupStart && lastMsg.Type == types.MessageTypeAssistantReasoningBlock && lastMsg.Sender == agentName {
 		if block, ok := m.views[lastIdx].(*reasoningblock.Model); ok {
 			return block, lastIdx
 		}
@@ -2387,10 +2402,14 @@ func (m *model) removeSpinner() {
 func (m *model) removePendingToolCallMessages() {
 	toolCallMessages := make([]*types.Message, 0, len(m.messages))
 	views := make([]layout.Model, 0, len(m.views))
+	removedBeforeGroup := 0
 
 	for i, msg := range m.messages {
 		if msg.Type == types.MessageTypeToolCall &&
 			(msg.ToolStatus == types.ToolStatusPending || msg.ToolStatus == types.ToolStatusRunning) {
+			if i < m.groupStart {
+				removedBeforeGroup++
+			}
 			// Stop any animation subscriptions before removing the view
 			if i < len(m.views) {
 				animation.StopView(m.views[i])
@@ -2405,6 +2424,7 @@ func (m *model) removePendingToolCallMessages() {
 	}
 
 	if len(toolCallMessages) != len(m.messages) {
+		m.groupStart -= removedBeforeGroup
 		m.messages = toolCallMessages
 		m.views = views
 		m.invalidateAllItems()

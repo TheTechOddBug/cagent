@@ -71,6 +71,7 @@ func (p *chatPage) handleMessageAdded(msg *runtime.MessageAddedEvent) tea.Cmd {
 		return nil
 	}
 
+	p.trackContentSession(msg.SessionID)
 	p.hasReceivedAssistantContent = true
 	p.setPendingResponse(false)
 	agentName := msg.Message.AgentName

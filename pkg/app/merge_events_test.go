@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -159,4 +160,56 @@ func buildPartialToolCallEvents(n int) []tea.Msg {
 		})
 	}
 	return events
+}
+
+func TestMergeEventsPreservesContentSessions(t *testing.T) {
+	t.Parallel()
+
+	for _, reasoning := range []bool{false, true} {
+		name := "text"
+		if reasoning {
+			name = "reasoning"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contentEvent := runtime.AgentChoice
+			if reasoning {
+				contentEvent = runtime.AgentChoiceReasoning
+			}
+			events := []tea.Msg{
+				contentEvent("root", "child", "child "),
+				contentEvent("root", "child", "reply"),
+				contentEvent("root", "parent", "parent "),
+				contentEvent("root", "parent", "reply"),
+				contentEvent("root", "child", "child again"),
+				contentEvent("root", "", "legacy "),
+				contentEvent("root", "", "reply"),
+			}
+			a := &App{}
+			merged := a.mergeEvents(events)
+			require.Len(t, merged, 4)
+			for i, want := range []struct {
+				sessionID string
+				content   string
+				first     int
+			}{
+				{"child", "child reply", 0},
+				{"parent", "parent reply", 2},
+				{"child", "child again", 4},
+				{"", "legacy reply", 5},
+			} {
+				if reasoning {
+					got := merged[i].(*runtime.AgentChoiceReasoningEvent)
+					assert.Equal(t, want.sessionID, got.SessionID)
+					assert.Equal(t, want.content, got.Content)
+					assert.Equal(t, events[want.first].(*runtime.AgentChoiceReasoningEvent).AgentContext, got.AgentContext)
+				} else {
+					got := merged[i].(*runtime.AgentChoiceEvent)
+					assert.Equal(t, want.sessionID, got.SessionID)
+					assert.Equal(t, want.content, got.Content)
+					assert.Equal(t, events[want.first].(*runtime.AgentChoiceEvent).AgentContext, got.AgentContext)
+				}
+			}
+		})
+	}
 }

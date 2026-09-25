@@ -223,9 +223,10 @@ type chatPage struct {
 	// streamDepth is the nesting depth of active streams (StreamStarted++,
 	// StreamStopped--). >0 during a root compaction marks it as automatic
 	// (nested mid-run); standalone /compact emits no StreamStarted.
-	streamDepth     int
-	agentStack      []string // agent per active stream level; len(agentStack)==streamDepth
-	streamStartTime time.Time
+	streamDepth      int
+	agentStack       []string // agent per active stream level; len(agentStack)==streamDepth
+	streamStartTime  time.Time
+	contentSessionID string
 
 	// routingID is the tab identity this page's routed UI timers are
 	// addressed to; empty for standalone pages (timers then fire unrouted,
@@ -492,6 +493,7 @@ func agentInfoMode(mode msgtypes.SidebarInfoMode) sidebar.AgentInfoMode {
 
 // Init initializes the chat page
 func (p *chatPage) Init() tea.Cmd {
+	p.contentSessionID = ""
 	var cmds []tea.Cmd
 
 	cmds = append(cmds, p.messages.Init())
