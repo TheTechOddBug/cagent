@@ -58,7 +58,7 @@ Host Application
 
 - **Stdio transport** — No network ports needed; ideal for subprocess integration
 - **Session persistence** — SQLite-backed sessions survive process restarts
-- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio MCP servers are supported; audio prompts are not supported; `session/load` replays persisted history, while `session/resume` reconnects without replay.
+- **Agent runtime support** — Supports configured tools, multi-agent delegation, and model fallbacks. Client-supplied stdio, Streamable HTTP, and SSE MCP servers are supported; audio prompts are not supported; `session/load` replays persisted history, while `session/resume` reconnects without replay.
 - **Multi-agent configs** — Team configurations with sub-agents work transparently
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
@@ -116,7 +116,7 @@ Fatal root-runtime failures return JSON-RPC internal error `-32603` with `data.s
 
 ## Client-Supplied MCP Servers
 
-Pass stdio MCP servers in `mcpServers` on `session/new`, `session/resume`, or `session/load`:
+Pass stdio, Streamable HTTP (`type: "http"`), or legacy SSE (`type: "sse"`) MCP servers in `mcpServers` on `session/new`, `session/resume`, or `session/load`:
 
 ```json
 {
@@ -132,13 +132,41 @@ Pass stdio MCP servers in `mcpServers` on `session/new`, `session/resume`, or `s
 }
 ```
 
-The executable path must be absolute. These are **local subprocesses**, running with the agent's OS permissions and the session's working directory. Arguments and environment values are passed literally, without shell expansion or installation. Processes inherit the agent's environment (including credentials); supplied entries override inherited values, and the last duplicate wins. Only stdio is supported here; HTTP, SSE, and MCP-over-ACP configurations are rejected.
+The executable path must be absolute. These are **local subprocesses**, running with the agent's OS permissions and the session's working directory. Arguments and environment values are passed literally, without shell expansion or installation. Processes inherit the agent's environment (including credentials); supplied entries override inherited values, and the last duplicate wins. MCP-over-ACP configurations remain unsupported.
+
+Remote servers can be mixed with stdio servers; names must be nonempty and unique across the list:
+
+```json
+{
+  "cwd": "/home/user/project",
+  "mcpServers": [
+    {
+      "type": "http",
+      "name": "project-api",
+      "url": "https://tools.example.com/mcp",
+      "headers": [{"name": "Authorization", "value": "Bearer CLIENT_TOKEN"}]
+    },
+    {
+      "type": "sse",
+      "name": "legacy-tools",
+      "url": "https://legacy.example.com/sse",
+      "headers": []
+    }
+  ]
+}
+```
+
+Remote connections originate from the **agent host**, not the editor. URLs must use HTTP(S), with no userinfo or fragment. They use the existing guarded outbound transport: direct connections to loopback, private, and link-local addresses are blocked; operator-configured proxies retain their existing egress policy. ACP cannot enable `allow_private_ips`. All requests, including redirects and SSE-discovered message endpoints, must remain on the configured origin (scheme, host, and effective port). HTTPS downgrades are rejected.
+
+Headers are literal: no environment, upstream-header, JavaScript, or secret-provider expansion. Header names are case-insensitively unique and must be valid HTTP fields. Transport-controlled headers (including `Mcp-*`, `Host`, content negotiation/framing, hop-by-hop/proxy headers, `Last-Event-ID`, and idempotency keys) are rejected. Clients supply authentication headers themselves; these connections never consult the agent's OAuth/keyring tokens, discover OAuth metadata, open a browser, or prompt for authorization. Cookie jars are private to each server connection and are discarded on replacement. Prefer HTTPS for credentials.
+
+Transport failures use generic diagnostics to avoid exposing URL/query credentials. Remote client connections retain host-only MCP tracing rather than full-URL HTTP spans.
 
 The agent initializes the servers and lists their tools before accepting setup, within a 30-second setup budget. Client tools supplement configured tools and are exposed to the session's agents, honoring each agent's read-only filter. Model-facing names are bounded, generation-specific aliases; remembered per-tool approvals do not transfer to replacements. Existing global permission policies still apply.
 
 Every successful resume supplies the complete replacement server list. An omitted or empty list removes all client servers. An idle session keeps its runtime and conversation; setup failure leaves its previous servers and additional roots unchanged. Cached calls to retired tools fail rather than being redirected, and calls already using the old servers are canceled and joined during retirement. Cleanup failure blocks further prompts/resumes and is retained by close/shutdown; failed cleanup remains an error for that agent process.
 
-Servers are not automatically restarted or retried after disconnection; explicitly resume to create fresh connections. Closing a session retires and stops its client subprocesses, including while calls are pending. Connection settings and environment values are not persisted as session configuration: clients must send them again on cold resume. This does not implement an OS sandbox or full ACP elicitation support.
+Servers are not automatically restarted or retried after disconnection; explicitly resume to create fresh connections. Closing a session retires its client servers, stops subprocesses, and closes/drains remote connections, including pending calls. Streamable HTTP teardown attempts session DELETE when a session ID exists, with forced local teardown on the cleanup deadline. This cannot guarantee that a remote server stops already-started work. Connection settings, headers, and environment values are not persisted as session configuration: clients must send them again on cold resume/load. This does not implement an OS sandbox or full ACP elicitation support.
 
 ## Elicitation
 

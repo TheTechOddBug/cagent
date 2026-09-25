@@ -277,7 +277,7 @@ func TestClientMCPValidation(t *testing.T) {
 		name    string
 		servers []acpsdk.McpServer
 	}{
-		{"unsupported", []acpsdk.McpServer{{Http: &acpsdk.McpServerHttpInline{Name: "http", Url: "https://example.com"}}}},
+		{"unsupported", []acpsdk.McpServer{{Http: &acpsdk.McpServerHttpInline{Type: "unsupported", Name: "http", Url: "https://example.com"}}}},
 		{"empty union", []acpsdk.McpServer{{}}},
 		{"duplicate", []acpsdk.McpServer{valid, valid}},
 		{"relative executable", []acpsdk.McpServer{{Stdio: &acpsdk.McpServerStdio{Name: "server", Command: "server"}}}},

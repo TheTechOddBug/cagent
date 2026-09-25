@@ -353,15 +353,15 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 				Audio:           false, // Not yet supported
 			},
 			McpCapabilities: acp.McpCapabilities{
-				Http: false, // Only client-supplied stdio servers are supported.
-				Sse:  false,
+				Http: true,
+				Sse:  true,
 			},
 		},
 	}, nil
 }
 
 // newRuntime creates a session-owned team and runtime using the default agent.
-func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, servers []acp.McpServerStdio) (*Session, *agent.Agent, error) {
+func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, servers []clientMCPServer) (*Session, *agent.Agent, error) {
 	workingDir = cmp.Or(workingDir, a.defaultWorkingDir())
 	loadResult, err := a.loadTeamSerialized(ctx, workingDir)
 	if err != nil {

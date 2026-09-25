@@ -38,11 +38,11 @@ func validateResumeWorkingDir(saved, requested string) error {
 	return nil
 }
 
-func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation) error {
+func (a *Agent) resumeRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []clientMCPServer, op *agentOperation) error {
 	return a.reconnectRegisteredSession(ctx, s, workingDir, additionalDirs, servers, op, false, nil)
 }
 
-func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []acp.McpServerStdio, op *agentOperation, replay bool, configuration *sessionConfiguration) error {
+func (a *Agent) reconnectRegisteredSession(ctx context.Context, s *Session, workingDir string, additionalDirs []string, servers []clientMCPServer, op *agentOperation, replay bool, configuration *sessionConfiguration) error {
 	saved, _ := s.workspaceSnapshot()
 	if err := validateResumeWorkingDir(saved, workingDir); err != nil {
 		return acp.NewInvalidParams(err.Error())
