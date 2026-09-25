@@ -201,11 +201,12 @@ func isObjectSchema(schema map[string]any) bool {
 }
 
 func resolveRef(root map[string]any, ref string) map[string]any {
-	if !strings.HasPrefix(ref, "#/") {
+	pointer, found := strings.CutPrefix(ref, "#/")
+	if !found {
 		return nil
 	}
 	var current any = root
-	for part := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
+	for part := range strings.SplitSeq(pointer, "/") {
 		object, ok := current.(map[string]any)
 		if !ok {
 			return nil
