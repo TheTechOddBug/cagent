@@ -121,8 +121,8 @@ func splitKeyValue(line string) (string, string, bool) {
 	if key, value, ok := strings.Cut(line, ": "); ok {
 		return key, value, true
 	}
-	if strings.HasSuffix(line, ":") {
-		return line[:len(line)-1], "", true
+	if key, ok := strings.CutSuffix(line, ":"); ok {
+		return key, "", true
 	}
 	return "", "", false
 }

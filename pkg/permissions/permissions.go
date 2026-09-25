@@ -257,8 +257,7 @@ func matchGlob(pattern, value string) bool {
 
 	// Handle trailing wildcard for prefix matching
 	// This allows "sudo*" to match "sudo rm -rf /"
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
+	if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
 		// If prefix contains no other glob characters, do simple prefix match.
 		// Including \ catches escaped asterisks (e.g. "foo\*").
 		if !strings.ContainsAny(prefix, `*?[\`) {

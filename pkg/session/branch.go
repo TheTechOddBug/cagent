@@ -268,8 +268,8 @@ func generateBranchTitle(parentTitle string) string {
 
 	// Check for "(branched)" pattern
 	const branchedSuffix = "(branched)"
-	if strings.HasSuffix(parentTitle, branchedSuffix) {
-		baseTitle := strings.TrimRight(parentTitle[:len(parentTitle)-len(branchedSuffix)], " \t")
+	if baseTitle, ok := strings.CutSuffix(parentTitle, branchedSuffix); ok {
+		baseTitle = strings.TrimRight(baseTitle, " \t")
 		return baseTitle + " (branch 2)"
 	}
 

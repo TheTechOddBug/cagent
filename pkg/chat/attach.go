@@ -239,10 +239,10 @@ func parseDataURI(uri string) (mimeType string, data []byte, err error) {
 	}
 
 	// Header is "<mime>[;charset=…];base64" or "<mime>" (plain text, unsupported here).
-	if !strings.HasSuffix(header, ";base64") {
+	mimeType, ok = strings.CutSuffix(header, ";base64")
+	if !ok {
 		return "", nil, errors.New("data URI is not base64-encoded (only base64 data URIs are supported)")
 	}
-	mimeType = strings.TrimSuffix(header, ";base64")
 
 	// Strip any charset parameter (e.g. "image/png;charset=utf-8;base64" → "image/png").
 	if idx := strings.Index(mimeType, ";"); idx >= 0 {
