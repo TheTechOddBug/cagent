@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/commands"
+	commanddefaults "github.com/docker/docker-agent/pkg/tui/commands/defaults"
 	"github.com/docker/docker-agent/pkg/tui/components/completion"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
 	"github.com/docker/docker-agent/pkg/tui/components/editor/completions"
@@ -35,6 +36,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/components/statusbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tabbar"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
+	tooldefaults "github.com/docker/docker-agent/pkg/tui/components/tool/defaults"
 	"github.com/docker/docker-agent/pkg/tui/components/tour"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -70,9 +72,10 @@ const (
 
 // Model is the top-level TUI model that wraps the chat page.
 type appModel struct {
-	ar           *animation.Runtime
-	shutdownDone <-chan struct{}
-	cleanupOnce  sync.Once
+	toolRenderers *tool.Registry
+	ar            *animation.Runtime
+	shutdownDone  <-chan struct{}
+	cleanupOnce   sync.Once
 
 	// cleanupAllOnce guards the full cleanupAll shutdown sequence so repeat
 	// invocations (ExitSessionMsg followed by ExitConfirmedMsg, …) are no-ops:
@@ -420,7 +423,7 @@ func WithDisabledCommands(slashCommands []string) Option {
 // WithCommandBuilder builds the command categories shown in the command
 // palette from the given function. It overrides the default command category
 // builder. To include the default commands, the given function should call
-// commands.BuildCommandCategories and merge the result with its own.
+// commanddefaults.BuildCommandCategories and merge the result with its own.
 //
 // The tea.Model passed to the builder function must not be accessed during
 // the build call itself - it should only be captured for use within command
@@ -445,7 +448,7 @@ func WithTranscriber(t Transcriber) Option {
 	}
 }
 
-// WithToolRenderers registers custom tool-call renderers, keyed by tool name
+// WithToolRenderers registers custom tool-call renderers for this TUI, keyed by tool name
 // (e.g. "add") or a "category:<name>" key (e.g. "category:compute"). Registered
 // renderers take precedence over the built-in ones, letting an embedder customize
 // how specific tools are displayed — e.g. typesetting a calculator's result as
@@ -454,9 +457,9 @@ func WithTranscriber(t Transcriber) Option {
 // See pkg/tui/components/tool for the Builder contract; a renderer is typically
 // a thin wrapper around toolcommon.NewBase.
 func WithToolRenderers(renderers map[string]tool.Builder) Option {
-	return func(*appModel) {
+	return func(m *appModel) {
 		for key, b := range renderers {
-			tool.Register(key, b)
+			m.toolRenderers.Register(key, b)
 		}
 	}
 }
@@ -493,10 +496,11 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 	initialTab := &tabModel{sessionState: initialSessionState}
 
 	m := &appModel{
-		ar:           ar,
-		shutdownDone: ctx.Done(),
+		ar:            ar,
+		shutdownDone:  ctx.Done(),
+		toolRenderers: tooldefaults.NewRegistry(),
 		buildCommandCategories: func(ctx context.Context, _ tea.Model) []commands.Category {
-			return commands.BuildCommandCategories(ctx, initialApp)
+			return commanddefaults.BuildCommandCategories(ctx, initialApp)
 		},
 		supervisor:                    sv,
 		tabBar:                        tb,
@@ -643,6 +647,7 @@ func (m *appModel) commandCategories() []commands.Category {
 // appModel configuration (e.g. lean mode).
 func (m *appModel) chatPageOpts() []chat.PageOption {
 	opts := []chat.PageOption{
+		chat.WithToolRenderers(m.toolRenderers),
 		chat.WithCommandParser(commands.NewParser(m.commandCategories()...)),
 		chat.WithLayoutSettings(m.layoutSettings),
 		chat.WithSendMode(m.sendMode),

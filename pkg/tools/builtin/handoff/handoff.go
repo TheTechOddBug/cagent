@@ -4,9 +4,10 @@ import (
 	"context"
 
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/handoff/types"
 )
 
-const ToolNameHandoff = "handoff"
+const ToolNameHandoff = types.ToolNameHandoff
 
 type ToolSet struct{}
 
@@ -15,9 +16,7 @@ var (
 	_ tools.Named   = (*ToolSet)(nil)
 )
 
-type Args struct {
-	Agent string `json:"agent" jsonschema:"The name of the agent to hand off the conversation to."`
-}
+type Args = types.Args
 
 func New() *ToolSet {
 	return &ToolSet{}

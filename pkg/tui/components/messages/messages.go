@@ -19,14 +19,13 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
-	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
+	transfertask "github.com/docker/docker-agent/pkg/tools/builtin/transfertask/types"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/markdown"
 	"github.com/docker/docker-agent/pkg/tui/components/message"
 	"github.com/docker/docker-agent/pkg/tui/components/reasoningblock"
 	"github.com/docker/docker-agent/pkg/tui/components/scrollview"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
-	"github.com/docker/docker-agent/pkg/tui/components/tool/editfile"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	tuiimage "github.com/docker/docker-agent/pkg/tui/image"
@@ -73,6 +72,9 @@ type Model interface {
 	layout.Model
 	layout.Sizeable
 	layout.Focusable
+
+	// SetToolRenderers must be called before adding messages.
+	SetToolRenderers(registry *tool.Registry)
 	layout.Help
 	layout.Positionable
 
@@ -200,12 +202,13 @@ func nextBlockID() string {
 
 // model implements Model
 type model struct {
-	ar         *animation.Runtime
-	messages   []*types.Message
-	views      []layout.Model
-	groupStart int // Earliest message eligible for same-stream appends.
-	width      int // Full width including scrollbar space
-	height     int
+	toolRenderers *tool.Registry
+	ar            *animation.Runtime
+	messages      []*types.Message
+	views         []layout.Model
+	groupStart    int // Earliest message eligible for same-stream appends.
+	width         int // Full width including scrollbar space
+	height        int
 
 	// Height tracking system fields
 	scrollOffset      int                              // Current scroll position in lines
@@ -255,18 +258,32 @@ type model struct {
 	hoveredURL *hoveredURL
 }
 
+type Option func(*model)
+
+// WithToolRenderers supplies the registry used for tools, including reasoning blocks.
+func WithToolRenderers(registry *tool.Registry) Option {
+	return func(m *model) { m.SetToolRenderers(registry) }
+}
+
+// SetToolRenderers must be called before adding messages.
+func (m *model) SetToolRenderers(registry *tool.Registry) {
+	if registry != nil {
+		m.toolRenderers = registry
+	}
+}
+
 // New creates a new message list component
-func New(ar *animation.Runtime, sessionState SessionState) Model {
-	return newModel(ar, 120, 24, sessionState)
+func New(ar *animation.Runtime, sessionState SessionState, opts ...Option) Model {
+	return newModel(ar, 120, 24, sessionState, opts...)
 }
 
 // NewScrollableView creates a simple scrollable view for displaying messages in dialogs
 // This is a lightweight version that doesn't require app or session state management
-func NewScrollableView(ar *animation.Runtime, width, height int, sessionState SessionState) Model {
-	return newModel(ar, width, height, sessionState)
+func NewScrollableView(ar *animation.Runtime, width, height int, sessionState SessionState, opts ...Option) Model {
+	return newModel(ar, width, height, sessionState, opts...)
 }
 
-func newModel(ar *animation.Runtime, width, height int, sessionState SessionState) *model {
+func newModel(ar *animation.Runtime, width, height int, sessionState SessionState, opts ...Option) *model {
 	sv := scrollview.New(
 		scrollview.WithReserveScrollbarSpace(true),
 	)
@@ -274,7 +291,8 @@ func newModel(ar *animation.Runtime, width, height int, sessionState SessionStat
 	if ar == nil {
 		panic("messages: nil animation runtime")
 	}
-	return &model{
+	m := &model{
+		toolRenderers:        tool.NewRegistry(),
 		ar:                   ar,
 		slackAnimationSub:    ar.Subscribe(),
 		width:                width,
@@ -288,6 +306,10 @@ func newModel(ar *animation.Runtime, width, height int, sessionState SessionStat
 		hoveredMessageIndex:  -1,
 		renderDirty:          true,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // Init initializes the component
@@ -355,7 +377,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case editfile.ToggleDiffViewMsg:
+	case messages.ToggleDiffViewMsg:
 		m.invalidateAllItems()
 		return m, nil
 
@@ -367,7 +389,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case messages.ThemeChangedMsg:
 		// Theme changed - invalidate all render caches
 		m.invalidateAllItems()
-		editfile.InvalidateCaches()
+		m.toolRenderers.InvalidateCaches()
 		for i, view := range m.views {
 			updatedView, cmd := view.Update(msg)
 			m.views[i] = updatedView
@@ -1824,7 +1846,7 @@ func (m *model) LoadFromSession(sess *session.Session, generatedMedia map[int][]
 		}
 
 		// Create new reasoning block
-		block := reasoningblock.New(m.ar, nextBlockID(), agentName, m.sessionState)
+		block := reasoningblock.New(m.ar, nextBlockID(), agentName, m.sessionState, reasoningblock.WithToolRenderers(m.toolRenderers))
 		block.SetShowAgentBadge(showReasoningAgentBadge(m.lastMessage(), agentName))
 		block.SetSize(m.contentWidth(), 0)
 
@@ -2277,7 +2299,7 @@ func (m *model) addReasoningBlock(agentName, content string) tea.Cmd {
 		Content: content,
 	}
 
-	block := reasoningblock.New(m.ar, nextBlockID(), agentName, m.sessionState)
+	block := reasoningblock.New(m.ar, nextBlockID(), agentName, m.sessionState, reasoningblock.WithToolRenderers(m.toolRenderers))
 	block.SetShowAgentBadge(showReasoningAgentBadge(m.lastMessage(), agentName))
 	block.SetReasoning(content)
 	block.SetSize(m.contentWidth(), 0)
@@ -2344,7 +2366,7 @@ func (m *model) totalScrollableHeight() int {
 
 // Helper methods
 func (m *model) createToolCallView(msg *types.Message) layout.Model {
-	view := tool.New(m.ar, msg, m.sessionState)
+	view := m.toolRenderers.New(m.ar, msg, m.sessionState)
 	view.SetSize(m.contentWidth(), 0)
 	return view
 }

@@ -1,7 +1,6 @@
-package dialog
+package common
 
 import (
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,68 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
+	"github.com/docker/docker-agent/pkg/tui/dialog/internal/testutil"
 )
-
-// collectMsgs executes a command (or batch/sequence of commands) and collects all returned messages.
-// It handles tea.BatchMsg and tea.Sequence (which uses an unexported slice type).
-func collectMsgs(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-
-	msg := cmd()
-	if msg == nil {
-		return nil
-	}
-
-	// Handle BatchMsg
-	if batchMsg, ok := msg.(tea.BatchMsg); ok {
-		var msgs []tea.Msg
-		for _, innerCmd := range batchMsg {
-			if innerCmd != nil {
-				msgs = append(msgs, collectMsgs(innerCmd)...)
-			}
-		}
-		return msgs
-	}
-
-	// Handle Sequence (unexported type, use reflection)
-	// tea.Sequence returns a func that returns a sequenceMsg which is []tea.Cmd
-	msgValue := reflect.ValueOf(msg)
-	if msgValue.Kind() == reflect.Slice {
-		var msgs []tea.Msg
-		for i := range msgValue.Len() {
-			elem := msgValue.Index(i)
-			if elem.CanInterface() {
-				if innerCmd, ok := reflect.TypeAssert[tea.Cmd](elem); ok && innerCmd != nil {
-					msgs = append(msgs, collectMsgs(innerCmd)...)
-				}
-			}
-		}
-		if len(msgs) > 0 {
-			return msgs
-		}
-	}
-
-	return []tea.Msg{msg}
-}
-
-// findMsg searches for a message of the specified type in the collected messages.
-func findMsg[T any](msgs []tea.Msg) (T, bool) {
-	var zero T
-	for _, msg := range msgs {
-		if typed, ok := msg.(T); ok {
-			return typed, true
-		}
-	}
-	return zero, false
-}
-
-// hasMsg checks if a message of the specified type exists in the collected messages.
-func hasMsg[T any](msgs []tea.Msg) bool {
-	_, found := findMsg[T](msgs)
-	return found
-}
 
 func TestNewMultiChoiceDialog(t *testing.T) {
 	t.Parallel()
@@ -724,14 +663,14 @@ func TestMultiChoiceDialog_EscapeCancels(t *testing.T) {
 	_, cmd := d.Update(escKey)
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
+	msgs := testutil.CollectMsgs(cmd)
 	require.NotEmpty(t, msgs)
 
 	// Should have a CloseDialogMsg
-	assert.True(t, hasMsg[CloseDialogMsg](msgs), "should emit CloseDialogMsg")
+	assert.True(t, testutil.HasMsg[CloseDialogMsg](msgs), "should emit CloseDialogMsg")
 
 	// Should have a MultiChoiceResultMsg with IsCancelled=true
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found, "should emit MultiChoiceResultMsg")
 	assert.True(t, resultMsg.Result.IsCancelled)
 	assert.Equal(t, "test-escape", resultMsg.DialogID)
@@ -758,8 +697,8 @@ func TestMultiChoiceDialog_EscapeCancels_InCustomMode(t *testing.T) {
 	_, cmd := d.Update(escKey)
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.True(t, resultMsg.Result.IsCancelled, "should cancel even with custom text")
 }
@@ -786,13 +725,13 @@ func TestMultiChoiceDialog_SubmitOption_MessageContent(t *testing.T) {
 	_, cmd := d.submitPrimary()
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
+	msgs := testutil.CollectMsgs(cmd)
 
 	// Should have CloseDialogMsg
-	assert.True(t, hasMsg[CloseDialogMsg](msgs))
+	assert.True(t, testutil.HasMsg[CloseDialogMsg](msgs))
 
 	// Should have MultiChoiceResultMsg with correct content
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.Equal(t, "test-submit-option-msg", resultMsg.DialogID)
 	assert.Equal(t, "bad_args", resultMsg.Result.OptionID)
@@ -820,9 +759,9 @@ func TestMultiChoiceDialog_SubmitCustom_MessageContent(t *testing.T) {
 	_, cmd := d.submitPrimary()
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
+	msgs := testutil.CollectMsgs(cmd)
 
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.Equal(t, "custom", resultMsg.Result.OptionID)
 	assert.Equal(t, "My custom rejection reason", resultMsg.Result.Value)
@@ -846,9 +785,9 @@ func TestMultiChoiceDialog_SubmitSkip_MessageContent(t *testing.T) {
 	_, cmd := d.submitSecondary()
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
+	msgs := testutil.CollectMsgs(cmd)
 
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.Equal(t, "skip", resultMsg.Result.OptionID)
 	assert.True(t, resultMsg.Result.IsSkipped)
@@ -873,8 +812,8 @@ func TestMultiChoiceDialog_EnterKey_SubmitsDefault(t *testing.T) {
 	// No selection - enter should submit skip
 	_, cmd := d.Update(enterKey)
 	require.NotNil(t, cmd)
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.True(t, resultMsg.Result.IsSkipped)
 }
@@ -897,8 +836,8 @@ func TestMultiChoiceDialog_EnterKey_WithSelection(t *testing.T) {
 
 	_, cmd := d.Update(enterKey)
 	require.NotNil(t, cmd)
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.Equal(t, "opt1", resultMsg.Result.OptionID)
 	assert.False(t, resultMsg.Result.IsSkipped)
@@ -964,8 +903,8 @@ func TestMultiChoiceDialog_MouseClick_SkipButton(t *testing.T) {
 	_, cmd := d.handleMouseClick(clickX, clickY)
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.True(t, resultMsg.Result.IsSkipped)
 }
@@ -993,8 +932,8 @@ func TestMultiChoiceDialog_MouseClick_ContinueButton(t *testing.T) {
 	_, cmd := d.handleMouseClick(clickX, clickY)
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.Equal(t, "opt1", resultMsg.Result.OptionID)
 }
@@ -1164,8 +1103,8 @@ func TestMultiChoiceDialog_EmptyCustom_FallsBackToSkip(t *testing.T) {
 	_, cmd := d.submitPrimary()
 	require.NotNil(t, cmd)
 
-	msgs := collectMsgs(cmd)
-	resultMsg, found := findMsg[MultiChoiceResultMsg](msgs)
+	msgs := testutil.CollectMsgs(cmd)
+	resultMsg, found := testutil.FindMsg[MultiChoiceResultMsg](msgs)
 	require.True(t, found)
 	assert.True(t, resultMsg.Result.IsSkipped, "whitespace-only custom should fall back to skip")
 }

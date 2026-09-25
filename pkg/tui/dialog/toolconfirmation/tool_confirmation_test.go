@@ -1,4 +1,4 @@
-package dialog
+package toolconfirmation
 
 import (
 	"strings"
@@ -13,6 +13,8 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
+	"github.com/docker/docker-agent/pkg/tui/dialog/common"
+	"github.com/docker/docker-agent/pkg/tui/dialog/internal/testutil"
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
 
@@ -252,7 +254,7 @@ func TestToolConfirmationDialog_ClickOnYFiresAtEveryWidth(t *testing.T) {
 		y, x, found := locateInView(d, "Y yes")
 		require.Truef(t, found, "width %d: 'Y yes' must be visible on some options row", width)
 
-		resume, ok := findMsg[RuntimeResumeMsg](collectMsgs(clickCell(d, y, x)))
+		resume, ok := testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(clickCell(d, y, x)))
 		require.Truef(t, ok, "width %d: click on 'Y' at col %d must fire", width, x)
 		assert.Equalf(t, runtime.ResumeApprove(), resume.Request, "width %d: 'Y' must approve the single call", width)
 	}
@@ -288,12 +290,12 @@ func TestToolConfirmationDialog_WrappedLayoutClicksDispatch(t *testing.T) {
 	require.True(t, found, "the all-tools segment must be visible")
 	require.NotEqual(t, bY, aY, "the wrapped layout must spread segments across rows")
 
-	resume, ok := findMsg[RuntimeResumeMsg](collectMsgs(clickCell(d, bY, bX)))
+	resume, ok := testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(clickCell(d, bY, bX)))
 	require.True(t, ok, "click on 'B balanced' must dispatch a resume")
 	assert.Equal(t, runtime.ResumeApproveBalanced(), resume.Request)
 
 	require.False(t, state.YoloMode())
-	resume, ok = findMsg[RuntimeResumeMsg](collectMsgs(clickCell(d, aY, aX)))
+	resume, ok = testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(clickCell(d, aY, aX)))
 	require.True(t, ok, "click on 'A all tools' on the wrapped row must dispatch a resume")
 	assert.Equal(t, runtime.ResumeApproveAutonomous(), resume.Request)
 	assert.True(t, state.YoloMode(), "the all-tools click must flip the session-wide approval")
@@ -322,7 +324,7 @@ func TestToolConfirmationDialog_MiddleRowClickInNarrowSplitPane(t *testing.T) {
 	tY, tX, found := locateInView(d, optionRowText(middle))
 	require.True(t, found, "the middle row must be visible")
 
-	resume, ok := findMsg[RuntimeResumeMsg](collectMsgs(clickCell(d, tY, tX)))
+	resume, ok := testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(clickCell(d, tY, tX)))
 	require.True(t, ok, "click on the middle row's action key must dispatch a resume")
 	assert.Equal(t, runtime.ResumeApproveTool("shell"), resume.Request,
 		"the middle-row click must grant this tool, not a neighbouring row's decision")
@@ -342,13 +344,13 @@ var expectedOptionResume = map[string]runtime.ResumeRequest{
 // exactly the clicked segment's decision — anything else is a misdispatch.
 func assertOptionClick(t *testing.T, d *toolConfirmationDialog, seg optionSegment, y, x, width int) {
 	t.Helper()
-	msgs := collectMsgs(clickCell(d, y, x))
+	msgs := testutil.CollectMsgs(clickCell(d, y, x))
 	if seg.action == "N" {
-		assert.Truef(t, hasMsg[OpenDialogMsg](msgs),
+		assert.Truef(t, testutil.HasMsg[common.OpenDialogMsg](msgs),
 			"width %d: click on %q must open the rejection-reason dialog", width, seg.action)
 		return
 	}
-	resume, ok := findMsg[RuntimeResumeMsg](msgs)
+	resume, ok := testutil.FindMsg[RuntimeResumeMsg](msgs)
 	require.Truef(t, ok, "width %d: click on %q must dispatch a resume", width, seg.action)
 	assert.Equalf(t, expectedOptionResume[seg.action], resume.Request,
 		"width %d: click on %q dispatched another segment's decision", width, seg.action)
@@ -390,7 +392,7 @@ func TestToolConfirmationDialog_TinyWidthsKeepRowsAlignedAndClickable(t *testing
 		dialogRow, dialogCol := d.Position()
 		view := d.View()
 		renderedLines := strings.Split(ansi.Strip(view), "\n")
-		endY := ContentEndRow(dialogRow, lipgloss.Height(view))
+		endY := common.ContentEndRow(dialogRow, lipgloss.Height(view))
 		for i, row := range rows {
 			y := endY - (len(rows) - 1) + i
 			line := renderedLines[y-dialogRow]
@@ -448,7 +450,7 @@ func TestToolConfirmationDialog_OversizeSegmentTruncatesLabel(t *testing.T) {
 	tY, tX, found := locateInView(d, "T always allow")
 	require.True(t, found, "the truncated segment must keep its key and label prefix visible")
 
-	resume, ok := findMsg[RuntimeResumeMsg](collectMsgs(clickCell(d, tY, tX)))
+	resume, ok := testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(clickCell(d, tY, tX)))
 	require.True(t, ok, "click on the truncated segment must dispatch a resume")
 	assert.Equal(t, runtime.ResumeApproveTool(wantPattern), resume.Request,
 		"the granted pattern must be the full untruncated pattern")
@@ -507,7 +509,7 @@ func TestToolConfirmationDialog_BalancedClearsYoloMode(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.False(t, state.YoloMode(), "choosing Balanced must drop the session-wide yolo flag")
 
-	resume, ok := findMsg[RuntimeResumeMsg](collectMsgs(cmd))
+	resume, ok := testutil.FindMsg[RuntimeResumeMsg](testutil.CollectMsgs(cmd))
 	require.True(t, ok, "Balanced must dispatch a resume request")
 	assert.Equal(t, runtime.ResumeApproveBalanced(), resume.Request)
 }

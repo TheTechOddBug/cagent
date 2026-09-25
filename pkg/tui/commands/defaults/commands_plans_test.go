@@ -1,4 +1,4 @@
-package commands
+package defaults
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
@@ -24,7 +25,7 @@ func TestParseSlashCommand_Plans(t *testing.T) {
 func TestPlansCommandRegistration(t *testing.T) {
 	t.Parallel()
 
-	var item *Item
+	var item *commands.Item
 	for _, cmd := range builtInSessionCommands() {
 		if cmd.ID == "session.plans" {
 			item = &cmd

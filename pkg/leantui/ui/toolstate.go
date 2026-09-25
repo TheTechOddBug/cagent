@@ -136,7 +136,7 @@ func (t *ToolTracker) Finish(id string, result ToolResult) *ToolView {
 	tv.images = result.Images
 
 	msg := *tv.message
-	snapshot := &ToolView{message: &msg, images: tv.images}
+	snapshot := &ToolView{message: &msg, images: tv.images, renderers: tv.renderers}
 	t.Remove(id)
 	return snapshot
 }
@@ -154,7 +154,7 @@ func (t *ToolTracker) FinalizeAll(status tuitypes.ToolStatus) []*ToolView {
 			tv.message.Content = "Tool call ended before a result was received."
 		}
 		msg := *tv.message
-		views = append(views, &ToolView{message: &msg, images: tv.images})
+		views = append(views, &ToolView{message: &msg, images: tv.images, renderers: tv.renderers})
 	})
 	t.Reset()
 	return views

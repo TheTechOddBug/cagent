@@ -1,16 +1,17 @@
 //go:build darwin
 
-package commands
+package defaults
 
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
-func speakCommand() *Item {
-	return &Item{
+func speakCommand() *commands.Item {
+	return &commands.Item{
 		ID:           "session.speak",
 		Label:        "Speak",
 		SlashCommand: "/speak",

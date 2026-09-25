@@ -8,14 +8,15 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tui/animation"
+	"github.com/docker/docker-agent/pkg/tui/components/tool"
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
 
 // NewAttentionDialog builds a prompt without opening it or running its Init command.
-func NewAttentionDialog(ctx context.Context, ar *animation.Runtime, application *app.App, state *service.SessionState, event tea.Msg) Dialog {
+func NewAttentionDialog(ctx context.Context, ar *animation.Runtime, application *app.App, state *service.SessionState, event tea.Msg, registries ...*tool.Registry) Dialog {
 	switch ev := event.(type) {
 	case *runtime.ToolCallConfirmationEvent:
-		return NewToolConfirmationDialog(ar, ev, state)
+		return NewToolConfirmationDialog(ar, ev, state, registries...)
 	case *runtime.MaxIterationsReachedEvent:
 		return NewMaxIterationsDialog(ev.MaxIterations, application)
 	case *runtime.ElicitationRequestEvent:

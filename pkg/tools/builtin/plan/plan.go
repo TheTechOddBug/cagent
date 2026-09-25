@@ -37,17 +37,18 @@ import (
 	"github.com/docker/docker-agent/pkg/atomicfile"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/plan/types"
 )
 
 const (
-	ToolNameWritePlan          = "write_plan"
-	ToolNameReadPlan           = "read_plan"
-	ToolNameListPlans          = "list_plans"
-	ToolNameDeletePlan         = "delete_plan"
-	ToolNameUpdatePlanFromFile = "update_plan_from_file"
-	ToolNameExportPlanToFile   = "export_plan_to_file"
-	ToolNameSetPlanStatus      = "set_plan_status"
-	ToolNameGetPlanStatus      = "get_plan_status"
+	ToolNameWritePlan          = types.ToolNameWritePlan
+	ToolNameReadPlan           = types.ToolNameReadPlan
+	ToolNameListPlans          = types.ToolNameListPlans
+	ToolNameDeletePlan         = types.ToolNameDeletePlan
+	ToolNameUpdatePlanFromFile = types.ToolNameUpdatePlanFromFile
+	ToolNameExportPlanToFile   = types.ToolNameExportPlanToFile
+	ToolNameSetPlanStatus      = types.ToolNameSetPlanStatus
+	ToolNameGetPlanStatus      = types.ToolNameGetPlanStatus
 )
 
 // MaxPlanContentSize caps a plan's content (its markdown body): it bounds how

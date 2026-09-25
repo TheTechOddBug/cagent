@@ -47,6 +47,52 @@ When building custom UIs on top of Docker Agent's TUI primitives, four packages 
 - **`pkg/tui/animation`** — implement `animation.Stopper` on any view that owns a tick-based animation. Call `StopAnimation` whenever a view is removed from the UI hierarchy to prevent leaked `time.Tick` subscriptions from firing against a dead view.
 - **`pkg/tui/components/transcript`** — embed the transcript view for displaying conversation history. Use the `Messages()` method to read the current slice of transcript messages (treat as read-only — mutations desync renders). This is useful for host-side tests asserting on chat history, and for persistence layers that need to snapshot conversation state.
 
+### Dependency-light editor, dialogs, and tool rendering
+
+- Use `pkg/tui/commands` for command items and slash parsing, and
+  `components/editor/completions.NewCommandCompletion` for completions. The
+  application builder moved to `pkg/tui/commands/defaults.BuildCommandCategories`;
+  embedders should supply their own categories. Argument providers stay lazy.
+- Use `pkg/tui/dialog/common` for dialog interfaces, open/close messages, and
+  multi-choice results. Use `pkg/tui/dialog/toolconfirmation` for confirmation,
+  rejection, and `RuntimeResumeMsg`. The parent `dialog` package retains
+  application-facing compatibility wrappers, but imports the application dialogs.
+- `components/messages`, `components/transcript`, and `components/reasoningblock`
+  default to generic/API tool views. Supply an instance registry with their
+  `WithToolRenderers` option. For rich builtin views, explicitly import
+  `pkg/tui/components/tool/defaults` and use `defaults.NewRegistry()` instead.
+
+```go
+registry := tool.NewRegistry() // generic fallback, fetch, and category:api
+registry.Register("my_tool", myRenderer)
+list := messages.New(ar, state, messages.WithToolRenderers(registry))
+confirmation := toolconfirmation.NewToolConfirmationDialog(
+    ar, event, state, messages.WithToolRenderers(registry),
+)
+```
+
+`Registry.Register` replaces process-global `tool.Register`. Resolution is exact
+name, then `category:<name>`, then generic fallback; a custom renderer wins over
+its builtin counterpart at each tier. `tui.WithToolRenderers` still accepts a
+builder map, now scoped to that TUI. Docker Agent's normal TUI explicitly uses
+all builtin renderers, including inside reasoning blocks and confirmations.
+Shared tool names, wire arguments, and result metadata live in
+`pkg/tools/builtin/<tool>/types`; importing them does not import execution.
+
+For Gordon-style hosts, replace parent `dialog` imports with `common` and
+`toolconfirmation`, keeping the existing message adapter and session lifecycle.
+Keep close/open/result commands sequenced: cancelling the rejection picker must
+return to confirmation without resuming execution. Approval-mode state changes
+still occur synchronously during `Update`. Continue calling `Init` and executing
+its returned command at the same point in the host lifecycle. Hosts using
+`transcript.Rebuild` with shared-cache renderers can call
+`registry.InvalidateCaches()` before rebuilding on theme changes; registry
+isolation applies to registration, not a renderer's own caches.
+
+These entry points exclude the application, CLI, MCP toolset implementation, and
+JavaScript engine. Runtime event types still retain MCP protocol support and the
+runtime's own builtin tools; this is not a runtime or remote-session refactor.
+
 ## Headless Embedded Chat (`pkg/embeddedchat`)
 
 `pkg/embeddedchat` is a thin wrapper around the Docker Agent runtime that lets you drive an agent from your own UI instead of running Docker Agent's Bubble Tea application. It handles runtime construction, event projection, and conversation state, exposing a simple `Send` / `Confirm` / `Restart` / `Close` API.

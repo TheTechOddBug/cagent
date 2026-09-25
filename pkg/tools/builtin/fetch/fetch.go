@@ -23,11 +23,12 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin/fetch/types"
 	"github.com/docker/docker-agent/pkg/useragent"
 )
 
 const (
-	ToolNameFetch = "fetch"
+	ToolNameFetch = types.ToolNameFetch
 )
 
 type ToolSet struct {

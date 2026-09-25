@@ -1,4 +1,4 @@
-package commands
+package defaults
 
 import (
 	"testing"
@@ -7,21 +7,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 // parserForAgentCommand wires a single agent-command item into a parser exactly
 // as BuildCommandCategories does, so Parse exercises the real item produced by
 // newAgentCommandItem.
-func parserForAgentCommand(name string, cmd types.Command) *Parser {
-	return NewParser(Category{
+func parserForAgentCommand(name string, cmd types.Command) *commands.Parser {
+	return commands.NewParser(commands.Category{
 		Name:     "Agent Commands",
-		Commands: []Item{newAgentCommandItem(name, cmd)},
+		Commands: []commands.Item{newAgentCommandItem(name, cmd)},
 	})
 }
 
 // Regression guard: agent-command items must carry SlashCommand + Immediate, or
-// Parser.Parse never matches them and the command falls through as plain chat
+// commands.Parser.Parse never matches them and the command falls through as plain chat
 // text instead of being invoked.
 func TestAgentCommandItem_WiredForSlashDispatch(t *testing.T) {
 	t.Parallel()
