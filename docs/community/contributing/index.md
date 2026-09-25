@@ -117,6 +117,13 @@ the original location, and track whether any word was yielded when preserving
 that fallback. Indexing, repeated traversal, capacity/count uses, mutable byte
 inputs, and `FieldsFunc` callbacks are intentionally excluded.
 
+`Lint/SortStableFunc` recommends `slices.SortStableFunc` with `cmp.Compare`
+for reflection-based `sort.SliceStable` calls comparing integer or string keys,
+including short-circuiting tie-breaks. Reverse comparison arguments for descending
+keys and preserve stable ties. Floating-point keys (NaN ordering), side-effecting
+comparators, generated code, tests, and frozen configs are excluded. The cop
+reports suggestions, not automatic rewrites.
+
 `Lint/NewExpr` flags a fresh local declared only to return its address, recommending
 `new(expr)` instead. It requires the declaration and `return &x` to be adjacent, the
 variable to have no other uses, and skips composite literals (`&T{...}` stays clearer
