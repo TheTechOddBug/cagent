@@ -270,6 +270,11 @@ func (a *Agent) setConfiguration(ctx context.Context, sid, id, value string) (se
 				_, err = s.rt.SetAgentThinkingLevel(ctx, name, effort.Level(value))
 			}
 			if err != nil {
+				if ref != "" {
+					if authErr := a.modelAuthenticationError(ctx, s, ref); authErr != nil {
+						return empty, authErr
+					}
+				}
 				return empty, acp.NewInvalidParams(err.Error())
 			}
 			applied := selected.SnapshotModelOverride()

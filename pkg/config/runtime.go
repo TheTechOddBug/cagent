@@ -121,6 +121,17 @@ func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
 	return clone
 }
 
+// CloneWithFreshEnvironment reloads credential sources without changing the
+// original snapshot. Explicit provider overrides retain their existing ownership.
+func (runConfig *RuntimeConfig) CloneWithFreshEnvironment() *RuntimeConfig {
+	clone := runConfig.Clone()
+	if clone.EnvProviderOverride == nil && clone.EnvProviderForTests == nil {
+		clone.envFilesErr = nil
+		clone.envProviderCached = clone.computedEnvProvider()
+	}
+	return clone
+}
+
 // ModelsDevStore returns the lazily-initialized models.dev store.
 // The store is created on first access and shared across clones.
 // If ModelsDevStoreOverride is set, it is returned directly.
@@ -174,14 +185,14 @@ func (runConfig *RuntimeConfig) computedEnvProvider() environment.Provider {
 	defaultEnv := environment.NewDefaultProvider()
 
 	// Make env file paths absolute relative to the working directory.
-	var err error
-	runConfig.EnvFiles, err = environment.AbsolutePaths(runConfig.WorkingDir, runConfig.EnvFiles)
+	absolutePaths, err := environment.AbsolutePaths(runConfig.WorkingDir, runConfig.EnvFiles)
 	if err != nil {
 		slog.Error("Failed to make env file paths absolute", "error", err)
 		runConfig.envFilesErr = err
 		return defaultEnv
 	}
 
+	runConfig.EnvFiles = absolutePaths
 	envFilesProviders, err := environment.NewEnvFilesProvider(runConfig.EnvFiles)
 	if err != nil {
 		slog.Error("Failed to read env files", "error", err)

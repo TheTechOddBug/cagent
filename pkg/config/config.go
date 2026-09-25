@@ -159,13 +159,16 @@ func readInstructionFiles(parentDir string, paths []string) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// ErrGatewayAuthentication means the Docker models gateway has no login token.
+var ErrGatewayAuthentication = errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+
 // CheckRequiredEnvVars checks which environment variables are required by the models and tools.
 //
 // This allows exiting early with a proper error message instead of failing later when trying to use a model or tool.
 func CheckRequiredEnvVars(ctx context.Context, cfg *latest.Config, modelsGateway string, env environment.Provider) error {
 	if modelsGateway != "" && environment.IsDockerDomainURL(modelsGateway) {
 		if jwt, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); jwt == "" {
-			return errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
+			return ErrGatewayAuthentication
 		}
 	}
 
