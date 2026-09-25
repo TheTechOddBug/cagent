@@ -390,12 +390,12 @@ func TestAsymmetric_EncryptMode(t *testing.T) {
 			require.ErrorIs(t, protect(t, pub, annotations, []byte(payload), ModeEncrypt), ErrEncryptNeedsPriv)
 			assert.Empty(t, annotations)
 
-			require.NoError(t, protect(t, priv, annotations, []byte(payload), ModeEncrypt))
+			want := stmtFor(t, []byte(payload))
+			require.NoError(t, priv.Protect(annotations, []byte(payload), want, ModeEncrypt))
 			assert.Equal(t, kp.encAlg, annotations[AnnotationEncryptedAlgorithm])
 			assert.Equal(t, kp.signAlg, annotations[AnnotationSignatureAlgorithm], "encrypt mode must also sign")
 
 			// Private key: signature + decrypt-and-compare. Public key: signature only.
-			want := stmtFor(t, []byte(payload))
 			v, err := priv.VerifyAnnotations(annotations, []byte(payload))
 			require.NoError(t, err)
 			assert.Equal(t, Verification{SignatureAlgorithm: kp.signAlg, EncryptedAlgorithm: kp.encAlg, Statement: want}, v)
