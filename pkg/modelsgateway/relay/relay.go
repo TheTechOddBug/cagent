@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -105,7 +106,7 @@ func New(target Target, path string, tokens TokenSource, validator Validator, op
 	if r.credentials == nil {
 		return nil, errors.New("gateway relay credentials function is required")
 	}
-	for _, name := range append(append([]string(nil), r.requestHeaders...), r.responseHeaders...) {
+	for _, name := range append(slices.Clone(r.requestHeaders), r.responseHeaders...) {
 		if !allowedHeader(name) {
 			return nil, fmt.Errorf("gateway relay header %q is not allowed", name)
 		}
@@ -134,12 +135,12 @@ func WithMaxStreamLineBytes(n int) Option { return func(r *Relay) { r.maxStreamL
 
 // WithRequestHeaders replaces the request header allowlist.
 func WithRequestHeaders(headers ...string) Option {
-	return func(r *Relay) { r.requestHeaders = append([]string(nil), headers...) }
+	return func(r *Relay) { r.requestHeaders = slices.Clone(headers) }
 }
 
 // WithResponseHeaders replaces the response header allowlist.
 func WithResponseHeaders(headers ...string) Option {
-	return func(r *Relay) { r.responseHeaders = append([]string(nil), headers...) }
+	return func(r *Relay) { r.responseHeaders = slices.Clone(headers) }
 }
 
 // WithCredentials sets how the upstream token is represented. By default it
@@ -155,7 +156,7 @@ func WithStreamObserver(newObserver func() StreamObserver) Option {
 
 // WithStreamInterruptedEvent sets bytes appended when a streamed response is incomplete.
 func WithStreamInterruptedEvent(event []byte) Option {
-	return func(r *Relay) { r.streamError = append([]byte(nil), event...) }
+	return func(r *Relay) { r.streamError = slices.Clone(event) }
 }
 
 // Serve forwards one POST. It always writes a client response; returned errors
@@ -280,7 +281,7 @@ func (r *Relay) do(ctx context.Context, incoming *http.Request, base *url.URL, b
 	target.Path = strings.TrimRight(target.Path, "/") + r.path
 	targetQuery := target.Query()
 	for name, values := range query {
-		targetQuery[name] = append([]string(nil), values...)
+		targetQuery[name] = slices.Clone(values)
 	}
 	target.RawQuery = targetQuery.Encode()
 	out, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))

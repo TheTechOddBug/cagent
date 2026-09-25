@@ -55,6 +55,17 @@ func TestGeneratedMediaBlobStore_RoundTripAndCopy(t *testing.T) {
 	})
 }
 
+func TestInMemoryGeneratedMediaBlobStoreEmpty(t *testing.T) {
+	t.Parallel()
+	store := NewInMemorySessionStore().(*InMemorySessionStore)
+	for _, data := range [][]byte{nil, {}, make([]byte, 0, 8)} {
+		require.NoError(t, store.AddGeneratedBlob(t.Context(), "owner", "empty.png", data))
+		got, err := store.LookupGeneratedBlob(t.Context(), "owner", "empty.png")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	}
+}
+
 func TestGeneratedMediaManifest_RoundTrip(t *testing.T) {
 	t.Parallel()
 	manifestStores(t, func(t *testing.T, _ Store, manifest GeneratedMediaManifest) {

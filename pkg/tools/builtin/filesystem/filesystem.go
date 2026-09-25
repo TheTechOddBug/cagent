@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -447,7 +448,10 @@ func validateRepairedEdits(edits []Edit) error {
 //   - Stray '\' — model emits an escape sequence outside of a string value
 //     (e.g. literal \n between tokens, or \" where " is expected)
 func tryRepairEditFileJSON(data []byte) ([]byte, bool) {
-	current := append([]byte(nil), data...) // defensive copy
+	var current []byte
+	if len(data) > 0 {
+		current = slices.Clone(data)
+	}
 	for range 3 {
 		var synErr *json.SyntaxError
 		if err := json.Unmarshal(current, &json.RawMessage{}); err == nil {

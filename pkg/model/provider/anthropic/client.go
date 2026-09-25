@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -704,8 +705,10 @@ func (c *Client) toolsWithSupportedDeferral(requestTools []tools.Tool) []tools.T
 	if c.supportsDeferredTools() {
 		return requestTools
 	}
-	result := make([]tools.Tool, len(requestTools))
-	copy(result, requestTools)
+	result := slices.Clip(slices.Clone(requestTools))
+	if result == nil {
+		result = []tools.Tool{}
+	}
 	for i := range result {
 		result[i].Deferred = false
 		result[i].DeferredAtToolCallID = ""

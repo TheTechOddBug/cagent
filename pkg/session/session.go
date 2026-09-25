@@ -2763,8 +2763,7 @@ func truncateOldToolContent(messages []chat.Message, maxTokens int) []chat.Messa
 		return messages
 	}
 
-	result := make([]chat.Message, len(messages))
-	copy(result, messages)
+	result := slices.Clip(slices.Clone(messages))
 
 	tokenBudget := maxTokens
 

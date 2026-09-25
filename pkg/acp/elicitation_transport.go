@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -255,7 +256,7 @@ func (r *elicitationReader) Read(p []byte) (int, error) {
 				}
 			}
 		}
-		r.buffer = append(append([]byte(nil), line...), '\n')
+		r.buffer = append(slices.Clone(line), '\n')
 	}
 	n := copy(p, r.buffer)
 	r.buffer = r.buffer[n:]

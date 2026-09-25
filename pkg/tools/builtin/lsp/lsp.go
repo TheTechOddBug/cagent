@@ -1449,8 +1449,7 @@ func applyTextEditsToFile(filePath string, edits []lspTextEdit) error {
 
 	lines := strings.Split(string(content), "\n")
 
-	sortedEdits := make([]lspTextEdit, len(edits))
-	copy(sortedEdits, edits)
+	sortedEdits := slices.Clone(edits)
 	slices.SortFunc(sortedEdits, func(a, b lspTextEdit) int {
 		if a.Range.Start.Line != b.Range.Start.Line {
 			return cmp.Compare(b.Range.Start.Line, a.Range.Start.Line)

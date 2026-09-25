@@ -885,7 +885,7 @@ func (r *Result) PrintSummary(w io.Writer) {
 	}
 
 	skillFiles := r.skillFilesGrouped()
-	promptEntries := append([]Entry(nil), r.Manifest.PromptFiles...)
+	promptEntries := slices.Clone(r.Manifest.PromptFiles)
 	slices.SortFunc(promptEntries, func(a, b Entry) int { return cmp.Compare(a.Target, b.Target) })
 
 	if len(skillFiles) == 0 && len(promptEntries) == 0 {
@@ -957,7 +957,7 @@ type skillGroup struct {
 // skill's target path. The walk happens after staging is complete, so
 // it sees exactly what the sandbox will see.
 func (r *Result) skillFilesGrouped() []skillGroup {
-	entries := append([]Entry(nil), r.Manifest.Skills...)
+	entries := slices.Clone(r.Manifest.Skills)
 	slices.SortFunc(entries, func(a, b Entry) int { return cmp.Compare(a.Target, b.Target) })
 
 	groups := make([]skillGroup, 0, len(entries))

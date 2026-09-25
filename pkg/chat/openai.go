@@ -1,6 +1,9 @@
 package chat
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // OpenAIResponse preserves ordered Responses output for stateless continuation.
 // Source scopes opaque state to the originating provider and model.
@@ -19,7 +22,9 @@ func (r *OpenAIResponse) Clone() *OpenAIResponse {
 	if r.Output != nil {
 		clone.Output = make([]json.RawMessage, len(r.Output))
 		for i, item := range r.Output {
-			clone.Output[i] = append(json.RawMessage(nil), item...)
+			if len(item) > 0 {
+				clone.Output[i] = slices.Clone(item)
+			}
 		}
 	}
 	return &clone
