@@ -169,6 +169,14 @@ func (a *Agent) emitConfiguration(ctx context.Context, s *Session, state session
 
 // SetSessionConfigOption accepts stable select values only.
 func (a *Agent) SetSessionConfigOption(ctx context.Context, params acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
+	var meta map[string]any
+	if params.ValueId != nil {
+		meta = params.ValueId.Meta
+	} else if params.Boolean != nil {
+		meta = params.Boolean.Meta
+	}
+	ctx, span := startACPRequest(ctx, "session/set_config_option", meta)
+	defer span.End()
 	if params.ValueId == nil || params.Boolean != nil {
 		return acp.SetSessionConfigOptionResponse{}, acp.NewInvalidParams("a select value is required")
 	}
@@ -178,6 +186,8 @@ func (a *Agent) SetSessionConfigOption(ctx context.Context, params acp.SetSessio
 }
 
 func (a *Agent) SetSessionMode(ctx context.Context, params acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/set_mode", params.Meta)
+	defer span.End()
 	_, err := a.setConfiguration(ctx, string(params.SessionId), "mode", string(params.ModeId))
 	return acp.SetSessionModeResponse{}, err
 }

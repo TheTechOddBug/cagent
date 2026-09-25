@@ -235,6 +235,7 @@ func (t *FilesystemToolset) handleReadFile(ctx context.Context, toolCall tools.T
 	}
 
 	resp, err := t.agent.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
 		Line:      args.Line,
@@ -281,6 +282,7 @@ func (t *FilesystemToolset) handleReadMultipleFiles(ctx context.Context, toolCal
 				return nil, err
 			}
 			response, err = t.agent.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
+				Meta:      traceMeta(ctx, nil),
 				SessionId: acp.SessionId(sessionID),
 				Path:      resolvedPath,
 			})
@@ -394,6 +396,7 @@ func (t *FilesystemToolset) handleWriteFile(ctx context.Context, toolCall tools.
 	}
 
 	_, err = t.agent.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
 		Content:   args.Content,
@@ -432,6 +435,7 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 	}
 
 	resp, err := t.agent.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
 	})
@@ -461,6 +465,7 @@ func (t *FilesystemToolset) handleEditFile(ctx context.Context, toolCall tools.T
 		return tools.ResultError(fmt.Sprintf("Error: %s", err)), nil
 	}
 	_, err = t.agent.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{
+		Meta:      traceMeta(ctx, nil),
 		SessionId: acp.SessionId(sessionID),
 		Path:      resolvedPath,
 		Content:   modifiedContent,

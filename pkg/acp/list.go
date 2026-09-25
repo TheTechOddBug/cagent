@@ -49,6 +49,8 @@ func validListWorkingDir(cwd string) bool {
 
 // ListSessions implements [acp.Agent] using metadata only, never conversation histories.
 func (a *Agent) ListSessions(ctx context.Context, params acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
+	ctx, span := startACPRequest(ctx, "session/list", params.Meta)
+	defer span.End()
 	ctx, op, err := a.beginOperation(ctx)
 	if err != nil {
 		return acp.ListSessionsResponse{}, err

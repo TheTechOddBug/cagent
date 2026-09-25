@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"math"
 	"math/big"
 	"net/url"
@@ -44,7 +43,7 @@ func (a *Agent) elicitationHandler(sid string) tools.ElicitationHandler {
 		case "oauth_flow", "oauth_client_credentials":
 			return decline, nil
 		}
-		meta := maps.Clone(map[string]any(req.Meta))
+		meta := traceMeta(ctx, map[string]any(req.Meta))
 		if meta == nil {
 			meta = make(map[string]any)
 		}

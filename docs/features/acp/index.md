@@ -63,6 +63,53 @@ Host Application
 - **Filesystem operations** — Each session has its own toolsets; shell, filesystem, and Git tools resolve relative paths from that session's working directory
 - **Tool permissions** — “Always allow this tool for this session” remembers approval for that tool only; it does not enable autonomous mode for other tools.
 
+## Capability Matrix
+
+The stable ACP v1 surface is covered by wire and behavior tests. `initialize` advertises the following agent capabilities; the client capability matrix exercises all 32 combinations of filesystem read/write, terminal support, and form/URL elicitation.
+
+| Surface | Advertised/implemented behavior | Regression coverage |
+| --- | --- | --- |
+| Sessions | New, load with replay, resume, list, close, delete, additional directories | `TestACPCapabilityMatrix`, session lifecycle/load/delete suites |
+| Authentication | `host-credentials` adoption and connection-local logout | Authentication wire/lifecycle suites |
+| Prompt content | Text, resource links, embedded resources, images, audio | Content/audio suites; model/API limits still apply |
+| Client MCP | Stdio, Streamable HTTP, legacy SSE | Client MCP and session-remote suites |
+| Filesystem | Read tools require read capability; write requires write; edit requires both | `TestACPCapabilityMatrix`, filesystem capability suites |
+| Shell terminals | Client-backed shell only when negotiated; otherwise native shell | `TestACPCapabilityMatrix`, terminal suite; no fallback after client failure |
+| Elicitation | Restricted form/URL modes only when explicitly negotiated | `TestACPCapabilityMatrix`, elicitation suite; absent/null/empty capabilities do not enable a mode |
+| Configuration | Advertised select options and legacy modes | Session configuration suite |
+| Message/tool metadata | Persisted message IDs, bounded replay, programmatic tool names | Message-ID/tool-name suites |
+| Tracing | Request-scoped W3C trace context; no tracing handshake | ACP tracing suite and MCP callback ownership tests |
+
+Session forking, editor provider configuration, document synchronization, MCP-over-ACP, and next-edit suggestions are not advertised or implemented. Unsupported requests return method-not-found; unsupported notifications have no response. Terminal authentication and experimental environment-variable authentication remain unadvertised. This matrix is not a claim of ACP draft/v2 support or universal model modality support.
+
+## Trace Propagation
+
+Enable export using `docker agent serve acp agent.yaml --otel` and the [OpenTelemetry configuration](../../community/opentelemetry/index.md). ACP metadata propagation itself needs no capability negotiation or exporter.
+
+Send W3C context in **request/notification `params._meta`**, not at the JSON-RPC envelope root:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "your-session-id",
+    "prompt": [{"type": "text", "text": "Explain this project"}],
+    "_meta": {
+      "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+      "tracestate": "vendor=value"
+    }
+  }
+}
+```
+
+Each implemented agent request/notification starts an `acp.<method>` SERVER span, linked to valid incoming context and enclosing its handler. These boundary spans record only the static RPC method, not request content, paths, credential metadata, or raw errors. Invalid/non-string/oversized trace fields are ignored; each accepted field is bounded to 512 bytes and validated by the W3C propagator. A bad tracestate does not invalidate a valid traceparent. Client baggage and arbitrary `_meta` fields are not imported into tracing.
+
+The request context flows into existing runtime/model/tool instrumentation. Outgoing ACP session updates, permission requests, filesystem operations, terminal operations (including detached cleanup), and elicitation carry only `traceparent`/`tracestate` in `params._meta`. Metadata is copied before injection; stale trace fields and baggage are removed. Response metadata is never adopted as the current trace. MCP elicitation and sampling callbacks use the sole owning tool call's trace rather than the connection's setup trace; existing ambiguous-owner restrictions remain in effect.
+
+Traces are not stored on sessions: concurrent and later prompts use their own incoming context. Terminal final-close retries use the cleanup caller's context, not a remembered creation trace. Detached background/drain work may outlive the handler span while retaining its trace. This adds request SERVER spans and propagation, not separate ACP CLIENT spans for every outbound call, response metadata, or automatic metadata on unsupported SDK methods. Existing runtime/provider telemetry and its content-capture settings retain their own policy; the boundary-span restriction is not a global telemetry-redaction guarantee.
+
 ## Session Configuration
 
 New/load/resume responses include stable select-based `configOptions` and legacy `modes`. `session/set_config_option` accepts exact advertised string IDs and returns the complete updated option list. Boolean variants, unknown IDs/values, arbitrary unlisted model references, and safety aliases are rejected. `session/set_mode` is a compatibility path to the same session safety setting.

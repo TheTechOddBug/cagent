@@ -93,6 +93,7 @@ func (op *terminalOperation) create(ctx context.Context, req acp.CreateTerminalR
 	// Join create even after tool cancellation so a late ID can still be released.
 	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalCreateBudget)
 	defer cancel()
+	req.Meta = traceMeta(createCtx, req.Meta)
 	resp, err := op.manager.conn.CreateTerminal(createCtx, req)
 	if err == nil && resp.TerminalId == "" {
 		err = errors.New("client returned an empty terminal ID")
@@ -127,7 +128,7 @@ func (op *terminalOperation) release(ctx context.Context) error {
 func (m *terminalManager) release(ctx context.Context, id string) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalCleanupBudget)
 	defer cancel()
-	_, err := m.conn.ReleaseTerminal(cleanup, acp.ReleaseTerminalRequest{SessionId: m.sid, TerminalId: id})
+	_, err := m.conn.ReleaseTerminal(cleanup, acp.ReleaseTerminalRequest{Meta: traceMeta(cleanup, nil), SessionId: m.sid, TerminalId: id})
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err == nil {
@@ -141,7 +142,7 @@ func (m *terminalManager) release(ctx context.Context, id string) error {
 func (op *terminalOperation) kill(ctx context.Context) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalCleanupBudget)
 	defer cancel()
-	_, err := op.manager.conn.KillTerminal(cleanup, acp.KillTerminalRequest{SessionId: op.manager.sid, TerminalId: op.id})
+	_, err := op.manager.conn.KillTerminal(cleanup, acp.KillTerminalRequest{Meta: traceMeta(cleanup, nil), SessionId: op.manager.sid, TerminalId: op.id})
 	return err
 }
 
