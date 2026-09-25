@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -81,7 +82,7 @@ func Load() (*Catalog, error) {
 	// Shallow copy with a fresh Servers slice so test-only appends don't
 	// leak across Load() calls. Server values themselves are immutable.
 	cloned := *cached
-	cloned.Servers = append([]Server(nil), cached.Servers...)
+	cloned.Servers = slices.Clone(cached.Servers)
 	return &cloned, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -27,7 +28,10 @@ type recordingHandler struct {
 
 func (h *recordingHandler) Run(_ context.Context, input []byte) (HandlerResult, error) {
 	h.calls.Add(1)
-	cp := append([]byte(nil), input...)
+	cp := slices.Clone(input)
+	if len(cp) == 0 {
+		cp = nil
+	}
 	h.input.Store(cp)
 	return HandlerResult{Output: h.out}, nil
 }

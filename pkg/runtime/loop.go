@@ -137,7 +137,7 @@ func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
 		return sm
 	}
 	// Shallow-copy the slice so we don't mutate the original.
-	parts := append([]chat.MessagePart(nil), sm.MultiContent...)
+	parts := slices.Clone(sm.MultiContent)
 	parts[last].Text += "\n"
 	sm.MultiContent = parts
 	return sm

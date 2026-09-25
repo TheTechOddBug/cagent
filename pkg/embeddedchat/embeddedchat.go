@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	dagentcfg "github.com/docker/docker-agent/pkg/config"
@@ -161,7 +162,7 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	tm := cfg.Team
 	var runtimeOpts []dagentruntime.Opt
 	if tm == nil {
-		loadOpts := append([]teamloader.Opt(nil), cfg.LoadOpts...)
+		loadOpts := slices.Clone(cfg.LoadOpts)
 		if cfg.ToolsetRegistry != nil {
 			loadOpts = append(loadOpts, teamloader.WithToolsetRegistry(cfg.ToolsetRegistry))
 		}

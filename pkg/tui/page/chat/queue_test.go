@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -619,13 +620,19 @@ func (r *steerRecordingRuntime) CancelFollowUp(_ context.Context, id string) boo
 func (r *steerRecordingRuntime) followedUp() []runtime.QueuedMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]runtime.QueuedMessage(nil), r.followUps...)
+	if len(r.followUps) == 0 {
+		return nil
+	}
+	return slices.Clone(r.followUps)
 }
 
 func (r *steerRecordingRuntime) steered() []runtime.QueuedMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]runtime.QueuedMessage(nil), r.steers...)
+	if len(r.steers) == 0 {
+		return nil
+	}
+	return slices.Clone(r.steers)
 }
 
 func TestFollowUpFlow_BusyAgent_UsesRuntimeFollowUpQueue(t *testing.T) {

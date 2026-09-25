@@ -1,6 +1,7 @@
 package scrollview
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,8 +140,8 @@ func TestComposeNodiscardviewEquivalence(t *testing.T) {
 			window := visibleLines(m, content)
 
 			for _, baseLine := range []int{m.scrollOffset, -1} {
-				want := composeOracle(m, append([]string(nil), window...), baseLine)
-				got := m.compose(append([]string(nil), window...), baseLine)
+				want := composeOracle(m, slices.Clone(window), baseLine)
+				got := m.compose(slices.Clone(window), baseLine)
 				if want != got {
 					t.Fatalf("baseLine=%d: output mismatch\nwant %q\ngot  %q", baseLine, want, got)
 				}
@@ -151,8 +152,8 @@ func TestComposeNodiscardviewEquivalence(t *testing.T) {
 			for i, l := range window {
 				restyled[i] = "\x1b[7m" + l + "\x1b[0m"
 			}
-			want := composeOracle(m, append([]string(nil), restyled...), m.scrollOffset)
-			got := m.compose(append([]string(nil), restyled...), m.scrollOffset)
+			want := composeOracle(m, slices.Clone(restyled), m.scrollOffset)
+			got := m.compose(slices.Clone(restyled), m.scrollOffset)
 			if want != got {
 				t.Fatalf("restyled: output mismatch\nwant %q\ngot  %q", want, got)
 			}

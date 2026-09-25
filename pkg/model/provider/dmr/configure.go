@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -661,7 +662,10 @@ func parseRuntimeFlags(opts map[string]any) []string {
 		}
 		return flags
 	case []string:
-		return append([]string(nil), t...)
+		if len(t) == 0 {
+			return nil
+		}
+		return slices.Clone(t)
 	case string:
 		return strings.Fields(strings.ReplaceAll(t, ",", " "))
 	default:

@@ -1342,7 +1342,7 @@ func (p *chatPage) consumePendingMessage(content string) {
 }
 
 func (p *chatPage) restorePendingMessages() tea.Cmd {
-	pending := append([]queuedMessage(nil), p.pendingMessages...)
+	pending := slices.Clone(p.pendingMessages)
 	pending = append(pending, p.messageQueue...)
 	if len(pending) == 0 {
 		return notification.InfoCmd("No pending messages")

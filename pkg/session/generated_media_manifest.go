@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 
@@ -189,7 +190,10 @@ func (s *InMemorySessionStore) AddGeneratedBlob(_ context.Context, sessionID, re
 	if err := validateGeneratedFileKey(sessionID, relPath); err != nil {
 		return err
 	}
-	s.generatedBlobs.Store(generatedFileKey(sessionID, relPath), append([]byte(nil), data...))
+	if len(data) == 0 {
+		data = nil
+	}
+	s.generatedBlobs.Store(generatedFileKey(sessionID, relPath), slices.Clone(data))
 	return nil
 }
 
@@ -201,7 +205,7 @@ func (s *InMemorySessionStore) LookupGeneratedBlob(_ context.Context, sessionID,
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrGeneratedBlobNotFound, relPath)
 	}
-	return append([]byte(nil), data...), nil
+	return slices.Clone(data), nil
 }
 
 func (s *SQLiteSessionStore) AddGeneratedBlob(ctx context.Context, sessionID, relPath string, data []byte) error {

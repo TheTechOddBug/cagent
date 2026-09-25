@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -121,7 +122,10 @@ func (t *ToolView) shouldKeepLastPendingLines(width int, lines []string) bool {
 }
 
 func cloneLines(lines []string) []string {
-	return append([]string(nil), lines...)
+	if len(lines) == 0 {
+		return nil
+	}
+	return slices.Clone(lines)
 }
 
 func totalContentWidth(lines []string) int {

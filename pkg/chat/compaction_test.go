@@ -22,6 +22,18 @@ func TestCompactionResultClone(t *testing.T) {
 	assert.Equal(t, byte('{'), orig.RequestContext[0], "clone must not alias the request context")
 }
 
+func TestCompactionResultCloneEmpty(t *testing.T) {
+	t.Parallel()
+	for _, block := range []json.RawMessage{nil, {}, make(json.RawMessage, 0, 8)} {
+		orig := &CompactionResult{Block: block, RequestContext: block}
+		cloned := orig.Clone()
+		assert.Nil(t, cloned.Block)
+		assert.Nil(t, cloned.RequestContext)
+		assert.Equal(t, block, orig.Block)
+		assert.Equal(t, block, orig.RequestContext)
+	}
+}
+
 func TestReplayableCompaction(t *testing.T) {
 	t.Parallel()
 

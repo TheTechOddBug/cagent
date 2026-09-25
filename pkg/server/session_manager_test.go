@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -752,7 +753,7 @@ func (r *recordingFollowUpRuntime) FollowUp(_ context.Context, msg runtime.Queue
 func (r *recordingFollowUpRuntime) followUpContents() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]string(nil), r.followUps...)
+	return slices.Clone(r.followUps)
 }
 
 // TestFollowUpSession_RoutesToInjectorWhenRegistered verifies that an
@@ -1331,7 +1332,7 @@ func replaySessionEvents(t *testing.T, sm *SessionManager, sessionID string, wan
 
 	mu.Lock()
 	defer mu.Unlock()
-	return append([]any(nil), events...)
+	return slices.Clone(events)
 }
 
 // TestSessionElicitationSink_MakesSessionEventSourceReplayable pins the fix
@@ -1519,7 +1520,7 @@ func (e *elicitationRecordingRuntime) ResumeElicitation(_ context.Context, actio
 func (e *elicitationRecordingRuntime) recordedCalls() []recordedElicitationResume {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]recordedElicitationResume(nil), e.calls...)
+	return slices.Clone(e.calls)
 }
 
 // TestElicitationEndpoint_RoutesAnswerToSessionRuntime pins the server half
@@ -1906,8 +1907,10 @@ func (s *sinkRegistrationRecordingRuntime) OnElicitationRequest(handler func(run
 func (s *sinkRegistrationRecordingRuntime) registrations() []func(runtime.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]func(runtime.Event), len(s.sinks))
-	copy(out, s.sinks)
+	out := slices.Clone(s.sinks)
+	if out == nil {
+		out = []func(runtime.Event){}
+	}
 	return out
 }
 

@@ -26,6 +26,24 @@ func TestDeferralTracker(t *testing.T) {
 	assert.Equal(t, "call-1", stillDeferred[0].DeferredAtToolCallID)
 }
 
+func TestDeferralTrackerCopy(t *testing.T) {
+	t.Parallel()
+	var tracker DeferralTracker
+	tracker.Mark("session", nil)
+	for _, input := range [][]Tool{nil, {}, {{Name: "read"}, {Name: "write"}, {Name: "search"}}} {
+		marked := tracker.MarkAt("session", "call-1", input)
+		require.NotNil(t, marked)
+		require.Len(t, marked, len(input))
+		assert.Equal(t, len(marked), cap(marked))
+		if len(marked) > 0 {
+			assert.True(t, marked[0].Deferred)
+			assert.False(t, input[0].Deferred)
+			marked[0].Name = "changed"
+			assert.Equal(t, "read", input[0].Name)
+		}
+	}
+}
+
 func TestDeferralTrackerScopesToolsBySession(t *testing.T) {
 	var tracker DeferralTracker
 

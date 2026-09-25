@@ -3892,8 +3892,10 @@ func (p *messageRecordingProvider) CreateChatCompletionStream(_ context.Context,
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	snapshot := make([]chat.Message, len(msgs))
-	copy(snapshot, msgs)
+	snapshot := slices.Clone(msgs)
+	if snapshot == nil {
+		snapshot = []chat.Message{}
+	}
 	p.recordedMessages = append(p.recordedMessages, snapshot)
 
 	if p.callIdx >= len(p.streams) {

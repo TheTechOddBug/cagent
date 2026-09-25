@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 )
 
 // GetProviderOptFloat64 extracts a float64 value from provider opts.
@@ -143,5 +144,5 @@ var samplingProviderOptsKeys = []string{
 // SamplingProviderOptsKeys returns the list of provider_opts keys that are
 // treated as sampling parameters and forwarded to provider APIs.
 func SamplingProviderOptsKeys() []string {
-	return append([]string(nil), samplingProviderOptsKeys...)
+	return slices.Clone(samplingProviderOptsKeys)
 }

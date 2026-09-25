@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -1228,8 +1229,10 @@ func (c *Client) CreateBatchEmbedding(ctx context.Context, texts []string) (*bas
 	embeddings := make([][]float64, len(response.Data))
 	for i, data := range response.Data {
 		embedding32 := data.Embedding
-		embedding := make([]float64, len(embedding32))
-		copy(embedding, embedding32)
+		embedding := slices.Clip(slices.Clone(embedding32))
+		if embedding == nil {
+			embedding = []float64{}
+		}
 		embeddings[i] = embedding
 	}
 

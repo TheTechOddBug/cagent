@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -111,7 +112,7 @@ func (p *terminalPeer) reply(id json.RawMessage, result any, rpcErr *acpsdk.Requ
 func (p *terminalPeer) snapshot() []terminalRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]terminalRequest(nil), p.calls...)
+	return slices.Clone(p.calls)
 }
 
 func (p *terminalPeer) methods() []string {

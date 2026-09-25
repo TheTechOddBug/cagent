@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -392,8 +393,7 @@ func (m *model) applyURLUnderline(lines []string, viewportStartLine int) []strin
 		return lines
 	}
 
-	result := make([]string, len(lines))
-	copy(result, lines)
+	result := slices.Clip(slices.Clone(lines))
 	result[viewIdx] = styleLineSegment(lines[viewIdx], m.hoveredURL.startCol, m.hoveredURL.endCol, underlineStyle)
 	return result
 }

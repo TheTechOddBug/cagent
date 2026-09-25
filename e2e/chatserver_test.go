@@ -154,7 +154,7 @@ func newRecordingChatCompletionsServer(t *testing.T) *recordingChatCompletionsSe
 func (s *recordingChatCompletionsServer) requests() []recordedChatCompletionRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]recordedChatCompletionRequest(nil), s.reqs...)
+	return slices.Clone(s.reqs)
 }
 
 func (s *recordingChatCompletionsServer) URL() string {

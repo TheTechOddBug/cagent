@@ -1,6 +1,9 @@
 package markdown
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // IncrementalRenderer is a markdown renderer specialized for streaming use:
 // it remembers the most recently rendered "stable prefix" of the input and,
@@ -269,8 +272,7 @@ func cloneCodeBlocks(in []CodeBlock) []CodeBlock {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]CodeBlock, len(in))
-	copy(out, in)
+	out := slices.Clip(slices.Clone(in))
 	return out
 }
 

@@ -1,6 +1,7 @@
 package modelpicker
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -39,7 +40,10 @@ func Score(choice runtime.ModelChoice, query string) (int, bool) {
 // the input order.
 func Filter(choices []runtime.ModelChoice, query string) []runtime.ModelChoice {
 	if strings.TrimSpace(query) == "" {
-		return append([]runtime.ModelChoice(nil), choices...)
+		if len(choices) == 0 {
+			return nil
+		}
+		return slices.Clone(choices)
 	}
 
 	matches := make([]scoredChoice, 0, len(choices))

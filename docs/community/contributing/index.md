@@ -154,8 +154,16 @@ on error. Streaming encoders and indentation are excluded.
 sub-benchmarks and test-only packages. Review measurement and compiler effects
 before adopting `b.Loop`; parallel, timer-sensitive, and escaping benchmark
 handles are excluded. These cops report suggestions, never automatic rewrites.
-The non-benchmark modernization cops inspect production packages; the UUID
-randomness guard additionally reads tests.
+The modernization cops above inspect production packages; the UUID randomness
+guard additionally reads tests.
+
+`Lint/SlicesClone` checks production and test code for append-to-empty slice
+copies and adjacent fresh-local `make(len(src))` / `copy` pairs. It resolves
+builtin calls and slice types, skips generated files and frozen configs, and
+excludes buffer reuse, explicit capacities, and effectful repeated sources.
+Suggestions require review: `slices.Clone` preserves source nilness and named
+slice types, whereas the old idioms may normalize empty results or change the
+type. Preserve those behaviors and any observable capacity contract when migrating.
 
 Test output/artifact lifetimes and in-memory HTTP compatibility require review;
 there are no blanket rules for `t.Output`, `ArtifactDir`, or `NewTestServer`.

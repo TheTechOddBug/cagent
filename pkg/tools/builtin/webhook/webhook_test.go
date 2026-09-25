@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -99,7 +100,7 @@ func (f *fakeRuntime) Supports(c tools.Capability) bool {
 func (f *fakeRuntime) messages() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.recalls...)
+	return slices.Clone(f.recalls)
 }
 
 func newTS(t *testing.T, d httpDoer) (*ToolSet, *[]time.Duration) {

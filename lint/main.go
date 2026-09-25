@@ -51,6 +51,7 @@ var cops = []cop.Cop{
 // programCops lists whole-program, inter-procedural cops. These run once over
 // the entire loaded program rather than once per file.
 var programCops = []prog.Cop{
+	SlicesClone,
 	rubocops.NewLintPointerHelper(cop.WithScope(outsideFrozenConfig)),
 	rubocops.NewLintReflectFields(cop.WithScope(outsideFrozenConfig)),
 	rubocops.NewLintStdlibUUID(cop.WithScope(outsideFrozenConfig)),

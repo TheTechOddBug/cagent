@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -166,8 +167,10 @@ func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-ch
 func (m *mockRuntime) getResumes() []runtime.ResumeRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make([]runtime.ResumeRequest, len(m.resumes))
-	copy(result, m.resumes)
+	result := slices.Clone(m.resumes)
+	if result == nil {
+		result = []runtime.ResumeRequest{}
+	}
 	return result
 }
 

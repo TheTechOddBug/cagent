@@ -1,6 +1,9 @@
 package chat
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // SummaryMessagePrefix prefixes the synthetic user message that carries a
 // compaction summary into the prompt.
@@ -39,11 +42,13 @@ func (r *CompactionResult) Clone() *CompactionResult {
 		return nil
 	}
 	cp := *r
-	if r.Block != nil {
-		cp.Block = json.RawMessage(append([]byte(nil), r.Block...))
+	cp.Block = nil
+	if len(r.Block) > 0 {
+		cp.Block = slices.Clone(r.Block)
 	}
-	if r.RequestContext != nil {
-		cp.RequestContext = json.RawMessage(append([]byte(nil), r.RequestContext...))
+	cp.RequestContext = nil
+	if len(r.RequestContext) > 0 {
+		cp.RequestContext = slices.Clone(r.RequestContext)
 	}
 	return &cp
 }

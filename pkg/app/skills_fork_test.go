@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -66,8 +67,10 @@ func (f *skillFakeRuntime) RunSkillFork(_ context.Context, sess *session.Session
 func (f *skillFakeRuntime) recordedCalls() []skillstool.RunSkillArgs {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]skillstool.RunSkillArgs, len(f.calls))
-	copy(out, f.calls)
+	out := slices.Clone(f.calls)
+	if out == nil {
+		out = []skillstool.RunSkillArgs{}
+	}
 	return out
 }
 

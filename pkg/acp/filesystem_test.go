@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -273,7 +274,7 @@ func (p *readTextFileResponder) Write(b []byte) (int, error) {
 func (p *readTextFileResponder) recordedRequests() []acpsdk.ReadTextFileRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]acpsdk.ReadTextFileRequest(nil), p.requests...)
+	return slices.Clone(p.requests)
 }
 
 // TestFilesystemToolset_ReadFileForwardsLineRange verifies that the ACP
@@ -466,7 +467,7 @@ func (p *editFileResponder) Write(b []byte) (int, error) {
 func (p *editFileResponder) writes() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]string(nil), p.written...)
+	return slices.Clone(p.written)
 }
 
 // newEditFileFixture wires a FilesystemToolset to a real AgentSideConnection
