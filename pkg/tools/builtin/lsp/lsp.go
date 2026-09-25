@@ -1808,10 +1808,10 @@ func pathToURI(path string) string {
 	path = filepath.ToSlash(path)
 
 	u := url.URL{Scheme: "file"}
-	switch {
-	case strings.HasPrefix(path, "//"):
+	switch unc, found := strings.CutPrefix(path, "//"); {
+	case found:
 		// UNC path //host/share/...: the host is the URI authority.
-		host, rest, _ := strings.Cut(strings.TrimPrefix(path, "//"), "/")
+		host, rest, _ := strings.Cut(unc, "/")
 		u.Host = host
 		u.Path = "/" + rest
 	case !strings.HasPrefix(path, "/"):
