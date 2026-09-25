@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
@@ -74,7 +75,8 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	// file was hand-edited or downgraded from a future version. Replaying
 	// nothing would leave the user staring at a blank assistant message,
 	// so we fall through to the model instead.
-	if !ok || cached == "" {
+	// Older entries may contain XML tool payloads suppressed by the live stream.
+	if !ok || cached == "" || strings.Contains(cached, "<tool_call>") {
 		return false
 	}
 
@@ -107,7 +109,10 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 		"agent", a.Name(), "session_id", sess.ID)
 	modelID := a.Model(ctx).ID().String()
 	events.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
+	messageID := uuid.NewV4().String()
+	events.Emit(AgentChoice(a.Name(), sess.ID, cached, messageID))
 	addAgentMessage(sess, a, &chat.Message{
+		MessageID: messageID,
 		Role:      chat.MessageRoleAssistant,
 		Content:   cached,
 		CreatedAt: time.Now().Format(time.RFC3339),

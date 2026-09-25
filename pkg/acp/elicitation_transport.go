@@ -19,12 +19,12 @@ const (
 	maxElicitationBytes   = 256 << 10
 )
 
-// NewConnection binds a connection with the pinned SDK's elicitation scope workaround.
+// NewConnection binds the pinned SDK with elicitation scope and tool-name adapters.
 func (a *Agent) NewConnection(input io.Writer, output io.Reader) *acp.AgentSideConnection {
 	pending := &elicitationRequests{ids: make(map[string]string)}
 	reader := &elicitationReader{scanner: bufio.NewScanner(output), pending: pending}
 	reader.scanner.Buffer(make([]byte, 4096), 10<<20)
-	conn := acp.NewAgentSideConnection(a, &elicitationWriter{output: input, pending: pending}, reader)
+	conn := acp.NewAgentSideConnection(a, &elicitationWriter{output: &toolNameWriter{output: input}, pending: pending}, reader)
 	a.SetAgentConnection(conn)
 	a.elicitationConn = conn
 	return conn

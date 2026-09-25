@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
@@ -56,6 +57,7 @@ var errStreamIdle = errors.New("model stream stalled: no data received from upst
 // completion stream: the assistant's textual reply, any tool calls requested,
 // and metadata such as token usage.
 type streamResult struct {
+	MessageID         string
 	Calls             []tools.ToolCall
 	Content           string
 	ReasoningContent  string
@@ -128,6 +130,7 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 	idleTimer := time.NewTimer(idleTimeout)
 	defer idleTimer.Stop()
 
+	messageID := uuid.NewV4().String()
 	var fullContent strings.Builder
 	var fullReasoningContent strings.Builder
 	var thinkingSignature string
@@ -141,7 +144,7 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 	var responseStarted bool
 
 	failedResult := func() streamResult {
-		return streamResult{Stopped: true, ResponseStarted: responseStarted}
+		return streamResult{MessageID: messageID, Stopped: true, ResponseStarted: responseStarted}
 	}
 
 	toolCallIndex := make(map[string]int)   // toolCallID -> index in toolCalls slice
@@ -171,11 +174,11 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 		if !xmlToolCallGate {
 			tagIdx := strings.Index(content, "<tool_call>")
 			if tagIdx < 0 {
-				events.Emit(AgentChoice(a.Name(), sess.ID, content))
+				events.Emit(AgentChoice(a.Name(), sess.ID, content, messageID))
 			} else {
 				xmlToolCallGate = true
 				if tagIdx > 0 {
-					events.Emit(AgentChoice(a.Name(), sess.ID, content[:tagIdx]))
+					events.Emit(AgentChoice(a.Name(), sess.ID, content[:tagIdx], messageID))
 				}
 			}
 		}
@@ -376,6 +379,7 @@ mainLoop:
 					}
 				}
 				return streamResult{
+					MessageID:         messageID,
 					Calls:             toolCalls,
 					Content:           fullContent.String(),
 					ReasoningContent:  fullReasoningContent.String(),
@@ -400,7 +404,7 @@ mainLoop:
 
 			if choice.Delta.ReasoningContent != "" {
 				responseStarted = true
-				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent))
+				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent, messageID))
 				fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
 			}
 
@@ -476,6 +480,7 @@ mainLoop:
 	}
 
 	return streamResult{
+		MessageID:         messageID,
 		Calls:             toolCalls,
 		Content:           fullContent.String(),
 		ReasoningContent:  fullReasoningContent.String(),

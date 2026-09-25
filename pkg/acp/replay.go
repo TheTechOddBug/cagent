@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -112,7 +113,7 @@ func historicalCalls(items []session.Item) (map[*session.Message][]*historicalTo
 
 func (a *Agent) replayHistory(ctx context.Context, s *Session, history *session.Session) error {
 	starts, results := historicalCalls(history.Messages)
-	for _, item := range history.Messages {
+	for position, item := range history.Messages {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -122,7 +123,7 @@ func (a *Agent) replayHistory(ctx context.Context, s *Session, history *session.
 			}
 		}
 		if item.Error != nil {
-			if err := a.replayText(ctx, s.id, "Error: "+item.Error.Message, acp.UpdateAgentMessageText); err != nil {
+			if err := a.replayText(ctx, s.id, "Error: "+item.Error.Message, identifiedText(messageDisplayID(history.ID, "legacy-error:"+strconv.Itoa(position), "content"), acp.UpdateAgentMessageText)); err != nil {
 				return err
 			}
 		}
@@ -132,18 +133,25 @@ func (a *Agent) replayHistory(ctx context.Context, s *Session, history *session.
 		}
 		switch msg.Message.Role {
 		case chat.MessageRoleUser, chat.MessageRoleAssistant:
+			logical := msg.Message.MessageID
+			if logical == "" {
+				logical = "legacy-item:" + strconv.Itoa(position)
+			}
+			contentID := messageDisplayID(history.ID, logical, "content")
+			thoughtID := messageDisplayID(history.ID, logical, "thought")
 			if msg.Message.Role == chat.MessageRoleAssistant {
-				if err := a.replayText(ctx, s.id, msg.Message.ReasoningContent, acp.UpdateAgentThoughtText); err != nil {
+				if err := a.replayText(ctx, s.id, msg.Message.ReasoningContent, identifiedText(thoughtID, acp.UpdateAgentThoughtText)); err != nil {
 					return err
 				}
 			}
-			if err := a.replayMessageContent(ctx, s.id, msg.Message); err != nil {
+			if err := a.replayMessageContent(ctx, s.id, msg.Message, contentID); err != nil {
 				return err
 			}
 			for _, state := range starts[msg] {
 				// Stored arguments precede input transforms; replaying them can leak redacted input.
 				title := cmp.Or(chat.SanitizeDisplayName(state.definition.Annotations.Title), chat.SanitizeDisplayName(state.call.Function.Name), "Tool call")
 				update := acp.StartToolCall(state.id, title,
+					func(call *acp.SessionUpdateToolCall) { call.Meta = toolNameMeta(state.call.Function.Name) },
 					acp.WithStartKind(determineToolKind(state.call.Function.Name, state.definition)),
 					acp.WithStartStatus(historicalStatus(state.result)))
 				if state.result == nil {
@@ -160,7 +168,7 @@ func (a *Agent) replayHistory(ctx context.Context, s *Session, history *session.
 			if state == nil {
 				update = acp.StartToolCall(acp.ToolCallId(uuid.NewV4().String()), "Tool call", acp.WithStartStatus(historicalStatus(msg)), acp.WithStartContent(content))
 			} else {
-				update = acp.UpdateToolCall(state.id, acp.WithUpdateStatus(historicalStatus(msg)), acp.WithUpdateContent(content))
+				update = acp.UpdateToolCall(state.id, func(call *acp.SessionToolCallUpdate) { call.Meta = toolNameMeta(state.call.Function.Name) }, acp.WithUpdateStatus(historicalStatus(msg)), acp.WithUpdateContent(content))
 			}
 			// Stored tool attachments have not passed the text-output transform contract.
 			if err := a.sendReplayUpdate(ctx, s.id, update); err != nil {
@@ -189,13 +197,18 @@ func replayToolText(text string) string {
 	return text[:end] + "\n[Historical tool output truncated for replay.]"
 }
 
-func (a *Agent) replayMessageContent(ctx context.Context, sid string, msg chat.Message) error {
+func (a *Agent) replayMessageContent(ctx context.Context, sid string, msg chat.Message, messageID ...string) error {
+	id := uuid.NewV4().String()
+	if len(messageID) > 0 {
+		id = messageID[0]
+	}
 	update := acp.UpdateUserMessage
 	updateText := acp.UpdateUserMessageText
 	if msg.Role == chat.MessageRoleAssistant {
 		update = acp.UpdateAgentMessage
 		updateText = acp.UpdateAgentMessageText
 	}
+	updateText = identifiedText(id, updateText)
 	if len(msg.MultiContent) == 0 {
 		return a.replayText(ctx, sid, msg.Content, updateText)
 	}
@@ -252,7 +265,7 @@ func (a *Agent) replayMessageContent(ctx context.Context, sid string, msg chat.M
 		if block.Image == nil && block.Resource == nil && block.Audio == nil {
 			block = acp.TextBlock(fmt.Sprintf("[Attachment: %s (content unavailable during replay)]", name))
 		}
-		if err := a.sendReplayUpdate(ctx, sid, update(block)); err != nil {
+		if err := a.sendReplayUpdate(ctx, sid, withMessageID(update(block), id)); err != nil {
 			return err
 		}
 	}

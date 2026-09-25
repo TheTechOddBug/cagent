@@ -28,6 +28,7 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool, workingDir str
 	locations := extractLocations(args, workingDir)
 
 	opts := []acp.ToolCallStartOpt{
+		func(call *acp.SessionUpdateToolCall) { call.Meta = toolNameMeta(toolCall.Function.Name) },
 		acp.WithStartKind(kind),
 		acp.WithStartStatus(acp.ToolCallStatusInProgress),
 		acp.WithStartRawInput(args),
@@ -61,6 +62,7 @@ func buildToolCallComplete(event *runtime.ToolCallResponseEvent) acp.SessionUpda
 	}
 	return acp.UpdateToolCall(
 		acp.ToolCallId(event.ToolCallID),
+		func(call *acp.SessionToolCallUpdate) { call.Meta = toolNameMeta(event.ToolDefinition.Name) },
 		acp.WithUpdateStatus(status),
 		acp.WithUpdateContent(content),
 		acp.WithUpdateRawOutput(map[string]any{"content": event.Response}),
@@ -74,6 +76,7 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 
 	args := parseToolCallArguments(toolCall.Function.Arguments)
 	return acp.ToolCallUpdate{
+		Meta:       toolNameMeta(toolCall.Function.Name),
 		ToolCallId: acp.ToolCallId(toolCall.ID),
 		Title:      &title,
 		Kind:       &kind,

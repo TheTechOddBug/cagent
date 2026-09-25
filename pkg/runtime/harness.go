@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -72,6 +73,8 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 		endReason = turnEndReasonError
 		return endReason
 	}
+	messageID := uuid.NewV4().String()
+	var reasoning strings.Builder
 	var streamed strings.Builder
 	var finalResult string
 	var usage *chat.Usage
@@ -137,10 +140,11 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 				return
 			}
 			streamed.WriteString(ev.Text)
-			events.Emit(AgentChoice(a.Name(), sess.ID, ev.Text))
+			events.Emit(AgentChoice(a.Name(), sess.ID, ev.Text, messageID))
 		case harness.EventReasoning:
 			if ev.Reasoning != "" {
-				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, ev.Reasoning))
+				reasoning.WriteString(ev.Reasoning)
+				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, ev.Reasoning, messageID))
 			}
 		case harness.EventToolCallStart:
 			startToolCall(ev)
@@ -205,7 +209,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 	content := strings.TrimSpace(streamed.String())
 	if content == "" && strings.TrimSpace(finalResult) != "" {
 		content = strings.TrimSpace(finalResult)
-		events.Emit(AgentChoice(a.Name(), sess.ID, content))
+		events.Emit(AgentChoice(a.Name(), sess.ID, content, messageID))
 	}
 	if content == "" {
 		content = strings.TrimSpace(finalResult)
@@ -225,7 +229,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 		hookCost = &c
 	}
 	r.executeAfterLLMCallHooks(ctx, sess, a, modelID, content, usage, hookCost)
-	r.recordHarnessAssistantMessage(sess, a, content, modelID, usage, cost, events)
+	r.recordHarnessAssistantMessage(sess, a, content, reasoning.String(), messageID, modelID, usage, cost, events)
 	r.executeStopHooks(ctx, sess, a, content, events)
 
 	span.SetAttributes(attribute.Int("content.length", len(content)))
@@ -364,19 +368,21 @@ func harnessUsage(u *harness.Usage) *chat.Usage {
 	}
 }
 
-func (r *LocalRuntime) recordHarnessAssistantMessage(sess *session.Session, a *agent.Agent, content, modelID string, usage *chat.Usage, cost float64, events EventSink) {
-	if strings.TrimSpace(content) == "" && usage == nil {
+func (r *LocalRuntime) recordHarnessAssistantMessage(sess *session.Session, a *agent.Agent, content, reasoning, messageID, modelID string, usage *chat.Usage, cost float64, events EventSink) {
+	if strings.TrimSpace(content) == "" && reasoning == "" && usage == nil {
 		return
 	}
 
 	msg := chat.Message{
-		Role:         chat.MessageRoleAssistant,
-		Content:      content,
-		CreatedAt:    r.now().Format(time.RFC3339),
-		Usage:        usage,
-		Model:        modelID,
-		Cost:         cost,
-		FinishReason: chat.FinishReasonStop,
+		MessageID:        messageID,
+		ReasoningContent: reasoning,
+		Role:             chat.MessageRoleAssistant,
+		Content:          content,
+		CreatedAt:        r.now().Format(time.RFC3339),
+		Usage:            usage,
+		Model:            modelID,
+		Cost:             cost,
+		FinishReason:     chat.FinishReasonStop,
 	}
 	addAgentMessage(sess, a, &msg, events)
 

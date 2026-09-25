@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/coder/acp-go-sdk"
 	"go.opentelemetry.io/otel"
@@ -758,6 +759,7 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 	}
 	userMsg := a.buildUserMessage(turnCtx, sid, prompt)
 	if userMsg != nil && (userMsg.Message.Content != "" || len(userMsg.Message.MultiContent) > 0) {
+		userMsg.Message.MessageID = uuid.NewV4().String()
 		acpSess.sess.AddMessage(userMsg)
 	}
 
@@ -774,6 +776,12 @@ func (a *Agent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Promp
 
 // sendUpdate sends a session update notification to the ACP client.
 func (a *Agent) sendUpdate(ctx context.Context, sessionID string, update acp.SessionUpdate) error {
+	switch {
+	case update.UserMessageChunk != nil && update.UserMessageChunk.MessageId == nil,
+		update.AgentMessageChunk != nil && update.AgentMessageChunk.MessageId == nil,
+		update.AgentThoughtChunk != nil && update.AgentThoughtChunk.MessageId == nil:
+		update = withMessageID(update, uuid.NewV4().String())
+	}
 	return a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sessionID),
 		Update:    update,
@@ -795,6 +803,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 	runCtx, cancel := context.WithCancel(ctx)
 	eventsChan := acpSess.rt.RunStream(runCtx, acpSess.sess)
 	var toolCalls toolCallTracker
+	var messages liveMessages
 	// Cancel before draining; final tool updates must precede the prompt response.
 	defer func() {
 		cancel()
@@ -827,14 +836,17 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 		outcome.observe(event)
 		switch e := event.(type) {
 		case *runtime.AgentChoiceEvent:
-			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(e.Content)); err != nil {
+			if err := a.sendUpdate(ctx, acpSess.id, withMessageID(acp.UpdateAgentMessageText(e.Content), messages.id(e.SessionID, e.AgentName, e.MessageID, "content"))); err != nil {
 				return "", err
 			}
 
 		case *runtime.AgentChoiceReasoningEvent:
-			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentThoughtText(e.Content)); err != nil {
+			if err := a.sendUpdate(ctx, acpSess.id, withMessageID(acp.UpdateAgentThoughtText(e.Content), messages.id(e.SessionID, e.AgentName, e.MessageID, "thought"))); err != nil {
 				return "", err
 			}
+
+		case *runtime.MessageAddedEvent:
+			messages.finish(e.SessionID, e.AgentName)
 
 		case *runtime.ToolCallConfirmationEvent:
 			state, err := toolCalls.report(ctx, a, acpSess, e.AgentName, e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending)
