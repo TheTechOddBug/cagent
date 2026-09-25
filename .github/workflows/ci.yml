@@ -46,8 +46,10 @@ jobs:
   #           counts. Anything but a PR runs all.
   #   tested  true on a main push whose commit already passed a merge-queue
   #           run of this workflow: the queue tested this exact SHA minutes
-  #           ago, so the push only builds and publishes. A push that bypassed
-  #           the queue (no green merge_group run for the SHA) runs everything.
+  #           ago, so the push only builds and publishes (`warm-cache` still
+  #           refreshes the Linux/Windows build caches; see that job's
+  #           comment). A push that bypassed the queue (no green merge_group
+  #           run for the SHA) runs everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -255,6 +257,48 @@ jobs:
         run: |
           go install github.com/google/go-licenses@v1.6.0
           go-licenses check . --allowed_licenses=Apache-2.0,MIT,BSD-3-Clause,BSD-2-Clause --ignore modernc.org/mathutil --ignore github.com/hashicorp/hcl/v2
+
+  # A cache is only saved on main (see .github/actions/setup-go), but `tested`
+  # skips the jobs that would save it on almost every main push, since the
+  # merge queue already ran them. Caches saved during that merge_group run
+  # do not help: GitHub scopes a saved cache to the ref that created it plus
+  # its base/default branch, and a merge_group ref is neither, so the queue
+  # can only ever restore, never populate, the cache other runs see. Compile
+  # only, no tests, so this does not duplicate what the queue already ran.
+  warm-cache:
+    needs: changes
+    if: needs.changes.outputs.tested == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cache-name: test-linux
+          - os: windows-latest
+            cache-name: test-windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: $/.github/actions/setup-go
+        with:
+          cache-name: ${{ matrix.cache-name }}
+
+      - if: runner.os == 'Windows'
+        name: Exclude build paths from Defender
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, (go env GOROOT), (go env GOPATH), (go env GOCACHE), (go env GOMODCACHE))
+          Add-MpPreference -ExclusionPath $paths
+
+      - name: Compile packages and tests
+        run: |
+          go build ./...
+          go test -run='^$' ./...
 
   # Race detector on main only: it is several times slower than `task test`
   # and must not sit on the PR critical path. Not needed by `gate`.
