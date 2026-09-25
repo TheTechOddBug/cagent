@@ -1301,11 +1301,11 @@ func (p *chatPage) extractAttachmentsFromSession(position int) []msgtypes.Attach
 			continue
 		}
 		text := part.Text
-		if !strings.HasPrefix(text, legacyPrefix) {
+		rest, found := strings.CutPrefix(text, legacyPrefix)
+		if !found {
 			continue
 		}
 		// Parse "Contents of <filename>: <dataURL>"
-		rest := text[len(legacyPrefix):]
 		before, after, ok := strings.Cut(rest, ": ")
 		if !ok {
 			continue
