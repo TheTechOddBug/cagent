@@ -380,7 +380,7 @@ func (mv *messageModel) RenderedSegments(width int) (AssistantSegments, bool) {
 	}
 	if cache.stable != parts.StablePrefix {
 		delta := parts.StablePrefix[len(cache.stable):]
-		if cache.stable != "" && strings.HasPrefix(delta, "\n") {
+		if cache.stable != "" {
 			delta = strings.TrimPrefix(delta, "\n")
 		}
 		cache.stableLines = append(cache.stableLines, styledAssistantLines(messageStyle, width, delta)...)
