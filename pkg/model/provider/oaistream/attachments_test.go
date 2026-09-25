@@ -3,6 +3,7 @@ package oaistream
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -275,6 +276,45 @@ func BenchmarkDataURI(b *testing.B) {
 			for b.Loop() {
 				_ = dataURI("image/png", data)
 			}
+		})
+	}
+}
+
+func TestConvertDocumentAudio(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ mime, format string }{
+		{"audio/wav", "wav"},
+		{"audio/x-wav", "wav"},
+		{"audio/wave", "wav"},
+		{"audio/vnd.wave", "wav"},
+		{"audio/mpeg", "mp3"},
+		{"audio/mp3", "mp3"},
+		{"Audio/WAV; rate=24000", "wav"},
+		{"audio/pcm;rate=24000", ""},
+		{"audio/ogg", ""},
+		{"audio/flac", ""},
+		{"audio/wav; broken", ""},
+	} {
+		t.Run(tc.mime, func(t *testing.T) {
+			payload := []byte{0, 1, 255, 3}
+			doc := chat.Document{Name: "audio", MimeType: tc.mime, Source: chat.DocumentSource{InlineData: payload}}
+			parts, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.CapsWith(false, false, true, false))
+			require.NoError(t, err)
+			if tc.format == "" {
+				assert.Empty(t, parts)
+				return
+			}
+			require.Len(t, parts, 1)
+			require.NotNil(t, parts[0].OfInputAudio)
+			assert.Equal(t, tc.format, parts[0].OfInputAudio.InputAudio.Format)
+			assert.Equal(t, base64.StdEncoding.EncodeToString(payload), parts[0].OfInputAudio.InputAudio.Data)
+			wire, err := json.Marshal(parts)
+			require.NoError(t, err)
+			assert.Contains(t, string(wire), `"type":"input_audio"`)
+			assert.NotContains(t, string(wire), "data:")
+			parts, err = convertDocumentWithCaps(t.Context(), doc, modelinfo.CapsWith(false, false, false, false))
+			require.NoError(t, err)
+			assert.Empty(t, parts)
 		})
 	}
 }

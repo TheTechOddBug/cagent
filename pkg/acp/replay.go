@@ -217,14 +217,20 @@ func (a *Agent) replayMessageContent(ctx context.Context, sid string, msg chat.M
 				if doc.Source.ArtifactPath == "" {
 					uri := "urn:docker-agent:attachment:" + uuid.NewV4().String()
 					mimeType := replayMIME(doc.MimeType)
+					audio := strings.HasPrefix(strings.ToLower(strings.TrimSpace(doc.MimeType)), "audio/")
 					if len(doc.Source.InlineData) > 0 && len(doc.Source.InlineData) <= maxReplayUpdateBytes/2 {
 						data := base64.StdEncoding.EncodeToString(doc.Source.InlineData)
-						if chat.IsImageMimeType(mimeType) {
+						switch {
+						case audio:
+							if audioMIME, ok := promptAudioMIME(doc.MimeType); ok && msg.Role == chat.MessageRoleUser {
+								block = acp.AudioBlock(data, audioMIME)
+							}
+						case chat.IsImageMimeType(mimeType):
 							block = acp.ImageBlock(data, mimeType)
-						} else if !strings.HasPrefix(mimeType, "audio/") {
+						default:
 							block = acp.ResourceBlock(acp.EmbeddedResourceResource{BlobResourceContents: &acp.BlobResourceContents{Uri: uri, MimeType: &mimeType, Blob: data}})
 						}
-					} else if len(doc.Source.InlineData) == 0 {
+					} else if len(doc.Source.InlineData) == 0 && (!audio || doc.Source.InlineText != "") {
 						if err := a.replayText(ctx, sid, fmt.Sprintf("[Attachment: %s]\n", name)+doc.Source.InlineText, updateText); err != nil {
 							return err
 						}
@@ -243,7 +249,7 @@ func (a *Agent) replayMessageContent(ctx context.Context, sid string, msg chat.M
 				}
 			}
 		}
-		if block.Image == nil && block.Resource == nil {
+		if block.Image == nil && block.Resource == nil && block.Audio == nil {
 			block = acp.TextBlock(fmt.Sprintf("[Attachment: %s (content unavailable during replay)]", name))
 		}
 		if err := a.sendReplayUpdate(ctx, sid, update(block)); err != nil {

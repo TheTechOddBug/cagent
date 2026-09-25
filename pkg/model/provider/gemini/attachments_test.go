@@ -101,3 +101,18 @@ func TestConvertDocument_JSONText(t *testing.T) {
 	require.NotNil(t, part)
 	assert.Contains(t, part.Text, doc.Source.InlineText)
 }
+
+func TestConvertDocumentGeminiAudio(t *testing.T) {
+	t.Parallel()
+	for _, mime := range []string{"audio/wav", "audio/mpeg", "audio/ogg", "audio/pcm; rate=24000"} {
+		doc := chat.Document{Name: "audio", MimeType: mime, Source: chat.DocumentSource{InlineData: []byte{0, 1, 255}}}
+		part, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.CapsWith(false, false, true, false))
+		require.NoError(t, err)
+		require.NotNil(t, part)
+		assert.Equal(t, mime, part.InlineData.MIMEType)
+		assert.Equal(t, doc.Source.InlineData, part.InlineData.Data)
+		part, err = convertDocumentWithCaps(t.Context(), doc, modelinfo.CapsWith(false, false, false, false))
+		require.NoError(t, err)
+		assert.Nil(t, part)
+	}
+}
